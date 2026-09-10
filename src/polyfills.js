@@ -27,12 +27,17 @@
         this._events[name] = listeners.filter(item => item !== listener && item.listener !== listener);
         return this;
     };
+    EventEmitter.prototype.off = EventEmitter.prototype.removeListener;
     EventEmitter.prototype.removeAllListeners = function (name) {
         if (name === undefined) this._events = Object.create(null);
         else if (this._events) delete this._events[name];
         return this;
     };
     EventEmitter.prototype.listeners = function (name) { return [...(this._events && this._events[name] || [])]; };
+    EventEmitter.prototype.rawListeners = EventEmitter.prototype.listeners;
+    EventEmitter.prototype.listenerCount = function (name) { return this.listeners(name).length; };
+    EventEmitter.prototype.setMaxListeners = function (value) { this._maxListeners = Number(value); return this; };
+    EventEmitter.prototype.getMaxListeners = function () { return this._maxListeners ?? 10; };
 
     function encodeUtf8(value) {
         const bytes = [];
@@ -108,6 +113,7 @@
             constructor.prototype = Object.create(parent.prototype, { constructor: { value: constructor, writable: true, configurable: true } });
         },
         deprecate(fn) { return fn; },
+        debuglog() { const logger = () => {}; logger.enabled = false; return logger; },
         format,
         formatWithOptions(_options, ...args) { return format(...args); },
         inspect,
@@ -169,6 +175,46 @@
     AsyncLocalStorage.prototype.enterWith = function (store) { this.store = store; };
     AsyncLocalStorage.prototype.disable = function () { this.store = undefined; };
 
+    function createDiagnosticsChannel(name) {
+        return {
+            name,
+            hasSubscribers: false,
+            publish() {},
+            subscribe() {},
+            unsubscribe() { return false; },
+            bindStore() {},
+            unbindStore() {},
+            runStores(_message, callback, thisArg, ...args) { return callback.apply(thisArg, args); }
+        };
+    }
+    const diagnosticsChannels = new Map();
+    const diagnosticsChannel = {
+        channel(name) {
+            if (!diagnosticsChannels.has(name)) diagnosticsChannels.set(name, createDiagnosticsChannel(name));
+            return diagnosticsChannels.get(name);
+        },
+        hasSubscribers() { return false; },
+        subscribe() {},
+        unsubscribe() { return false; },
+        tracingChannel(name) {
+            const channels = {
+                start: this.channel(`tracing:${name}:start`),
+                end: this.channel(`tracing:${name}:end`),
+                asyncStart: this.channel(`tracing:${name}:asyncStart`),
+                asyncEnd: this.channel(`tracing:${name}:asyncEnd`),
+                error: this.channel(`tracing:${name}:error`)
+            };
+            Object.defineProperty(channels, "hasSubscribers", {
+                get() {
+                    return channels.start.hasSubscribers || channels.end.hasSubscribers ||
+                        channels.asyncStart.hasSubscribers || channels.asyncEnd.hasSubscribers ||
+                        channels.error.hasSubscribers;
+                }
+            });
+            return channels;
+        }
+    };
+
     function depd() {
         function deprecate() {}
         deprecate.function = function (fn) { return fn; };
@@ -176,19 +222,42 @@
         return deprecate;
     }
 
+    function assertionError(message) {
+        const error = new Error(message || "Assertion failed");
+        error.name = "AssertionError";
+        error.code = "ERR_ASSERTION";
+        return error;
+    }
+    function assert(value, message) {
+        if (!value) throw assertionError(message);
+    }
+    assert.ok = assert;
+    assert.equal = (actual, expected, message) => { if (actual != expected) throw assertionError(message); };
+    assert.strictEqual = (actual, expected, message) => { if (actual !== expected) throw assertionError(message); };
+    assert.notStrictEqual = (actual, expected, message) => { if (actual === expected) throw assertionError(message); };
+    assert.fail = message => { throw assertionError(message); };
+    assert.AssertionError = function AssertionError(options = {}) { return assertionError(options.message); };
+
     process.cwd = () => __canaryoCwd();
     process.platform = "win32";
     process.version = "v22.0.0-canaryo";
     process.versions = { node: "22.0.0", canaryo: "0.1.0" };
-    process.nextTick = (callback, ...args) => callback(...args);
+    process.nextTick = (callback, ...args) => Promise.resolve().then(() => callback(...args));
     process.stdout = { isTTY: false, write(value) { __canaryoWrite(String(value)); return true; } };
     process.stderr = { isTTY: false, write(value) { __canaryoWriteError(String(value)); return true; } };
+    const performance = { now: () => Date.now(), timeOrigin: Date.now() };
+
     globalThis.Buffer = Buffer;
     globalThis.TextEncoder = TextEncoder;
     globalThis.TextDecoder = TextDecoder;
-    globalThis.setImmediate = (callback, ...args) => callback(...args);
+    globalThis.performance = performance;
+    globalThis.setImmediate = (callback, ...args) => Promise.resolve().then(() => callback(...args));
     globalThis.clearImmediate = () => {};
+    globalThis.setTimeout = () => ({ ref() { return this; }, unref() { return this; } });
+    globalThis.clearTimeout = () => {};
+    globalThis.queueMicrotask = callback => Promise.resolve().then(callback);
     globalThis.__canaryoBuiltins = Object.freeze({
+        assert,
         async_hooks: { AsyncLocalStorage },
         buffer: { Buffer, SlowBuffer: Buffer, INSPECT_MAX_BYTES: 50, kMaxLength: 0x7fffffff },
         crypto: {
@@ -201,10 +270,19 @@
             }
         },
         depd,
+        diagnostics_channel: diagnosticsChannel,
+        dns: {
+            lookup(hostname, options, callback) {
+                if (typeof options === "function") callback = options;
+                callback(null, [{ address: hostname === "localhost" ? "127.0.0.1" : hostname, family: 4 }]);
+            }
+        },
         events: Object.assign(EventEmitter, { EventEmitter }),
         fs: { Stats: function Stats() {}, statSync() { throw new Error("fs.statSync ainda não implementado"); }, stat(_path, callback) { callback(new Error("fs.stat ainda não implementado")); }, createReadStream() { throw new Error("fs.createReadStream ainda não implementado"); } },
         net: { isIP: () => 0, isIPv4: () => false, isIPv6: () => false },
+        os: { networkInterfaces: () => ({}) },
         path,
+        perf_hooks: { performance },
         querystring: { parse(value) { return Object.fromEntries(String(value).split("&").filter(Boolean).map(item => item.split("=").map(decodeURIComponent))); }, stringify(value) { return Object.entries(value).map(([key, item]) => `${encodeURIComponent(key)}=${encodeURIComponent(item)}`).join("&"); }, escape: encodeURIComponent, unescape: decodeURIComponent },
         stream: Stream,
         tty: { isatty: () => false, ReadStream: function () {}, WriteStream: function () {} },

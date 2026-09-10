@@ -24,7 +24,7 @@
 
 Canaryo embeds QuickJS-NG in a Rust executable and recreates the Node.js APIs needed by HTTP applications. Its goal is to run existing projects without source changes while reducing startup time and memory usage.
 
-Canaryo 0.1.0 is an experimental runtime. Basic `node:http` and Express 5.2.1 applications work natively; broader Node.js compatibility is under active development.
+Canaryo 0.1.0 is an experimental runtime. Basic `node:http`, Express 5.2.1, and Fastify 5.12.3 applications work natively; broader Node.js compatibility is under active development.
 
 ## Why Canaryo?
 
@@ -58,6 +58,15 @@ const http = require("node:http");
 http.createServer((_request, response) => {
     response.end("Hello from Canaryo!");
 }).listen(3000);
+```
+
+The supported Fastify subset also uses the framework's regular API:
+
+```js
+const fastify = require("fastify")();
+
+fastify.get("/", async () => ({ hello: "world" }));
+fastify.listen({ port: 3000, host: "127.0.0.1" });
 ```
 
 ## CLI
@@ -113,6 +122,8 @@ flowchart LR
 | CommonJS | Supported | Relative modules, JSON, package `main`, scoped packages, cache, and upward `node_modules` lookup. |
 | `node:http` | Partial | Server creation, persistent HTTP/1.1 connections, pipelining, request metadata and body, response status, headers, `write`, and `end`. |
 | Express | Partial | Express 5.2.1 startup, basic routing, and JSON responses. |
+| Fastify | Partial | Fastify 5.12.3 startup, basic routing, async handlers, and JSON responses. Plugin compatibility varies with the Node.js APIs each plugin uses. |
+| Promises and microtasks | Partial | Promise jobs, `process.nextTick`, `queueMicrotask`, and immediate callbacks used during framework boot and request handling. Timed callbacks are not scheduled yet. |
 | Buffers and streams | Partial | Compatibility methods required by the current Express fixture. |
 | Filesystem APIs | Partial | Initial synchronous compatibility methods. |
 | ESM | Planned | Native `import` and `export` execution is not available yet. |
@@ -132,6 +143,7 @@ Run the complete validation suite:
 
 ```sh
 npm ci --prefix fixtures/express-basic
+npm ci --prefix fixtures/fastify-basic
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test
@@ -156,10 +168,10 @@ cargo bench --bench runtime -- --startup-only --startup-runs 15
 
 - Connection timeouts, limits, backpressure, and graceful shutdown.
 - Streaming request and response bodies.
-- A real asynchronous event loop for timers, I/O, and promises.
+- Timers and additional asynchronous I/O sources.
 - Wider Buffer, stream, filesystem, crypto, and networking support.
 - Native ESM execution and package `exports` resolution.
-- Fastify and a larger package compatibility suite.
+- A larger Express, Fastify, and plugin compatibility suite.
 - TLS, workers, diagnostics, and production observability.
 
 ## License

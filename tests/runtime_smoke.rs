@@ -131,3 +131,14 @@ fn serves_a_native_express_application() {
     assert!(headers.contains("content-type: application/json; charset=utf-8"));
     assert!(response.ends_with(r#"{"runtime":"canaryo","status":"ok"}"#));
 }
+
+#[test]
+#[ignore = "requires npm ci in fixtures/fastify-basic"]
+fn serves_a_native_fastify_application() {
+    let response = request_fixture("fixtures/fastify-basic/server.js");
+    let headers = response.to_ascii_lowercase();
+
+    assert!(response.starts_with("HTTP/1.1 200 OK"));
+    assert!(headers.contains("content-type: application/json; charset=utf-8"));
+    assert!(response.ends_with(r#"{"runtime":"canaryo","framework":"fastify","status":"ok"}"#));
+}

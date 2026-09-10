@@ -245,6 +245,7 @@ fn handle_request<'js>(
     response_object.set("req", request_object.clone())?;
 
     handler.call::<_, ()>((request_object, response_object.clone()))?;
+    while context.execute_pending_job() {}
 
     response_from_js(&response_object)
 }

@@ -14,13 +14,17 @@ const NODE_BUILTINS: &[&str] = &[
     "child_process",
     "crypto",
     "diagnostics_channel",
+    "dns",
     "events",
     "fs",
     "http",
+    "http2",
     "https",
+    "module",
     "net",
     "os",
     "path",
+    "perf_hooks",
     "querystring",
     "stream",
     "string_decoder",
@@ -28,6 +32,7 @@ const NODE_BUILTINS: &[&str] = &[
     "tty",
     "url",
     "util",
+    "worker_threads",
     "zlib",
 ];
 
@@ -144,9 +149,10 @@ fn visit(path: &Path, report: &mut Report, visited: &mut HashSet<PathBuf>) -> io
     }
 
     let source = fs::read_to_string(&path)?;
+    let analyzed_source = strip_js_comments(&source);
     report.analyzed_files += 1;
 
-    for finding in scan_source(&source, &path) {
+    for finding in scan_source(&analyzed_source, &path) {
         report.add(finding);
     }
 
@@ -154,7 +160,7 @@ fn visit(path: &Path, report: &mut Report, visited: &mut HashSet<PathBuf>) -> io
         return Ok(());
     }
 
-    for specifier in extract_specifiers(&source) {
+    for specifier in extract_specifiers(&analyzed_source) {
         if is_node_builtin(&specifier) {
             continue;
         }
@@ -221,6 +227,18 @@ fn scan_source(source: &str, path: &Path) -> Vec<Finding> {
             compatibility: Compatibility::Limited,
             message: "usa uma API Node que ainda possui suporte parcial",
         },
+        Rule {
+            patterns: &[
+                "node:worker_threads",
+                "require('worker_threads')",
+                "require(\"worker_threads\")",
+                "node:module",
+                "require('module')",
+                "require(\"module\")",
+            ],
+            compatibility: Compatibility::Limited,
+            message: "usa uma API Node ainda indisponível em algumas configurações",
+        },
     ];
     let mut findings = Vec::new();
 
@@ -277,6 +295,62 @@ fn extract_specifiers(source: &str) -> Vec<String> {
     specifiers
 }
 
+fn strip_js_comments(source: &str) -> String {
+    let mut output = String::with_capacity(source.len());
+    let mut characters = source.chars().peekable();
+    let mut quote = None;
+
+    while let Some(character) = characters.next() {
+        if let Some(delimiter) = quote {
+            output.push(character);
+            if character == '\\' {
+                if let Some(escaped) = characters.next() {
+                    output.push(escaped);
+                }
+            } else if character == delimiter {
+                quote = None;
+            }
+            continue;
+        }
+
+        if matches!(character, '\'' | '"' | '`') {
+            quote = Some(character);
+            output.push(character);
+            continue;
+        }
+
+        if character == '/' && characters.peek() == Some(&'/') {
+            characters.next();
+            for comment_character in characters.by_ref() {
+                if comment_character == '\n' {
+                    output.push('\n');
+                    break;
+                }
+            }
+            continue;
+        }
+
+        if character == '/' && characters.peek() == Some(&'*') {
+            characters.next();
+            let mut previous = '\0';
+            for comment_character in characters.by_ref() {
+                if comment_character == '\n' {
+                    output.push('\n');
+                }
+                if previous == '*' && comment_character == '/' {
+                    break;
+                }
+                previous = comment_character;
+            }
+            continue;
+        }
+
+        output.push(character);
+    }
+
+    output
+}
+
 fn is_node_builtin(specifier: &str) -> bool {
     let name = specifier.strip_prefix("node:").unwrap_or(specifier);
     NODE_BUILTINS.contains(&name)
@@ -302,6 +376,18 @@ mod tests {
         let source = "const a = require('./a'); import b from \"./b.js\";";
 
         assert_eq!(extract_specifiers(source), ["./a", "./b.js"]);
+    }
+
+    #[test]
+    fn ignores_import_examples_inside_comments() {
+        let source = r#"
+            // require('commented-package')
+            /* import example from "documentation-package" */
+            const actual = require('./actual');
+            const url = "https://example.com/path";
+        "#;
+
+        assert_eq!(extract_specifiers(&strip_js_comments(source)), ["./actual"]);
     }
 
     #[test]

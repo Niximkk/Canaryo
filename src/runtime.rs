@@ -83,25 +83,54 @@ const httpModule = Object.freeze({
     ServerResponse,
     METHODS: ["GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH"],
     STATUS_CODES: { 200: "OK", 201: "Created", 204: "No Content", 400: "Bad Request", 404: "Not Found", 500: "Internal Server Error" },
-    createServer(requestListener) {
+    createServer(optionsOrListener, listener) {
+        const requestListener = typeof optionsOrListener === "function"
+            ? optionsOrListener
+            : listener;
         if (typeof requestListener !== "function") {
             throw new TypeError("createServer requer uma função");
         }
 
         const server = {
+            listening: false,
+            keepAliveTimeout: 5000,
+            requestTimeout: 300000,
+            timeout: 0,
             listen(port, hostOrCallback, callback) {
-                const onListening = typeof hostOrCallback === "function"
+                const options = port !== null && typeof port === "object" ? port : null;
+                const listenPort = Number(options ? options.port : port);
+                const listenHost = options ? options.host : typeof hostOrCallback === "string" ? hostOrCallback : "127.0.0.1";
+                const explicitCallback = typeof hostOrCallback === "function"
                     ? hostOrCallback
                     : typeof callback === "function"
                         ? callback
-                        : () => {};
+                        : null;
+                this.__canaryoAddress = { address: listenHost || "127.0.0.1", family: "IPv4", port: listenPort };
                 __canaryoListen(
-                    Number(port),
+                    listenPort,
                     requestListener,
-                    onListening,
+                    () => {
+                        this.listening = true;
+                        this.emit("listening");
+                        if (explicitCallback) explicitCallback();
+                    },
                     IncomingMessage.prototype,
                     ServerResponse.prototype
                 );
+                return this;
+            },
+            address() { return this.__canaryoAddress || null; },
+            setTimeout(value, callback) {
+                this.timeout = Number(value);
+                if (typeof callback === "function") this.on("timeout", callback);
+                return this;
+            },
+            ref() { return this; },
+            unref() { return this; },
+            close(callback) {
+                this.listening = false;
+                if (typeof callback === "function") callback();
+                this.emit("close");
                 return this;
             }
         };
@@ -152,6 +181,9 @@ function loadModule(filename) {
         return module.exports;
     } catch (error) {
         delete moduleCache[filename];
+        if (error && typeof error.stack === "string") {
+            error.stack += `\n    while loading ${filename}`;
+        }
         throw error;
     }
 }
@@ -159,6 +191,16 @@ function loadModule(filename) {
 function createRequire(parentFilename) {
     function require(name) {
         if (name === "http" || name === "node:http") return httpModule;
+        if (name === "https" || name === "node:https") {
+            return { createServer() { throw new Error("node:https ainda não é suportado"); } };
+        }
+        if (name === "http2" || name === "node:http2") {
+            return {
+                constants: {},
+                createServer() { throw new Error("node:http2 ainda não é suportado"); },
+                createSecureServer() { throw new Error("node:http2 ainda não é suportado"); }
+            };
+        }
         const normalized = name.startsWith("node:") ? name.slice(5) : name;
         if (Object.prototype.hasOwnProperty.call(__canaryoBuiltins, normalized)) {
             return __canaryoBuiltins[normalized];
