@@ -76,6 +76,7 @@ fn main() {
     let cases = [
         ("node:http", "fixtures/http-basic/server.js"),
         ("Express 5.2.1", "fixtures/express-basic/server.js"),
+        ("Fastify 5.12.3", "fixtures/fastify-basic/server.js"),
     ];
 
     println!("# Canaryo benchmark\n");

@@ -29,7 +29,7 @@ Canaryo 0.1.0 is an experimental runtime. Basic `node:http`, Express 5.2.1, and 
 ## Why Canaryo?
 
 - **Existing code first:** run supported CommonJS applications without rewriting them.
-- **Small memory footprint:** the current Express fixture uses about 10.6 MiB of resident memory with 16 persistent connections.
+- **Small memory footprint:** the current Express fixture uses about 10.4 MiB of resident memory with 16 persistent connections.
 - **Fast startup:** native HTTP starts in about 10 ms and the tested Express application starts faster than Node.js on the benchmark machine.
 - **Compatibility report:** inspect an entry point and its dependencies before execution.
 - **Explicit escape hatch:** delegate to the installed Node.js runtime when necessary.
@@ -87,14 +87,16 @@ Latest local results on Windows 11, a Ryzen 5 5600X, and Node.js 22.15.1:
 
 | Scenario | Node.js | Canaryo | Difference |
 |---|---:|---:|---:|
-| `node:http` startup | 52.88 ms | 9.99 ms | 81.1% lower |
-| Express startup | 193.14 ms | 152.82 ms | 20.9% lower |
-| Express, new connections × 16 | 3,584 req/s | 4,299 req/s | 20.0% higher |
-| Express, keep-alive × 1 | 6,371 req/s | 5,256 req/s | 17.5% lower |
-| Express, keep-alive × 16 | 6,359 req/s | 6,584 req/s | 3.5% higher |
-| Express RSS, keep-alive × 16 | 88.4 MiB | 10.6 MiB | 88.0% lower |
+| `node:http` startup | 52.62 ms | 10.47 ms | 80.1% lower |
+| Express startup | 194.94 ms | 153.39 ms | 21.3% lower |
+| Fastify startup | 333.27 ms | 199.03 ms | 40.3% lower |
+| Express, new connections × 16 | 3,455 req/s | 3,979 req/s | 15.2% higher |
+| Fastify, new connections × 16 | 5,852 req/s | 5,368 req/s | 8.3% lower |
+| Express, keep-alive × 16 | 6,081 req/s | 5,941 req/s | 2.3% lower |
+| Fastify, keep-alive × 16 | 17,401 req/s | 9,197 req/s | 47.1% lower |
+| Fastify RSS, keep-alive × 16 | 51.4 MiB | 12.9 MiB | 74.9% lower |
 
-Canaryo leads the concurrent keep-alive test but Node.js remains faster with one persistent Express connection. These numbers measure the current compatibility surface on one machine, not every Node.js workload. See [BENCHMARKS.md](BENCHMARKS.md) for the complete results and methodology.
+Canaryo leads startup and memory use across the tested applications. Node.js remains substantially faster for persistent Fastify traffic, while Canaryo leads `node:http` under concurrency and Express when connections are reopened for every request. These numbers measure the current compatibility surface on one machine, not every Node.js workload. See [BENCHMARKS.md](BENCHMARKS.md) for the complete results and methodology.
 
 ## How it works
 
