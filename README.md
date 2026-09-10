@@ -4,16 +4,16 @@ Canaryo is a Rust-built JavaScript runtime focused on running existing Node.js H
 
 ## Status
 
-This repository contains the compatibility-first CLI foundation. `check` scans an entry file for a small initial set of Node.js APIs. `run` performs that check, then temporarily forwards execution to Node.js while the native runtime is built.
+Canaryo currently embeds QuickJS-NG and runs ordinary JavaScript natively. It provides `console`, `process.argv`, `process.env`, `__filename`, and `__dirname`. `check` scans an entry file for an initial set of Node.js APIs.
 
-The forwarding behavior is intentional and explicit: Canaryo does not yet claim native Node.js compatibility.
+Node.js can be selected explicitly with `run --node` while native compatibility is expanded. Native HTTP and CommonJS module support are the next milestones.
 
 ## Commands
 
 ```sh
-cargo run -- check server.js
-cargo run -- run server.js
-cargo run -- server.js
+cargo run -- examples/hello.js Canaryo
+cargo run -- check src/server.js
+cargo run -- run --node src/server.js
 ```
 
 The intended release interface is:
@@ -21,6 +21,7 @@ The intended release interface is:
 ```sh
 canaryo check server.js
 canaryo run server.js
+canaryo run --node server.js
 canaryo server.js
 ```
 
@@ -30,4 +31,4 @@ canaryo server.js
 - **Compatible with limitations** — it uses APIs queued for implementation.
 - **Incompatible** — it uses an API that Canaryo cannot run at this stage.
 
-The first native milestone is a small CommonJS HTTP server surface for basic Express-style applications. The next stages are module resolution, streams and buffers, filesystem support, then a larger package compatibility suite.
+The next native milestone is a small CommonJS HTTP server surface. Later stages cover module resolution, streams and buffers, filesystem support, and a larger package compatibility suite.

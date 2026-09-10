@@ -1,8 +1,16 @@
 use std::process::{Command, ExitCode};
 
-use crate::analyzer::{self, Compatibility};
+use crate::{
+    analyzer::{self, Compatibility},
+    cli::RuntimeMode,
+    runtime,
+};
 
-pub fn run(path: &str, arguments: &[String]) -> Result<ExitCode, String> {
+pub fn run(
+    path: &str,
+    arguments: &[String],
+    runtime_mode: RuntimeMode,
+) -> Result<ExitCode, String> {
     let report = analyzer::analyze_file(path)
         .map_err(|error| format!("não foi possível ler {path}: {error}"))?;
     report.print(path);
@@ -11,7 +19,16 @@ pub fn run(path: &str, arguments: &[String]) -> Result<ExitCode, String> {
         return Err("a análise encontrou funcionalidades incompatíveis".into());
     }
 
-    eprintln!("Runtime nativo ainda não disponível; executando com Node.js.");
+    match runtime_mode {
+        RuntimeMode::Native => {
+            runtime::execute(path, arguments)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        RuntimeMode::Node => run_with_node(path, arguments),
+    }
+}
+
+fn run_with_node(path: &str, arguments: &[String]) -> Result<ExitCode, String> {
     let status = Command::new("node")
         .arg(path)
         .args(arguments)

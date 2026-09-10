@@ -10,3 +10,4 @@ name = "canaryo"
 path = "src/main.rs"
 
 [dependencies]
+rquickjs = "0.12.2"

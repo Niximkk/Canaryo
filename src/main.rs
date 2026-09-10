@@ -2,6 +2,7 @@
 mod analyzer;
 mod cli;
 mod runner;
+mod runtime;
 
 use std::{env, process::ExitCode};
 
@@ -16,6 +17,7 @@ fn print_usage() {
          Uso:\n  \
          canaryo check <arquivo.js>\n  \
          canaryo run <arquivo.js> [argumentos...]\n  \
+         canaryo run --node <arquivo.js> [argumentos...]\n  \
          canaryo <arquivo.js> [argumentos...]"
     );
 }
@@ -41,7 +43,11 @@ fn execute(command: CliCommand) -> Result<ExitCode, String> {
                 ExitCode::SUCCESS
             })
         }
-        CliCommand::Run { path, arguments } => runner::run(&path, &arguments),
+        CliCommand::Run {
+            path,
+            arguments,
+            runtime,
+        } => runner::run(&path, &arguments, runtime),
     }
 }
 
