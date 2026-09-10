@@ -2,8 +2,11 @@ use std::{env, fs, path::Path};
 
 use rquickjs::{Array, CatchResultExt, Context, Function, Object, Runtime};
 
+use crate::http;
+
 const BOOTSTRAP: &str = r#"
 globalThis.global = globalThis;
+(() => {
 globalThis.console = Object.freeze({
     log(...values) {
         __canaryoPrint(values.map(formatValue).join(" "));
@@ -23,9 +26,31 @@ function formatValue(value) {
     }
 }
 
+const httpModule = Object.freeze({
+    createServer(requestListener) {
+        if (typeof requestListener !== "function") {
+            throw new TypeError("createServer requer uma função");
+        }
+
+        return {
+            listen(port, hostOrCallback, callback) {
+                const onListening = typeof hostOrCallback === "function"
+                    ? hostOrCallback
+                    : typeof callback === "function"
+                        ? callback
+                        : () => {};
+                __canaryoListen(Number(port), requestListener, onListening);
+                return this;
+            }
+        };
+    }
+});
+
 globalThis.require = function require(name) {
+    if (name === "http" || name === "node:http") return httpModule;
     throw new Error(`Canaryo ainda não implementa o módulo '${name}'`);
 };
+})();
 "#;
 
 pub fn execute(path: &str, arguments: &[String]) -> Result<(), String> {
@@ -66,6 +91,10 @@ fn install_host_globals<'js>(
         .map_err(|error| error.to_string())?;
     globals
         .set("__canaryoPrintError", print_error)
+        .map_err(|error| error.to_string())?;
+    let listen = Function::new(context.clone(), http::listen).map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoListen", listen)
         .map_err(|error| error.to_string())?;
 
     let process = Object::new(context.clone()).map_err(|error| error.to_string())?;
