@@ -24,7 +24,7 @@ fn free_port() -> u16 {
         .port()
 }
 
-fn request_fixture(fixture: &str) -> String {
+fn start_fixture(fixture: &str) -> (Server, TcpStream) {
     let port = free_port();
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut server = Server(
@@ -39,7 +39,7 @@ fn request_fixture(fixture: &str) -> String {
     );
     let deadline = Instant::now() + Duration::from_secs(10);
 
-    let mut stream = loop {
+    let stream = loop {
         match TcpStream::connect(("127.0.0.1", port)) {
             Ok(stream) => break stream,
             Err(_error) if Instant::now() < deadline => {
@@ -55,6 +55,11 @@ fn request_fixture(fixture: &str) -> String {
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .unwrap();
+    (server, stream)
+}
+
+fn request_fixture(fixture: &str) -> String {
+    let (_server, mut stream) = start_fixture(fixture);
     stream
         .write_all(b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
         .unwrap();
@@ -63,21 +68,66 @@ fn request_fixture(fixture: &str) -> String {
     response
 }
 
+fn read_response(stream: &mut TcpStream) -> String {
+    let mut response = Vec::new();
+
+    while !response.ends_with(b"\r\n\r\n") {
+        let mut byte = [0];
+        stream.read_exact(&mut byte).unwrap();
+        response.push(byte[0]);
+    }
+
+    let headers = String::from_utf8(response.clone()).unwrap();
+    let content_length = headers
+        .lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse::<usize>().unwrap())
+        })
+        .unwrap();
+    let header_length = response.len();
+    response.resize(header_length + content_length, 0);
+    stream.read_exact(&mut response[header_length..]).unwrap();
+    String::from_utf8(response).unwrap()
+}
+
 #[test]
 fn serves_a_native_node_http_application() {
     let response = request_fixture("fixtures/http-basic/server.js");
+    let headers = response.to_ascii_lowercase();
 
     assert!(response.starts_with("HTTP/1.1 200 OK"));
-    assert!(response.contains("Content-Type: text/plain; charset=utf-8"));
+    assert!(headers.contains("content-type: text/plain; charset=utf-8"));
     assert!(response.ends_with("Hello from Canaryo!"));
+}
+
+#[test]
+fn serves_multiple_requests_on_a_persistent_connection() {
+    let (_server, mut stream) = start_fixture("fixtures/http-basic/server.js");
+
+    stream
+        .write_all(b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+        .unwrap();
+    let first = read_response(&mut stream);
+    stream
+        .write_all(b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let second = read_response(&mut stream);
+
+    assert!(first.contains("Connection: keep-alive"));
+    assert!(first.ends_with("Hello from Canaryo!"));
+    assert!(second.contains("Connection: close"));
+    assert!(second.ends_with("Hello from Canaryo!"));
 }
 
 #[test]
 #[ignore = "requires npm ci in fixtures/express-basic"]
 fn serves_a_native_express_application() {
     let response = request_fixture("fixtures/express-basic/server.js");
+    let headers = response.to_ascii_lowercase();
 
     assert!(response.starts_with("HTTP/1.1 200 OK"));
-    assert!(response.contains("Content-Type: application/json; charset=utf-8"));
+    assert!(headers.contains("content-type: application/json; charset=utf-8"));
     assert!(response.ends_with(r#"{"runtime":"canaryo","status":"ok"}"#));
 }

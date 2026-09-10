@@ -1,6 +1,6 @@
 use std::{
     env,
-    io::{Read, Write},
+    io::{BufRead, BufReader, Read, Write},
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
@@ -9,7 +9,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-const REQUEST: &[u8] = b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+const CLOSE_REQUEST: &[u8] = b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+const KEEP_ALIVE_REQUEST: &[u8] = b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
 
 #[derive(Clone, Copy)]
 enum Runtime {
@@ -31,6 +32,7 @@ struct Config {
     runs: usize,
     startup_runs: usize,
     startup_only: bool,
+    keep_alive: bool,
 }
 
 struct Server(Child);
@@ -53,6 +55,10 @@ struct LoadResult {
 struct Sample {
     load: LoadResult,
     memory_mib: Option<f64>,
+}
+
+struct PersistentClient {
+    stream: BufReader<TcpStream>,
 }
 
 fn main() {
@@ -84,7 +90,14 @@ fn main() {
         "- Load duration per sample: {} s",
         config.duration.as_secs()
     );
-    println!("- HTTP mode: a new TCP connection for every request\n");
+    println!(
+        "- HTTP mode: {}\n",
+        if config.keep_alive {
+            "persistent connection per worker"
+        } else {
+            "new TCP connection per request"
+        }
+    );
 
     println!("## Startup\n");
     println!("| Application | Runtime | Median | Minimum | Maximum |");
@@ -126,6 +139,7 @@ fn main() {
                         &canaryo,
                         concurrency,
                         config.duration,
+                        config.keep_alive,
                     ));
                 }
                 samples.sort_by(|a, b| {
@@ -158,6 +172,7 @@ fn parse_config() -> Config {
         runs: 3,
         startup_runs: 7,
         startup_only: false,
+        keep_alive: false,
     };
     let arguments: Vec<String> = env::args().skip(1).collect();
     let mut index = 0;
@@ -169,6 +184,11 @@ fn parse_config() -> Config {
         }
         if arguments[index] == "--startup-only" {
             config.startup_only = true;
+            index += 1;
+            continue;
+        }
+        if arguments[index] == "--keep-alive" {
+            config.keep_alive = true;
             index += 1;
             continue;
         }
@@ -266,13 +286,14 @@ fn measure_load(
     canaryo: &Path,
     concurrency: usize,
     duration: Duration,
+    keep_alive: bool,
 ) -> Sample {
     let port = free_port();
     let mut server = spawn_server(runtime, root, fixture, canaryo, port);
     wait_until_ready(&mut server, port);
-    let _ = run_load(port, concurrency, Duration::from_millis(500));
+    let _ = run_load(port, concurrency, Duration::from_millis(500), keep_alive);
     let memory_mib = process_rss_mib(server.0.id());
-    let load = run_load(port, concurrency, duration);
+    let load = run_load(port, concurrency, duration, keep_alive);
 
     if let Some(status) = server.0.try_wait().unwrap() {
         panic!("{} exited during load: {status}", runtime.name());
@@ -281,13 +302,14 @@ fn measure_load(
     Sample { load, memory_mib }
 }
 
-fn run_load(port: u16, concurrency: usize, duration: Duration) -> LoadResult {
+fn run_load(port: u16, concurrency: usize, duration: Duration, keep_alive: bool) -> LoadResult {
     let barrier = Arc::new(Barrier::new(concurrency + 1));
     let mut workers = Vec::with_capacity(concurrency);
 
     for _ in 0..concurrency {
         let barrier = Arc::clone(&barrier);
         workers.push(thread::spawn(move || {
+            let mut persistent = keep_alive.then(|| persistent_connection(port));
             barrier.wait();
             let deadline = Instant::now() + duration;
             let mut latencies = Vec::new();
@@ -295,9 +317,19 @@ fn run_load(port: u16, concurrency: usize, duration: Duration) -> LoadResult {
 
             while Instant::now() < deadline {
                 let started = Instant::now();
-                match request(port) {
+                let result = if let Some(stream) = persistent.as_mut() {
+                    persistent_request(stream)
+                } else {
+                    request(port)
+                };
+                match result {
                     Ok(()) => latencies.push(started.elapsed()),
-                    Err(()) => errors += 1,
+                    Err(()) => {
+                        errors += 1;
+                        if keep_alive {
+                            persistent = Some(persistent_connection(port));
+                        }
+                    }
                 }
             }
             (latencies, errors)
@@ -327,21 +359,21 @@ fn run_load(port: u16, concurrency: usize, duration: Duration) -> LoadResult {
 
 fn request(port: u16) -> Result<(), ()> {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).map_err(|_| ())?;
-    exchange_request(&mut stream)
+    exchange_close_request(&mut stream)
 }
 
 fn readiness_request(port: u16) -> Result<(), ()> {
     let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
     let mut stream =
         TcpStream::connect_timeout(&address, Duration::from_millis(5)).map_err(|_| ())?;
-    exchange_request(&mut stream)
+    exchange_close_request(&mut stream)
 }
 
-fn exchange_request(stream: &mut TcpStream) -> Result<(), ()> {
+fn exchange_close_request(stream: &mut TcpStream) -> Result<(), ()> {
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .map_err(|_| ())?;
-    stream.write_all(REQUEST).map_err(|_| ())?;
+    stream.write_all(CLOSE_REQUEST).map_err(|_| ())?;
     let mut response = Vec::new();
     stream.read_to_end(&mut response).map_err(|_| ())?;
 
@@ -349,6 +381,92 @@ fn exchange_request(stream: &mut TcpStream) -> Result<(), ()> {
         Ok(())
     } else {
         Err(())
+    }
+}
+
+fn persistent_connection(port: u16) -> PersistentClient {
+    let stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    stream.set_nodelay(true).unwrap();
+    PersistentClient {
+        stream: BufReader::new(stream),
+    }
+}
+
+fn persistent_request(client: &mut PersistentClient) -> Result<(), ()> {
+    client
+        .stream
+        .get_mut()
+        .write_all(KEEP_ALIVE_REQUEST)
+        .map_err(|_| ())?;
+    let mut line = String::new();
+    client.stream.read_line(&mut line).map_err(|_| ())?;
+    if !line.starts_with("HTTP/1.1 200") {
+        return Err(());
+    }
+
+    let mut content_length = None;
+    let mut chunked = false;
+    loop {
+        line.clear();
+        client.stream.read_line(&mut line).map_err(|_| ())?;
+        if line == "\r\n" {
+            break;
+        }
+        let (name, value) = line.split_once(':').ok_or(())?;
+        if name.eq_ignore_ascii_case("content-length") {
+            content_length = Some(value.trim().parse::<usize>().map_err(|_| ())?);
+        }
+        if name.eq_ignore_ascii_case("transfer-encoding")
+            && value
+                .split(',')
+                .any(|value| value.trim().eq_ignore_ascii_case("chunked"))
+        {
+            chunked = true;
+        }
+    }
+
+    if let Some(content_length) = content_length {
+        read_exact_bytes(&mut client.stream, content_length)
+    } else if chunked {
+        read_chunked_body(&mut client.stream)
+    } else {
+        Err(())
+    }
+}
+
+fn read_exact_bytes(reader: &mut impl Read, length: usize) -> Result<(), ()> {
+    let mut remaining = length;
+    let mut buffer = [0; 4096];
+
+    while remaining > 0 {
+        let size = remaining.min(buffer.len());
+        reader.read_exact(&mut buffer[..size]).map_err(|_| ())?;
+        remaining -= size;
+    }
+    Ok(())
+}
+
+fn read_chunked_body(reader: &mut impl BufRead) -> Result<(), ()> {
+    let mut line = String::new();
+
+    loop {
+        line.clear();
+        reader.read_line(&mut line).map_err(|_| ())?;
+        let size = line
+            .trim_end()
+            .split(';')
+            .next()
+            .and_then(|value| usize::from_str_radix(value, 16).ok())
+            .ok_or(())?;
+        if size == 0 {
+            line.clear();
+            reader.read_line(&mut line).map_err(|_| ())?;
+            return (line == "\r\n").then_some(()).ok_or(());
+        }
+        read_exact_bytes(reader, size + 2)?;
     }
 }
 

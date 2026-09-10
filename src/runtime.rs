@@ -30,6 +30,54 @@ function formatValue(value) {
 function IncomingMessage() {}
 function ServerResponse() {}
 
+ServerResponse.prototype.setHeader = function(name, value) {
+    this.__canaryoHeaders[String(name).toLowerCase()] = String(value);
+    return this;
+};
+ServerResponse.prototype.getHeader = function(name) {
+    return this.__canaryoHeaders[String(name).toLowerCase()];
+};
+ServerResponse.prototype.hasHeader = function(name) {
+    return Object.prototype.hasOwnProperty.call(
+        this.__canaryoHeaders,
+        String(name).toLowerCase()
+    );
+};
+ServerResponse.prototype.removeHeader = function(name) {
+    delete this.__canaryoHeaders[String(name).toLowerCase()];
+};
+ServerResponse.prototype.getHeaders = function() {
+    return Object.assign(Object.create(null), this.__canaryoHeaders);
+};
+ServerResponse.prototype.writeHead = function(status, statusMessageOrHeaders, headers) {
+    this.statusCode = Number(status);
+    const values = typeof statusMessageOrHeaders === "object"
+        ? statusMessageOrHeaders
+        : headers;
+    if (values) {
+        for (const [name, value] of Object.entries(values)) {
+            this.setHeader(name, value);
+        }
+    }
+    this.headersSent = true;
+    return this;
+};
+ServerResponse.prototype.write = function(chunk) {
+    if (chunk !== undefined && chunk !== null) {
+        this.__canaryoBody += typeof chunk === "string" ? chunk : chunk.toString();
+    }
+    this.headersSent = true;
+    return true;
+};
+ServerResponse.prototype.end = function(chunk) {
+    if (chunk !== undefined && chunk !== null) {
+        this.__canaryoBody += typeof chunk === "string" ? chunk : chunk.toString();
+    }
+    this.headersSent = true;
+    this.writableEnded = true;
+    return this;
+};
+
 const httpModule = Object.freeze({
     IncomingMessage,
     ServerResponse,
@@ -47,11 +95,13 @@ const httpModule = Object.freeze({
                     : typeof callback === "function"
                         ? callback
                         : () => {};
-                __canaryoListen(Number(port), (request, response) => {
-                    Object.setPrototypeOf(request, IncomingMessage.prototype);
-                    Object.setPrototypeOf(response, ServerResponse.prototype);
-                    requestListener(request, response);
-                }, onListening);
+                __canaryoListen(
+                    Number(port),
+                    requestListener,
+                    onListening,
+                    IncomingMessage.prototype,
+                    ServerResponse.prototype
+                );
                 return this;
             }
         };
@@ -145,6 +195,7 @@ pub fn execute(path: &str, arguments: &[String]) -> Result<(), String> {
         .canonicalize()
         .map_err(|error| format!("não foi possível resolver {path}: {error}"))?;
     let runtime = Runtime::new().map_err(|error| format!("erro ao criar runtime: {error}"))?;
+    runtime.set_gc_threshold(8 * 1024 * 1024);
     let context =
         Context::full(&runtime).map_err(|error| format!("erro ao criar contexto: {error}"))?;
 

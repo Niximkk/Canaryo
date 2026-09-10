@@ -1,14 +1,14 @@
 use std::{
-    cell::RefCell,
+    collections::HashMap,
     io::{Read, Write},
-    net::{TcpListener, TcpStream},
-    rc::Rc,
-    time::Duration,
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
 };
 
-use rquickjs::{Coerced, Ctx, Exception, Function, Object, Result, prelude::Opt};
+use mio::{Events, Interest, Poll, Token, net::TcpStream};
+use rquickjs::{Coerced, Ctx, Exception, Function, Object, Result};
 
 const MAX_REQUEST_SIZE: usize = 1024 * 1024;
+const LISTENER: Token = Token(0);
 
 struct Request {
     method: String,
@@ -18,10 +18,26 @@ struct Request {
     body: Vec<u8>,
 }
 
+#[derive(Default)]
 struct Response {
     status: u16,
     headers: Vec<(String, String)>,
     body: Vec<u8>,
+}
+
+#[derive(Default)]
+struct ConnectionReader {
+    buffered: Vec<u8>,
+}
+
+struct Connection {
+    stream: TcpStream,
+    reader: ConnectionReader,
+    outgoing: Vec<u8>,
+    written: usize,
+    writable_interest: bool,
+    close_after_write: bool,
+    read_closed: bool,
 }
 
 pub fn listen<'js>(
@@ -29,53 +45,215 @@ pub fn listen<'js>(
     port: u16,
     handler: Function<'js>,
     on_listening: Function<'js>,
+    request_prototype: Object<'js>,
+    response_prototype: Object<'js>,
 ) -> Result<()> {
-    let listener = TcpListener::bind(("127.0.0.1", port))
+    let address = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port));
+    let mut listener = mio::net::TcpListener::bind(address)
         .map_err(|error| Exception::throw_message(&context, &error.to_string()))?;
-
+    let mut poll =
+        Poll::new().map_err(|error| Exception::throw_message(&context, &error.to_string()))?;
+    poll.registry()
+        .register(&mut listener, LISTENER, Interest::READABLE)
+        .map_err(|error| Exception::throw_message(&context, &error.to_string()))?;
+    let mut events = Events::with_capacity(1024);
+    let mut connections = HashMap::new();
+    let mut next_token = 1;
     on_listening.call::<_, ()>(())?;
 
-    for stream in listener.incoming() {
-        let mut stream =
-            stream.map_err(|error| Exception::throw_message(&context, &error.to_string()))?;
-        stream
-            .set_read_timeout(Some(Duration::from_secs(30)))
+    loop {
+        poll.poll(&mut events, None)
             .map_err(|error| Exception::throw_message(&context, &error.to_string()))?;
 
-        handle_connection(&context, &handler, &mut stream)?;
-    }
+        for event in &events {
+            if event.token() == LISTENER {
+                accept_connections(
+                    &mut listener,
+                    poll.registry(),
+                    &mut connections,
+                    &mut next_token,
+                );
+                continue;
+            }
 
-    Ok(())
+            let token = event.token();
+            let mut remove = event.is_error() || event.is_write_closed();
+            if event.is_readable() && !remove {
+                let batch = connections
+                    .get_mut(&token)
+                    .and_then(|connection| connection.read_requests().ok());
+                match batch {
+                    Some((requests, read_closed)) => {
+                        for request in requests {
+                            let keep_alive = request.keep_alive();
+                            let response = handle_request(
+                                &context,
+                                &handler,
+                                &request,
+                                &request_prototype,
+                                &response_prototype,
+                            )?;
+                            if let Some(connection) = connections.get_mut(&token) {
+                                append_response(&mut connection.outgoing, &response, keep_alive);
+                                connection.close_after_write |= !keep_alive;
+                            }
+                            if !keep_alive {
+                                break;
+                            }
+                        }
+                        if let Some(connection) = connections.get_mut(&token) {
+                            connection.read_closed |= read_closed || event.is_read_closed();
+                            if connection.flush().is_err() {
+                                remove = true;
+                            }
+                        }
+                    }
+                    None => remove = true,
+                }
+            }
+
+            if event.is_writable()
+                && !remove
+                && connections
+                    .get_mut(&token)
+                    .is_none_or(|connection| connection.flush().is_err())
+            {
+                remove = true;
+            }
+
+            if let Some(connection) = connections.get_mut(&token) {
+                if connection.outgoing.is_empty()
+                    && (connection.close_after_write || connection.read_closed)
+                {
+                    remove = true;
+                } else if !remove {
+                    let wants_write = !connection.outgoing.is_empty();
+                    if wants_write != connection.writable_interest {
+                        let interest = if wants_write {
+                            Interest::READABLE | Interest::WRITABLE
+                        } else {
+                            Interest::READABLE
+                        };
+                        if poll
+                            .registry()
+                            .reregister(&mut connection.stream, token, interest)
+                            .is_err()
+                        {
+                            remove = true;
+                        } else {
+                            connection.writable_interest = wants_write;
+                        }
+                    }
+                }
+            }
+
+            if remove {
+                connections.remove(&token);
+            }
+        }
+    }
 }
 
-fn handle_connection<'js>(
+fn accept_connections(
+    listener: &mut mio::net::TcpListener,
+    registry: &mio::Registry,
+    connections: &mut HashMap<Token, Connection>,
+    next_token: &mut usize,
+) {
+    loop {
+        match listener.accept() {
+            Ok((mut stream, _)) => {
+                let token = Token(*next_token);
+                *next_token = next_token.wrapping_add(1).max(1);
+                let _ = stream.set_nodelay(true);
+                if registry
+                    .register(&mut stream, token, Interest::READABLE)
+                    .is_ok()
+                {
+                    connections.insert(
+                        token,
+                        Connection {
+                            stream,
+                            reader: ConnectionReader::default(),
+                            outgoing: Vec::with_capacity(512),
+                            written: 0,
+                            writable_interest: false,
+                            close_after_write: false,
+                            read_closed: false,
+                        },
+                    );
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return,
+            Err(_) => return,
+        }
+    }
+}
+
+impl Connection {
+    fn read_requests(&mut self) -> std::io::Result<(Vec<Request>, bool)> {
+        let mut requests = Vec::new();
+
+        loop {
+            while let Some(request) = self.reader.parse()? {
+                requests.push(request);
+            }
+
+            let mut chunk = [0_u8; 4096];
+            match self.stream.read(&mut chunk) {
+                Ok(0) => return Ok((requests, true)),
+                Ok(read) => self.reader.push(&chunk[..read])?,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    return Ok((requests, false));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        while self.written < self.outgoing.len() {
+            match self.stream.write(&self.outgoing[self.written..]) {
+                Ok(0) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::WriteZero,
+                        "conexão encerrada durante a resposta HTTP",
+                    ));
+                }
+                Ok(written) => self.written += written,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(()),
+                Err(error) => return Err(error),
+            }
+        }
+
+        self.outgoing.clear();
+        self.written = 0;
+        Ok(())
+    }
+}
+
+fn handle_request<'js>(
     context: &Ctx<'js>,
     handler: &Function<'js>,
-    stream: &mut TcpStream,
-) -> Result<()> {
-    let request = read_request(stream)
-        .map_err(|error| Exception::throw_message(context, &error.to_string()))?;
-    let request_object = request_to_js(context, &request)?;
-    let state = Rc::new(RefCell::new(Response {
-        status: 200,
-        headers: Vec::new(),
-        body: Vec::new(),
-    }));
-    let response_object = response_to_js(context, Rc::clone(&state))?;
+    request: &Request,
+    request_prototype: &Object<'js>,
+    response_prototype: &Object<'js>,
+) -> Result<Response> {
+    let request_object = request_to_js(context, request, request_prototype)?;
+    let response_object = response_to_js(context, response_prototype)?;
     request_object.set("res", response_object.clone())?;
     response_object.set("req", request_object.clone())?;
 
     handler.call::<_, ()>((request_object, response_object.clone()))?;
 
-    if let Ok(status) = response_object.get::<_, u16>("statusCode") {
-        state.borrow_mut().status = status;
-    }
-
-    write_response(stream, &state.borrow())
-        .map_err(|error| Exception::throw_message(context, &error.to_string()))
+    response_from_js(&response_object)
 }
 
-fn request_to_js<'js>(context: &Ctx<'js>, request: &Request) -> Result<Object<'js>> {
+fn request_to_js<'js>(
+    context: &Ctx<'js>,
+    request: &Request,
+    prototype: &Object<'js>,
+) -> Result<Object<'js>> {
     let object = Object::new(context.clone())?;
     let headers = Object::new(context.clone())?;
 
@@ -88,217 +266,142 @@ fn request_to_js<'js>(context: &Ctx<'js>, request: &Request) -> Result<Object<'j
     object.set("httpVersion", request.version.as_str())?;
     object.set("headers", headers)?;
     object.set("body", String::from_utf8_lossy(&request.body).as_ref())?;
+    object.set_prototype(Some(prototype))?;
     Ok(object)
 }
 
-fn response_to_js<'js>(context: &Ctx<'js>, state: Rc<RefCell<Response>>) -> Result<Object<'js>> {
+fn response_to_js<'js>(context: &Ctx<'js>, prototype: &Object<'js>) -> Result<Object<'js>> {
     let object = Object::new(context.clone())?;
+    let headers = Object::new(context.clone())?;
     object.set("statusCode", 200)?;
     object.set("headersSent", false)?;
     object.set("writableEnded", false)?;
-
-    let header_state = Rc::clone(&state);
-    object.set(
-        "setHeader",
-        Function::new(
-            context.clone(),
-            move |name: String, value: Coerced<String>| {
-                set_header(&mut header_state.borrow_mut().headers, name, value.0);
-            },
-        )?,
-    )?;
-
-    let get_header_state = Rc::clone(&state);
-    object.set(
-        "getHeader",
-        Function::new(context.clone(), move |name: String| {
-            get_header(&get_header_state.borrow().headers, &name)
-        })?,
-    )?;
-
-    let has_header_state = Rc::clone(&state);
-    object.set(
-        "hasHeader",
-        Function::new(context.clone(), move |name: String| {
-            get_header(&has_header_state.borrow().headers, &name).is_some()
-        })?,
-    )?;
-
-    let remove_header_state = Rc::clone(&state);
-    object.set(
-        "removeHeader",
-        Function::new(context.clone(), move |name: String| {
-            remove_header(&mut remove_header_state.borrow_mut().headers, &name);
-        })?,
-    )?;
-
-    let get_headers_state = Rc::clone(&state);
-    object.set(
-        "getHeaders",
-        Function::new(
-            context.clone(),
-            move |context: Ctx<'js>| -> Result<Object<'js>> {
-                let headers = Object::new(context)?;
-                for (name, value) in &get_headers_state.borrow().headers {
-                    headers.set(name.as_str(), value.as_str())?;
-                }
-                Ok(headers)
-            },
-        )?,
-    )?;
-
-    let head_state = Rc::clone(&state);
-    object.set(
-        "writeHead",
-        Function::new(
-            context.clone(),
-            move |status: u16, headers: Opt<Object>| -> Result<()> {
-                head_state.borrow_mut().status = status;
-                if let Some(headers) = headers.0 {
-                    for property in headers.props::<String, Coerced<String>>() {
-                        let (name, value) = property?;
-                        set_header(&mut head_state.borrow_mut().headers, name, value.0);
-                    }
-                }
-                Ok(())
-            },
-        )?,
-    )?;
-
-    let write_state = Rc::clone(&state);
-    object.set(
-        "write",
-        Function::new(context.clone(), move |chunk: Coerced<String>| {
-            write_state
-                .borrow_mut()
-                .body
-                .extend_from_slice(chunk.0.as_bytes());
-            true
-        })?,
-    )?;
-
-    object.set(
-        "end",
-        Function::new(context.clone(), move |chunk: Opt<Coerced<String>>| {
-            if let Some(chunk) = chunk.0 {
-                state
-                    .borrow_mut()
-                    .body
-                    .extend_from_slice(chunk.0.as_bytes());
-            }
-        })?,
-    )?;
-
+    object.set("__canaryoHeaders", headers)?;
+    object.set("__canaryoBody", "")?;
+    object.set_prototype(Some(prototype))?;
     Ok(object)
 }
 
-fn set_header(headers: &mut Vec<(String, String)>, name: String, value: String) {
-    if let Some(header) = headers
-        .iter_mut()
-        .find(|(existing, _)| existing.eq_ignore_ascii_case(&name))
-    {
-        header.1 = value;
-    } else {
-        headers.push((name, value));
-    }
-}
-
-fn get_header(headers: &[(String, String)], name: &str) -> Option<String> {
-    headers
-        .iter()
-        .find(|(existing, _)| existing.eq_ignore_ascii_case(name))
-        .map(|(_, value)| value.clone())
-}
-
-fn remove_header(headers: &mut Vec<(String, String)>, name: &str) {
-    headers.retain(|(existing, _)| !existing.eq_ignore_ascii_case(name));
-}
-
-fn read_request(stream: &mut TcpStream) -> std::io::Result<Request> {
-    let mut data = Vec::new();
-    let mut chunk = [0_u8; 4096];
-    let header_end;
-
-    loop {
-        let read = stream.read(&mut chunk)?;
-        if read == 0 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "conexão encerrada antes do cabeçalho HTTP",
-            ));
-        }
-        data.extend_from_slice(&chunk[..read]);
-
-        if data.len() > MAX_REQUEST_SIZE {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "requisição excede o limite de 1 MiB",
-            ));
-        }
-
-        if let Some(position) = find_bytes(&data, b"\r\n\r\n") {
-            header_end = position + 4;
-            break;
-        }
-    }
-
-    let head = std::str::from_utf8(&data[..header_end - 4])
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-    let mut lines = head.split("\r\n");
-    let request_line = lines.next().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, "linha HTTP ausente")
-    })?;
-    let mut request_parts = request_line.split_whitespace();
-    let method = required_part(request_parts.next(), "método HTTP ausente")?.to_string();
-    let url = required_part(request_parts.next(), "URL ausente")?.to_string();
-    let version = required_part(request_parts.next(), "versão HTTP ausente")?
-        .trim_start_matches("HTTP/")
-        .to_string();
+fn response_from_js(response: &Object<'_>) -> Result<Response> {
+    let headers_object: Object = response.get("__canaryoHeaders")?;
     let mut headers = Vec::new();
-
-    for line in lines {
-        let (name, value) = line.split_once(':').ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, "cabeçalho HTTP inválido")
-        })?;
-        headers.push((name.trim().to_ascii_lowercase(), value.trim().to_string()));
+    for property in headers_object.props::<String, Coerced<String>>() {
+        let (name, value) = property?;
+        headers.push((name, value.0));
     }
+    let body: String = response.get("__canaryoBody")?;
 
-    let content_length = headers
-        .iter()
-        .find(|(name, _)| name == "content-length")
-        .and_then(|(_, value)| value.parse::<usize>().ok())
-        .unwrap_or(0);
-    let expected_size = header_end + content_length;
+    Ok(Response {
+        status: response.get("statusCode")?,
+        headers,
+        body: body.into_bytes(),
+    })
+}
 
-    while data.len() < expected_size {
-        let read = stream.read(&mut chunk)?;
-        if read == 0 {
-            break;
+impl Request {
+    fn keep_alive(&self) -> bool {
+        let connection = self
+            .headers
+            .iter()
+            .find(|(name, _)| name == "connection")
+            .map(|(_, value)| value.as_str());
+        let has_token = |token: &str| {
+            connection.is_some_and(|value| {
+                value
+                    .split(',')
+                    .any(|value| value.trim().eq_ignore_ascii_case(token))
+            })
+        };
+
+        if self.version == "1.1" {
+            !has_token("close")
+        } else {
+            has_token("keep-alive")
         }
-        data.extend_from_slice(&chunk[..read]);
-        if data.len() > MAX_REQUEST_SIZE {
+    }
+}
+
+impl ConnectionReader {
+    fn push(&mut self, data: &[u8]) -> std::io::Result<()> {
+        self.buffered.extend_from_slice(data);
+        if self.buffered.len() > MAX_REQUEST_SIZE {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "requisição excede o limite de 1 MiB",
             ));
         }
+        Ok(())
     }
 
-    Ok(Request {
-        method,
-        url,
-        version,
-        headers,
-        body: data[header_end..data.len().min(expected_size)].to_vec(),
-    })
+    fn parse(&mut self) -> std::io::Result<Option<Request>> {
+        let Some(header_position) = find_bytes(&self.buffered, b"\r\n\r\n") else {
+            return Ok(None);
+        };
+        let header_end = header_position + 4;
+
+        let head = std::str::from_utf8(&self.buffered[..header_end - 4])
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+        let mut lines = head.split("\r\n");
+        let request_line = lines.next().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "linha HTTP ausente")
+        })?;
+        let mut request_parts = request_line.split_whitespace();
+        let method = required_part(request_parts.next(), "método HTTP ausente")?.to_string();
+        let url = required_part(request_parts.next(), "URL ausente")?.to_string();
+        let version = required_part(request_parts.next(), "versão HTTP ausente")?
+            .trim_start_matches("HTTP/")
+            .to_string();
+        let mut headers = Vec::new();
+
+        for line in lines {
+            let (name, value) = line.split_once(':').ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "cabeçalho HTTP inválido")
+            })?;
+            headers.push((name.trim().to_ascii_lowercase(), value.trim().to_string()));
+        }
+
+        let content_length = headers
+            .iter()
+            .find(|(name, _)| name == "content-length")
+            .map(|(_, value)| {
+                value
+                    .parse::<usize>()
+                    .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+            })
+            .transpose()?
+            .unwrap_or(0);
+        let expected_size = header_end + content_length;
+
+        if expected_size > MAX_REQUEST_SIZE {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "requisição excede o limite de 1 MiB",
+            ));
+        }
+
+        if self.buffered.len() < expected_size {
+            return Ok(None);
+        }
+
+        let remaining = self.buffered.split_off(expected_size);
+        let request_data = std::mem::replace(&mut self.buffered, remaining);
+        Ok(Some(Request {
+            method,
+            url,
+            version,
+            headers,
+            body: request_data[header_end..expected_size].to_vec(),
+        }))
+    }
 }
 
 fn required_part<'a>(part: Option<&'a str>, message: &str) -> std::io::Result<&'a str> {
     part.ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, message))
 }
 
-fn write_response(stream: &mut TcpStream, response: &Response) -> std::io::Result<()> {
-    let mut head = format!(
+fn append_response(buffer: &mut Vec<u8>, response: &Response, keep_alive: bool) {
+    let _ = write!(
+        buffer,
         "HTTP/1.1 {} {}\r\n",
         response.status,
         reason_phrase(response.status)
@@ -311,19 +414,20 @@ fn write_response(stream: &mut TcpStream, response: &Response) -> std::io::Resul
     for (name, value) in &response.headers {
         if !name.eq_ignore_ascii_case("content-length") && !name.eq_ignore_ascii_case("connection")
         {
-            head.push_str(&format!("{name}: {value}\r\n"));
+            let _ = write!(buffer, "{name}: {value}\r\n");
         }
     }
 
     if !has_content_type {
-        head.push_str("Content-Type: text/plain; charset=utf-8\r\n");
+        buffer.extend_from_slice(b"Content-Type: text/plain; charset=utf-8\r\n");
     }
-    head.push_str(&format!("Content-Length: {}\r\n", response.body.len()));
-    head.push_str("Connection: close\r\n\r\n");
-
-    stream.write_all(head.as_bytes())?;
-    stream.write_all(&response.body)?;
-    stream.flush()
+    let _ = write!(buffer, "Content-Length: {}\r\n", response.body.len());
+    buffer.extend_from_slice(if keep_alive {
+        b"Connection: keep-alive\r\n\r\n"
+    } else {
+        b"Connection: close\r\n\r\n"
+    });
+    buffer.extend_from_slice(&response.body);
 }
 
 fn reason_phrase(status: u16) -> &'static str {
@@ -354,16 +458,34 @@ mod tests {
     }
 
     #[test]
-    fn replaces_headers_case_insensitively() {
-        let mut headers = vec![("Content-Type".into(), "text/plain".into())];
+    fn keeps_http_11_connections_open_by_default() {
+        let request = Request {
+            method: "GET".into(),
+            url: "/".into(),
+            version: "1.1".into(),
+            headers: Vec::new(),
+            body: Vec::new(),
+        };
 
-        set_header(
-            &mut headers,
-            "content-type".into(),
-            "application/json".into(),
-        );
+        assert!(request.keep_alive());
+    }
 
-        assert_eq!(headers.len(), 1);
-        assert_eq!(headers[0].1, "application/json");
+    #[test]
+    fn parses_pipelined_requests_without_losing_bytes() {
+        let mut reader = ConnectionReader::default();
+        reader
+            .push(
+                b"GET /first HTTP/1.1\r\nHost: localhost\r\n\r\nGET /second HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+            )
+            .unwrap();
+
+        let first = reader.parse().unwrap().unwrap();
+        let second = reader.parse().unwrap().unwrap();
+
+        assert_eq!(first.url, "/first");
+        assert!(first.keep_alive());
+        assert_eq!(second.url, "/second");
+        assert!(!second.keep_alive());
+        assert!(reader.parse().unwrap().is_none());
     }
 }

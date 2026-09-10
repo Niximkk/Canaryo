@@ -29,7 +29,7 @@ Canaryo 0.1.0 is an experimental runtime. Basic `node:http` and Express 5.2.1 ap
 ## Why Canaryo?
 
 - **Existing code first:** run supported CommonJS applications without rewriting them.
-- **Small memory footprint:** the current Express fixture uses about 10 MiB of resident memory.
+- **Small memory footprint:** the current Express fixture uses about 10.6 MiB of resident memory with 16 persistent connections.
 - **Fast startup:** native HTTP starts in about 10 ms and the tested Express application starts faster than Node.js on the benchmark machine.
 - **Compatibility report:** inspect an entry point and its dependencies before execution.
 - **Explicit escape hatch:** delegate to the installed Node.js runtime when necessary.
@@ -78,13 +78,14 @@ Latest local results on Windows 11, a Ryzen 5 5600X, and Node.js 22.15.1:
 
 | Scenario | Node.js | Canaryo | Difference |
 |---|---:|---:|---:|
-| `node:http` startup | 51.86 ms | 9.91 ms | 80.9% lower |
-| Express startup | 206.60 ms | 166.84 ms | 19.2% lower |
-| Express, concurrency 1 | 1,638 req/s | 2,029 req/s | 23.9% higher |
-| Express, concurrency 16 | 3,522 req/s | 4,183 req/s | 18.8% higher |
-| Express RSS, concurrency 16 | 64.8 MiB | 10.0 MiB | 84.6% lower |
+| `node:http` startup | 52.88 ms | 9.99 ms | 81.1% lower |
+| Express startup | 193.14 ms | 152.82 ms | 20.9% lower |
+| Express, new connections × 16 | 3,584 req/s | 4,299 req/s | 20.0% higher |
+| Express, keep-alive × 1 | 6,371 req/s | 5,256 req/s | 17.5% lower |
+| Express, keep-alive × 16 | 6,359 req/s | 6,584 req/s | 3.5% higher |
+| Express RSS, keep-alive × 16 | 88.4 MiB | 10.6 MiB | 88.0% lower |
 
-The benchmark opens a new TCP connection for every request because Canaryo does not support keep-alive yet. These numbers measure the current compatibility surface on one machine, not every Node.js workload. See [BENCHMARKS.md](BENCHMARKS.md) for the complete results and methodology.
+Canaryo leads the concurrent keep-alive test but Node.js remains faster with one persistent Express connection. These numbers measure the current compatibility surface on one machine, not every Node.js workload. See [BENCHMARKS.md](BENCHMARKS.md) for the complete results and methodology.
 
 ## How it works
 
@@ -95,13 +96,13 @@ flowchart LR
     Run --> QuickJS[QuickJS-NG]
     QuickJS --> CommonJS[CommonJS loader]
     QuickJS --> APIs[Node.js compatibility layer]
-    APIs --> HTTP[Rust HTTP server]
+    APIs --> HTTP[Mio event loop]
     Check --> Graph[Recursive dependency graph]
 ```
 
 - `src/runtime.rs` creates the JavaScript context, loads CommonJS, and caches resolutions.
 - `src/modules.rs` implements Node-style file and package resolution.
-- `src/http.rs` maps `node:http` calls to Rust TCP sockets.
+- `src/http.rs` maps `node:http` calls to a non-blocking Rust event loop.
 - `src/polyfills.js` provides the JavaScript-facing compatibility layer.
 - `src/analyzer.rs` powers the recursive `check` command.
 
@@ -110,12 +111,13 @@ flowchart LR
 | Area | Status | Current scope |
 |---|---|---|
 | CommonJS | Supported | Relative modules, JSON, package `main`, scoped packages, cache, and upward `node_modules` lookup. |
-| `node:http` | Partial | Server creation, request metadata and body, response status, headers, `write`, and `end`. |
+| `node:http` | Partial | Server creation, persistent HTTP/1.1 connections, pipelining, request metadata and body, response status, headers, `write`, and `end`. |
 | Express | Partial | Express 5.2.1 startup, basic routing, and JSON responses. |
 | Buffers and streams | Partial | Compatibility methods required by the current Express fixture. |
 | Filesystem APIs | Partial | Initial synchronous compatibility methods. |
 | ESM | Planned | Native `import` and `export` execution is not available yet. |
-| Keep-alive and TLS | Planned | The current server closes the connection after each response. |
+| Keep-alive | Supported | Connections persist by default on HTTP/1.1 and honor `Connection: close`. |
+| TLS | Planned | HTTPS sockets and certificates are not available yet. |
 | Native `.node` addons | Unsupported | Native Node.js ABI modules cannot be loaded. |
 
 `canaryo check` reports one of three project-level outcomes:
@@ -141,6 +143,7 @@ Reproduce the performance comparison:
 ```sh
 cargo build --release
 cargo bench --bench runtime -- --duration 3 --runs 3 --startup-runs 7
+cargo bench --bench runtime -- --keep-alive --duration 3 --runs 3 --startup-runs 7
 ```
 
 Use `--startup-only` while working specifically on initialization:
@@ -151,7 +154,7 @@ cargo bench --bench runtime -- --startup-only --startup-runs 15
 
 ## Roadmap
 
-- HTTP keep-alive and multiple requests per connection.
+- Connection timeouts, limits, backpressure, and graceful shutdown.
 - Streaming request and response bodies.
 - A real asynchronous event loop for timers, I/O, and promises.
 - Wider Buffer, stream, filesystem, crypto, and networking support.
