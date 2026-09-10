@@ -1,4 +1,33 @@
-use std::{fs, io, path::Path};
+use std::{
+    collections::HashSet,
+    fs, io,
+    path::{Path, PathBuf},
+};
+
+use crate::modules;
+
+const MAX_ANALYZED_FILES: usize = 10_000;
+const NODE_BUILTINS: &[&str] = &[
+    "assert",
+    "buffer",
+    "child_process",
+    "crypto",
+    "events",
+    "fs",
+    "http",
+    "https",
+    "net",
+    "os",
+    "path",
+    "querystring",
+    "stream",
+    "string_decoder",
+    "timers",
+    "tty",
+    "url",
+    "util",
+    "zlib",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Compatibility {
@@ -25,22 +54,22 @@ impl Compatibility {
     }
 }
 
-struct Finding {
-    compatibility: Compatibility,
-    message: &'static str,
-}
-
-// Uma regra representa uma API do Node e todas as grafias que reconhecemos para
-// importá-la. A fatia `&[&str]` funciona como uma lista emprestada de textos.
 struct Rule {
     patterns: &'static [&'static str],
     compatibility: Compatibility,
     message: &'static str,
 }
 
+struct Finding {
+    file: PathBuf,
+    compatibility: Compatibility,
+    message: String,
+}
+
 pub struct Report {
     compatibility: Compatibility,
     findings: Vec<Finding>,
+    analyzed_files: usize,
 }
 
 impl Report {
@@ -50,53 +79,111 @@ impl Report {
 
     pub fn print(&self, path: &str) {
         println!("Relatório Canaryo: {}", self.compatibility.label());
+        println!("  {} arquivo(s) analisado(s)", self.analyzed_files);
 
         if self.findings.is_empty() {
             println!(
-                "  Nenhuma API incompatível foi detectada em {}.",
+                "  Nenhuma incompatibilidade detectada a partir de {}.",
                 Path::new(path).display()
             );
             return;
         }
 
         for finding in &self.findings {
-            println!("  [{}] {}", finding.compatibility.label(), finding.message);
+            println!(
+                "  [{}] {}: {}",
+                finding.compatibility.label(),
+                display_path(&finding.file),
+                finding.message
+            );
         }
+    }
+
+    fn add(&mut self, finding: Finding) {
+        if finding.compatibility.severity() > self.compatibility.severity() {
+            self.compatibility = finding.compatibility;
+        }
+        self.findings.push(finding);
     }
 }
 
-fn scan(source: &str) -> Report {
-    let checks = [
+fn display_path(path: &Path) -> String {
+    let relative = std::env::current_dir()
+        .ok()
+        .and_then(|directory| directory.canonicalize().ok())
+        .and_then(|directory| path.strip_prefix(directory).ok())
+        .unwrap_or(path);
+    relative.to_string_lossy().into_owned()
+}
+
+pub fn analyze_file(path: &str) -> io::Result<Report> {
+    let entry = Path::new(path).canonicalize()?;
+    let mut report = Report {
+        compatibility: Compatibility::Compatible,
+        findings: Vec::new(),
+        analyzed_files: 0,
+    };
+    let mut visited = HashSet::new();
+
+    visit(&entry, &mut report, &mut visited)?;
+    Ok(report)
+}
+
+fn visit(path: &Path, report: &mut Report, visited: &mut HashSet<PathBuf>) -> io::Result<()> {
+    let path = path.canonicalize()?;
+    if !visited.insert(path.clone()) {
+        return Ok(());
+    }
+    if visited.len() > MAX_ANALYZED_FILES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "projeto excede o limite de 10.000 arquivos analisados",
+        ));
+    }
+
+    let source = fs::read_to_string(&path)?;
+    report.analyzed_files += 1;
+
+    for finding in scan_source(&source, &path) {
+        report.add(finding);
+    }
+
+    if path.extension().and_then(|extension| extension.to_str()) == Some("json") {
+        return Ok(());
+    }
+
+    for specifier in extract_specifiers(&source) {
+        if is_node_builtin(&specifier) {
+            continue;
+        }
+
+        match modules::resolve(path.to_string_lossy().as_ref(), &specifier) {
+            Ok(dependency) => visit(&dependency, report, visited)?,
+            Err(error) => report.add(Finding {
+                file: path.clone(),
+                compatibility: Compatibility::Incompatible,
+                message: format!("não foi possível resolver '{specifier}': {error}"),
+            }),
+        }
+    }
+
+    Ok(())
+}
+
+fn scan_source(source: &str, path: &Path) -> Vec<Finding> {
+    let rules = [
         Rule {
-            patterns: &[
-                "node:http",
-                "require('http')",
-                "require(\"http\")",
-                "from 'http'",
-                "from \"http\"",
-            ],
+            patterns: &["node:http", "require('http')", "require(\"http\")"],
             compatibility: Compatibility::Compatible,
             message: "usa a API http",
         },
         Rule {
-            patterns: &[
-                "node:fs",
-                "require('fs')",
-                "require(\"fs\")",
-                "from 'fs'",
-                "from \"fs\"",
-            ],
+            patterns: &["node:fs", "require('fs')", "require(\"fs\")"],
             compatibility: Compatibility::Limited,
             message: "usa fs; o suporte a filesystem ainda é limitado",
         },
         Rule {
-            patterns: &[
-                "node:net",
-                "require('net')",
-                "require(\"net\")",
-                "from 'net'",
-                "from \"net\"",
-            ],
+            patterns: &["node:net", "require('net')", "require(\"net\")"],
             compatibility: Compatibility::Limited,
             message: "usa net; sockets TCP ainda não são suportados",
         },
@@ -105,11 +192,26 @@ fn scan(source: &str) -> Report {
                 "node:child_process",
                 "require('child_process')",
                 "require(\"child_process\")",
-                "from 'child_process'",
-                "from \"child_process\"",
             ],
             compatibility: Compatibility::Incompatible,
             message: "usa child_process, que ainda não é suportado",
+        },
+        Rule {
+            patterns: &[
+                "node:buffer",
+                "node:events",
+                "node:path",
+                "node:stream",
+                "node:url",
+                "node:util",
+            ],
+            compatibility: Compatibility::Limited,
+            message: "usa uma API Node que ainda possui suporte parcial",
+        },
+        Rule {
+            patterns: &["import ", "export "],
+            compatibility: Compatibility::Limited,
+            message: "usa sintaxe ESM; a execução nativa atual aceita CommonJS",
         },
         Rule {
             patterns: &[".node"],
@@ -117,93 +219,111 @@ fn scan(source: &str) -> Report {
             message: "referencia um módulo nativo .node",
         },
     ];
-
-    // `mut` permite alterar estas variáveis depois de criá-las. Sem ele, as
-    // variáveis Rust são imutáveis por padrão.
     let mut findings = Vec::new();
-    let mut overall = Compatibility::Compatible;
 
-    for rule in checks {
-        let mut matched = false;
-
-        // Uma única regra pode reconhecer CommonJS, ESM e o prefixo `node:`.
-        // Quando um padrão combina, `break` encerra apenas este laço interno.
-        for pattern in rule.patterns {
-            if source.contains(pattern) {
-                matched = true;
-                break;
-            }
+    for rule in rules {
+        if rule.patterns.iter().any(|pattern| source.contains(pattern)) {
+            findings.push(Finding {
+                file: path.to_path_buf(),
+                compatibility: rule.compatibility,
+                message: rule.message.to_string(),
+            });
         }
-
-        // `continue` ignora o restante desta volta e passa à próxima API.
-        if !matched {
-            continue;
-        }
-
-        // O relatório geral sempre preserva o problema mais grave encontrado.
-        if rule.compatibility.severity() > overall.severity() {
-            overall = rule.compatibility;
-        }
-
-        // `push` adiciona um novo Finding ao final do vetor.
-        findings.push(Finding {
-            compatibility: rule.compatibility,
-            message: rule.message,
-        });
     }
 
-    Report {
-        compatibility: overall,
-        findings,
-    }
+    findings
 }
 
-pub fn analyze_file(path: &str) -> io::Result<Report> {
-    let source = fs::read_to_string(path)?;
-    Ok(scan(&source))
+fn extract_specifiers(source: &str) -> Vec<String> {
+    let mut specifiers = Vec::new();
+
+    for marker in ["require(", "from ", "import "] {
+        let mut remainder = source;
+        while let Some(index) = remainder.find(marker) {
+            remainder = &remainder[index + marker.len()..];
+            let candidate = remainder.trim_start();
+            let Some(quote) = candidate
+                .chars()
+                .next()
+                .filter(|char| *char == '\'' || *char == '"')
+            else {
+                continue;
+            };
+            let after_quote = &candidate[quote.len_utf8()..];
+            let Some(end) = after_quote.find(quote) else {
+                continue;
+            };
+            let specifier = after_quote[..end].to_string();
+            if !specifiers.contains(&specifier) {
+                specifiers.push(specifier);
+            }
+        }
+    }
+
+    specifiers
+}
+
+fn is_node_builtin(specifier: &str) -> bool {
+    let name = specifier.strip_prefix("node:").unwrap_or(specifier);
+    NODE_BUILTINS.contains(&name)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
-    #[test]
-    fn recognizes_a_basic_http_server() {
-        let report = scan("const http = require('http');");
-
-        assert_eq!(report.findings.len(), 1);
-        assert_eq!(report.compatibility, Compatibility::Compatible);
+    fn fixture() -> PathBuf {
+        let id = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("canaryo-analyzer-{id}"));
+        fs::create_dir_all(&root).unwrap();
+        root
     }
 
     #[test]
-    fn recognizes_esm_without_the_node_prefix() {
-        let report = scan("import { readFile } from 'fs';");
+    fn extracts_commonjs_and_esm_specifiers() {
+        let source = "const a = require('./a'); import b from \"./b.js\";";
 
-        assert_eq!(report.findings.len(), 1);
+        assert_eq!(extract_specifiers(source), ["./a", "./b.js"]);
+    }
+
+    #[test]
+    fn analyzes_local_dependencies_recursively() {
+        let root = fixture();
+        fs::write(root.join("main.js"), "require('./nested')").unwrap();
+        fs::write(root.join("nested.js"), "require('fs')").unwrap();
+
+        let report = analyze_file(root.join("main.js").to_str().unwrap()).unwrap();
+
+        assert_eq!(report.analyzed_files, 2);
         assert_eq!(report.compatibility, Compatibility::Limited);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn reports_an_api_only_once_when_multiple_patterns_match() {
-        let report = scan("import http from 'node:http'; const other = require('http');");
+    fn reports_missing_dependencies() {
+        let root = fixture();
+        fs::write(root.join("main.js"), "require('missing-package')").unwrap();
 
-        assert_eq!(report.findings.len(), 1);
-        assert_eq!(report.compatibility, Compatibility::Compatible);
-    }
+        let report = analyze_file(root.join("main.js").to_str().unwrap()).unwrap();
 
-    #[test]
-    fn keeps_the_highest_severity() {
-        let report = scan("import fs from 'node:fs'; require('./binding.node');");
-
-        assert_eq!(report.findings.len(), 2);
         assert_eq!(report.compatibility, Compatibility::Incompatible);
+        assert!(report.findings[0].message.contains("missing-package"));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn returns_no_findings_for_plain_javascript() {
-        let report = scan("console.log('olá');");
+    fn handles_circular_dependencies_once() {
+        let root = fixture();
+        fs::write(root.join("a.js"), "require('./b')").unwrap();
+        fs::write(root.join("b.js"), "require('./a')").unwrap();
 
-        assert!(report.findings.is_empty());
-        assert_eq!(report.compatibility, Compatibility::Compatible);
+        let report = analyze_file(root.join("a.js").to_str().unwrap()).unwrap();
+
+        assert_eq!(report.analyzed_files, 2);
+        fs::remove_dir_all(root).unwrap();
     }
 }

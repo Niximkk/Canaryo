@@ -4,7 +4,7 @@ Canaryo is a Rust-built JavaScript runtime focused on running existing Node.js H
 
 ## Status
 
-Canaryo embeds QuickJS-NG and runs JavaScript natively. It provides `console`, `process.argv`, `process.env`, `__filename`, `__dirname`, and an initial `node:http` implementation backed by Rust TCP sockets. `check` scans an entry file for an initial set of Node.js APIs.
+Canaryo embeds QuickJS-NG and runs JavaScript natively. It provides `console`, `process.argv`, `process.env`, `__filename`, `__dirname`, and an initial `node:http` implementation backed by Rust TCP sockets. `check` follows local and package dependencies recursively and reports the file that uses each unsupported API.
 
 Node.js can be selected explicitly with `run --node` while native compatibility is expanded.
 
@@ -39,4 +39,4 @@ The first `node:http` surface supports `createServer`, `listen`, request method,
 
 The CommonJS loader supports relative modules, `.js`, `.cjs`, `.json`, directory indexes, package `main` fields, scoped packages, module caching, `require.resolve`, and upward `node_modules` lookup.
 
-Current limitations include one request per connection, no streaming request events, no TLS, no keep-alive, and no native addons. Module resolution, streams, buffers, filesystem support, and a larger package compatibility suite remain in development.
+Current limitations include one request per connection, no streaming request events, no TLS, no keep-alive, no ESM execution, and no native addons. Streams, buffers, filesystem APIs, package `exports`, and a larger package compatibility suite remain in development.
