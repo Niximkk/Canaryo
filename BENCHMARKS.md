@@ -1,10 +1,10 @@
 # Benchmarks
 
-Results collected on September 10, 2026 with commit `cf6b99a` plus the benchmark harness added immediately afterward.
+Results collected on September 10, 2026 with Canaryo 0.1.0.
 
 ## Environment
 
-- Windows 10 Home 10.0.26200.0, x86-64
+- Windows 11 build 26200, x86-64
 - AMD Ryzen 5 5600X, 6 cores and 12 logical processors
 - Node.js 22.15.1
 - Canaryo 0.1.0, compiled with the Cargo release profile
@@ -18,30 +18,30 @@ Startup is measured from process creation until the first complete valid HTTP re
 
 | Application | Runtime | Median | Minimum | Maximum | Canaryo difference |
 |---|---:|---:|---:|---:|---:|
-| `node:http` | Node.js | 53.01 ms | 50.02 ms | 54.28 ms | |
-| `node:http` | Canaryo | 9.92 ms | 9.41 ms | 15.50 ms | 81.3% lower |
-| Express 5.2.1 | Node.js | 207.38 ms | 191.75 ms | 209.75 ms | |
-| Express 5.2.1 | Canaryo | 342.99 ms | 337.09 ms | 355.93 ms | 65.4% higher |
+| `node:http` | Node.js | 51.86 ms | 43.46 ms | 53.38 ms | |
+| `node:http` | Canaryo | 9.91 ms | 9.29 ms | 16.47 ms | 80.9% lower |
+| Express 5.2.1 | Node.js | 206.60 ms | 193.95 ms | 221.86 ms | |
+| Express 5.2.1 | Canaryo | 166.84 ms | 151.52 ms | 168.60 ms | 19.2% lower |
 
-Canaryo starts the small HTTP fixture about 5.3 times faster. Express starts more slowly because Canaryo currently scans and loads its dependency tree synchronously before serving requests.
+Canaryo starts the small HTTP fixture about 5.2 times faster. Express starts 19.2% faster after removing compatibility analysis from the execution path, caching CommonJS resolutions by directory, and replacing repeated filesystem canonicalization with lexical path normalization. Full compatibility analysis remains available through `canaryo check`.
 
 ## HTTP throughput, concurrency 1
 
 | Application | Runtime | Requests/s | p50 | p95 | p99 | Errors | RSS | Canaryo throughput difference |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| `node:http` | Node.js | 2,248 | 0.42 ms | 0.59 ms | 0.67 ms | 0 | 34.5 MiB | |
-| `node:http` | Canaryo | 2,595 | 0.36 ms | 0.53 ms | 0.62 ms | 0 | 5.8 MiB | 15.4% higher |
-| Express 5.2.1 | Node.js | 1,597 | 0.60 ms | 0.82 ms | 1.03 ms | 0 | 53.3 MiB | |
-| Express 5.2.1 | Canaryo | 1,856 | 0.49 ms | 0.74 ms | 0.96 ms | 0 | 10.1 MiB | 16.2% higher |
+| `node:http` | Node.js | 2,329 | 0.42 ms | 0.54 ms | 0.65 ms | 0 | 34.6 MiB | |
+| `node:http` | Canaryo | 2,720 | 0.35 ms | 0.47 ms | 0.56 ms | 0 | 5.8 MiB | 16.8% higher |
+| Express 5.2.1 | Node.js | 1,638 | 0.59 ms | 0.77 ms | 0.94 ms | 0 | 52.5 MiB | |
+| Express 5.2.1 | Canaryo | 2,029 | 0.46 ms | 0.61 ms | 0.77 ms | 0 | 10.7 MiB | 23.9% higher |
 
 ## HTTP throughput, concurrency 16
 
 | Application | Runtime | Requests/s | p50 | p95 | p99 | Errors | RSS | Canaryo throughput difference |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| `node:http` | Node.js | 6,620 | 2.33 ms | 3.24 ms | 3.82 ms | 0 | 37.1 MiB | |
-| `node:http` | Canaryo | 7,581 | 2.06 ms | 2.69 ms | 2.99 ms | 0 | 5.9 MiB | 14.5% higher |
-| Express 5.2.1 | Node.js | 3,180 | 4.85 ms | 7.51 ms | 9.37 ms | 0 | 58.7 MiB | |
-| Express 5.2.1 | Canaryo | 3,873 | 3.98 ms | 5.86 ms | 6.69 ms | 0 | 10.4 MiB | 21.8% higher |
+| `node:http` | Node.js | 6,914 | 2.27 ms | 3.03 ms | 3.74 ms | 0 | 37.1 MiB | |
+| `node:http` | Canaryo | 7,975 | 1.95 ms | 2.62 ms | 2.90 ms | 0 | 5.8 MiB | 15.3% higher |
+| Express 5.2.1 | Node.js | 3,522 | 4.34 ms | 6.62 ms | 8.13 ms | 0 | 64.8 MiB | |
+| Express 5.2.1 | Canaryo | 4,183 | 3.60 ms | 5.40 ms | 6.42 ms | 0 | 10.0 MiB | 18.8% higher |
 
 ## Methodology
 

@@ -1,6 +1,6 @@
 use std::{
     fs, io,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 pub fn resolve(parent_file: &str, specifier: &str) -> io::Result<PathBuf> {
@@ -51,7 +51,7 @@ fn split_package_specifier(specifier: &str) -> (&str, &str) {
 
 fn resolve_candidate(candidate: &Path) -> io::Result<PathBuf> {
     if candidate.is_file() {
-        return candidate.canonicalize();
+        return Ok(normalize(candidate));
     }
 
     for extension in [".js", ".json", ".cjs"] {
@@ -59,7 +59,7 @@ fn resolve_candidate(candidate: &Path) -> io::Result<PathBuf> {
         filename.push(extension);
         let file = PathBuf::from(filename);
         if file.is_file() {
-            return file.canonicalize();
+            return Ok(normalize(&file));
         }
     }
 
@@ -81,7 +81,7 @@ fn resolve_candidate(candidate: &Path) -> io::Result<PathBuf> {
         for index in ["index.js", "index.json", "index.cjs"] {
             let file = candidate.join(index);
             if file.is_file() {
-                return file.canonicalize();
+                return Ok(normalize(&file));
             }
         }
     }
@@ -90,6 +90,22 @@ fn resolve_candidate(candidate: &Path) -> io::Result<PathBuf> {
         io::ErrorKind::NotFound,
         format!("{} não existe", candidate.display()),
     ))
+}
+
+fn normalize(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            component => normalized.push(component.as_os_str()),
+        }
+    }
+
+    normalized
 }
 
 #[cfg(test)]
@@ -117,7 +133,7 @@ mod tests {
 
         let resolved = resolve(entry.to_str().unwrap(), "./routes").unwrap();
 
-        assert_eq!(resolved, module.canonicalize().unwrap());
+        assert_eq!(resolved, normalize(&module));
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -133,10 +149,16 @@ mod tests {
 
         let resolved = resolve(entry.to_str().unwrap(), "example").unwrap();
 
-        assert_eq!(
-            resolved,
-            package.join("lib/main.js").canonicalize().unwrap()
-        );
+        assert_eq!(resolved, normalize(&package.join("lib/main.js")));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn normalizes_parent_segments_without_filesystem_canonicalization() {
+        let root = fixture();
+        let path = root.join("routes").join("..").join("server.js");
+
+        assert_eq!(normalize(&path), root.join("server.js"));
         fs::remove_dir_all(root).unwrap();
     }
 

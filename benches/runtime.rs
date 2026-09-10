@@ -30,6 +30,7 @@ struct Config {
     duration: Duration,
     runs: usize,
     startup_runs: usize,
+    startup_only: bool,
 }
 
 struct Server(Child);
@@ -72,12 +73,13 @@ fn main() {
     ];
 
     println!("# Canaryo benchmark\n");
-    println!("- OS: {} {}", env::consts::OS, env::consts::ARCH);
+    println!("- OS: {} {}", os_name(), env::consts::ARCH);
     println!("- CPU: {}", cpu_name());
     println!("- Logical processors: {}", logical_processors());
     println!("- Node.js: {}", command_version("node", "--version"));
     println!("- Canaryo: {}", command_version(&canaryo, "--version"));
     println!("- Samples per result: {}", config.runs);
+    println!("- Startup samples: {}", config.startup_runs);
     println!(
         "- Load duration per sample: {} s",
         config.duration.as_secs()
@@ -102,6 +104,10 @@ fn main() {
                 duration_ms(*times.last().unwrap())
             );
         }
+    }
+
+    if config.startup_only {
+        return;
     }
 
     for concurrency in [1, 16] {
@@ -151,12 +157,18 @@ fn parse_config() -> Config {
         duration: Duration::from_secs(5),
         runs: 3,
         startup_runs: 7,
+        startup_only: false,
     };
     let arguments: Vec<String> = env::args().skip(1).collect();
     let mut index = 0;
 
     while index < arguments.len() {
         if arguments[index] == "--bench" {
+            index += 1;
+            continue;
+        }
+        if arguments[index] == "--startup-only" {
+            config.startup_only = true;
             index += 1;
             continue;
         }
@@ -412,6 +424,30 @@ fn cpu_name() -> String {
     env::var("PROCESSOR_IDENTIFIER")
         .or_else(|_| env::var("HOSTTYPE"))
         .unwrap_or_else(|_| "unknown".into())
+}
+
+fn os_name() -> String {
+    if cfg!(target_os = "windows")
+        && let Ok(output) = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                "[Environment]::OSVersion.Version.Build",
+            ])
+            .output()
+        && output.status.success()
+        && let Ok(build) = String::from_utf8(output.stdout)
+        && let Ok(build) = build.trim().parse::<u32>()
+    {
+        let version = if build >= 22_000 {
+            "Windows 11"
+        } else {
+            "Windows 10"
+        };
+        return format!("{version} build {build}");
+    }
+
+    env::consts::OS.into()
 }
 
 fn logical_processors() -> usize {

@@ -63,6 +63,7 @@ const httpModule = Object.freeze({
 });
 
 const moduleCache = Object.create(null);
+const resolutionCache = new Map();
 
 function loadModule(filename) {
     if (moduleCache[filename]) return moduleCache[filename].exports;
@@ -112,12 +113,24 @@ function createRequire(parentFilename) {
         if (Object.prototype.hasOwnProperty.call(__canaryoBuiltins, normalized)) {
             return __canaryoBuiltins[normalized];
         }
-        return loadModule(__canaryoResolve(parentFilename, name));
+        return loadModule(resolveModule(parentFilename, name));
     }
 
-    require.resolve = name => __canaryoResolve(parentFilename, name);
+    require.resolve = name => resolveModule(parentFilename, name);
     require.cache = moduleCache;
     return require;
+}
+
+function resolveModule(parentFilename, name) {
+    const separator = Math.max(
+        parentFilename.lastIndexOf("/"),
+        parentFilename.lastIndexOf("\\")
+    );
+    const key = `${parentFilename.slice(0, separator + 1)}\0${name}`;
+    if (resolutionCache.has(key)) return resolutionCache.get(key);
+    const filename = __canaryoResolve(parentFilename, name);
+    resolutionCache.set(key, filename);
+    return filename;
 }
 
 globalThis.__canaryoRunMain = filename => loadModule(filename);
