@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use rquickjs::{Ctx, Exception, Function, Object, Result, prelude::Opt};
+use rquickjs::{Coerced, Ctx, Exception, Function, Object, Result, prelude::Opt};
 
 const MAX_REQUEST_SIZE: usize = 1024 * 1024;
 
@@ -62,6 +62,8 @@ fn handle_connection<'js>(
         body: Vec::new(),
     }));
     let response_object = response_to_js(context, Rc::clone(&state))?;
+    request_object.set("res", response_object.clone())?;
+    response_object.set("req", request_object.clone())?;
 
     handler.call::<_, ()>((request_object, response_object.clone()))?;
 
@@ -92,13 +94,57 @@ fn request_to_js<'js>(context: &Ctx<'js>, request: &Request) -> Result<Object<'j
 fn response_to_js<'js>(context: &Ctx<'js>, state: Rc<RefCell<Response>>) -> Result<Object<'js>> {
     let object = Object::new(context.clone())?;
     object.set("statusCode", 200)?;
+    object.set("headersSent", false)?;
+    object.set("writableEnded", false)?;
 
     let header_state = Rc::clone(&state);
     object.set(
         "setHeader",
-        Function::new(context.clone(), move |name: String, value: String| {
-            set_header(&mut header_state.borrow_mut().headers, name, value);
+        Function::new(
+            context.clone(),
+            move |name: String, value: Coerced<String>| {
+                set_header(&mut header_state.borrow_mut().headers, name, value.0);
+            },
+        )?,
+    )?;
+
+    let get_header_state = Rc::clone(&state);
+    object.set(
+        "getHeader",
+        Function::new(context.clone(), move |name: String| {
+            get_header(&get_header_state.borrow().headers, &name)
         })?,
+    )?;
+
+    let has_header_state = Rc::clone(&state);
+    object.set(
+        "hasHeader",
+        Function::new(context.clone(), move |name: String| {
+            get_header(&has_header_state.borrow().headers, &name).is_some()
+        })?,
+    )?;
+
+    let remove_header_state = Rc::clone(&state);
+    object.set(
+        "removeHeader",
+        Function::new(context.clone(), move |name: String| {
+            remove_header(&mut remove_header_state.borrow_mut().headers, &name);
+        })?,
+    )?;
+
+    let get_headers_state = Rc::clone(&state);
+    object.set(
+        "getHeaders",
+        Function::new(
+            context.clone(),
+            move |context: Ctx<'js>| -> Result<Object<'js>> {
+                let headers = Object::new(context)?;
+                for (name, value) in &get_headers_state.borrow().headers {
+                    headers.set(name.as_str(), value.as_str())?;
+                }
+                Ok(headers)
+            },
+        )?,
     )?;
 
     let head_state = Rc::clone(&state);
@@ -109,9 +155,9 @@ fn response_to_js<'js>(context: &Ctx<'js>, state: Rc<RefCell<Response>>) -> Resu
             move |status: u16, headers: Opt<Object>| -> Result<()> {
                 head_state.borrow_mut().status = status;
                 if let Some(headers) = headers.0 {
-                    for property in headers.props::<String, String>() {
+                    for property in headers.props::<String, Coerced<String>>() {
                         let (name, value) = property?;
-                        set_header(&mut head_state.borrow_mut().headers, name, value);
+                        set_header(&mut head_state.borrow_mut().headers, name, value.0);
                     }
                 }
                 Ok(())
@@ -122,20 +168,23 @@ fn response_to_js<'js>(context: &Ctx<'js>, state: Rc<RefCell<Response>>) -> Resu
     let write_state = Rc::clone(&state);
     object.set(
         "write",
-        Function::new(context.clone(), move |chunk: String| {
+        Function::new(context.clone(), move |chunk: Coerced<String>| {
             write_state
                 .borrow_mut()
                 .body
-                .extend_from_slice(chunk.as_bytes());
+                .extend_from_slice(chunk.0.as_bytes());
             true
         })?,
     )?;
 
     object.set(
         "end",
-        Function::new(context.clone(), move |chunk: Opt<String>| {
+        Function::new(context.clone(), move |chunk: Opt<Coerced<String>>| {
             if let Some(chunk) = chunk.0 {
-                state.borrow_mut().body.extend_from_slice(chunk.as_bytes());
+                state
+                    .borrow_mut()
+                    .body
+                    .extend_from_slice(chunk.0.as_bytes());
             }
         })?,
     )?;
@@ -152,6 +201,17 @@ fn set_header(headers: &mut Vec<(String, String)>, name: String, value: String) 
     } else {
         headers.push((name, value));
     }
+}
+
+fn get_header(headers: &[(String, String)], name: &str) -> Option<String> {
+    headers
+        .iter()
+        .find(|(existing, _)| existing.eq_ignore_ascii_case(name))
+        .map(|(_, value)| value.clone())
+}
+
+fn remove_header(headers: &mut Vec<(String, String)>, name: &str) {
+    headers.retain(|(existing, _)| !existing.eq_ignore_ascii_case(name));
 }
 
 fn read_request(stream: &mut TcpStream) -> std::io::Result<Request> {

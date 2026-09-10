@@ -39,4 +39,6 @@ The first `node:http` surface supports `createServer`, `listen`, request method,
 
 The CommonJS loader supports relative modules, `.js`, `.cjs`, `.json`, directory indexes, package `main` fields, scoped packages, module caching, `require.resolve`, and upward `node_modules` lookup.
 
+Canaryo's compatibility layer currently boots Express 5.2.1 and serves basic routing and JSON responses natively. The fixture in `fixtures/express-basic` is pinned with a lockfile and used as the real-package smoke test.
+
 Current limitations include one request per connection, no streaming request events, no TLS, no keep-alive, no ESM execution, and no native addons. Streams, buffers, filesystem APIs, package `exports`, and a larger package compatibility suite remain in development.

@@ -9,9 +9,11 @@ use crate::modules;
 const MAX_ANALYZED_FILES: usize = 10_000;
 const NODE_BUILTINS: &[&str] = &[
     "assert",
+    "async_hooks",
     "buffer",
     "child_process",
     "crypto",
+    "diagnostics_channel",
     "events",
     "fs",
     "http",
@@ -157,12 +159,23 @@ fn visit(path: &Path, report: &mut Report, visited: &mut HashSet<PathBuf>) -> io
             continue;
         }
 
+        if specifier.ends_with(".node") {
+            report.add(Finding {
+                file: path.clone(),
+                compatibility: Compatibility::Incompatible,
+                message: format!("referencia o módulo nativo '{specifier}'"),
+            });
+            continue;
+        }
+
         match modules::resolve(path.to_string_lossy().as_ref(), &specifier) {
             Ok(dependency) => visit(&dependency, report, visited)?,
             Err(error) => report.add(Finding {
                 file: path.clone(),
-                compatibility: Compatibility::Incompatible,
-                message: format!("não foi possível resolver '{specifier}': {error}"),
+                compatibility: Compatibility::Limited,
+                message: format!(
+                    "dependência dinâmica ou opcional não resolvida '{specifier}': {error}"
+                ),
             }),
         }
     }
@@ -208,16 +221,6 @@ fn scan_source(source: &str, path: &Path) -> Vec<Finding> {
             compatibility: Compatibility::Limited,
             message: "usa uma API Node que ainda possui suporte parcial",
         },
-        Rule {
-            patterns: &["import ", "export "],
-            compatibility: Compatibility::Limited,
-            message: "usa sintaxe ESM; a execução nativa atual aceita CommonJS",
-        },
-        Rule {
-            patterns: &[".node"],
-            compatibility: Compatibility::Incompatible,
-            message: "referencia um módulo nativo .node",
-        },
     ];
     let mut findings = Vec::new();
 
@@ -229,6 +232,17 @@ fn scan_source(source: &str, path: &Path) -> Vec<Finding> {
                 message: rule.message.to_string(),
             });
         }
+    }
+
+    if source.lines().any(|line| {
+        let line = line.trim_start();
+        line.starts_with("import ") || line.starts_with("export ")
+    }) {
+        findings.push(Finding {
+            file: path.to_path_buf(),
+            compatibility: Compatibility::Limited,
+            message: "usa sintaxe ESM; a execução nativa atual aceita CommonJS".into(),
+        });
     }
 
     findings
@@ -310,7 +324,7 @@ mod tests {
 
         let report = analyze_file(root.join("main.js").to_str().unwrap()).unwrap();
 
-        assert_eq!(report.compatibility, Compatibility::Incompatible);
+        assert_eq!(report.compatibility, Compatibility::Limited);
         assert!(report.findings[0].message.contains("missing-package"));
         fs::remove_dir_all(root).unwrap();
     }

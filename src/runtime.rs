@@ -1,6 +1,7 @@
 use std::{env, fs, path::Path};
 
 use rquickjs::{Array, CatchResultExt, Context, Function, Object, Runtime};
+use sha1::{Digest, Sha1};
 
 use crate::{http, modules};
 
@@ -26,23 +27,38 @@ function formatValue(value) {
     }
 }
 
+function IncomingMessage() {}
+function ServerResponse() {}
+
 const httpModule = Object.freeze({
+    IncomingMessage,
+    ServerResponse,
+    METHODS: ["GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH"],
+    STATUS_CODES: { 200: "OK", 201: "Created", 204: "No Content", 400: "Bad Request", 404: "Not Found", 500: "Internal Server Error" },
     createServer(requestListener) {
         if (typeof requestListener !== "function") {
             throw new TypeError("createServer requer uma função");
         }
 
-        return {
+        const server = {
             listen(port, hostOrCallback, callback) {
                 const onListening = typeof hostOrCallback === "function"
                     ? hostOrCallback
                     : typeof callback === "function"
                         ? callback
                         : () => {};
-                __canaryoListen(Number(port), requestListener, onListening);
+                __canaryoListen(Number(port), (request, response) => {
+                    Object.setPrototypeOf(request, IncomingMessage.prototype);
+                    Object.setPrototypeOf(response, ServerResponse.prototype);
+                    requestListener(request, response);
+                }, onListening);
                 return this;
             }
         };
+        const EventEmitter = __canaryoBuiltins.events.EventEmitter;
+        EventEmitter.call(server);
+        Object.setPrototypeOf(server, EventEmitter.prototype);
+        return server;
     }
 });
 
@@ -92,6 +108,10 @@ function loadModule(filename) {
 function createRequire(parentFilename) {
     function require(name) {
         if (name === "http" || name === "node:http") return httpModule;
+        const normalized = name.startsWith("node:") ? name.slice(5) : name;
+        if (Object.prototype.hasOwnProperty.call(__canaryoBuiltins, normalized)) {
+            return __canaryoBuiltins[normalized];
+        }
         return loadModule(__canaryoResolve(parentFilename, name));
     }
 
@@ -103,6 +123,8 @@ function createRequire(parentFilename) {
 globalThis.__canaryoRunMain = filename => loadModule(filename);
 })();
 "#;
+
+const POLYFILLS: &str = include_str!("polyfills.js");
 
 pub fn execute(path: &str, arguments: &[String]) -> Result<(), String> {
     fs::metadata(path).map_err(|error| format!("não foi possível ler {path}: {error}"))?;
@@ -117,6 +139,10 @@ pub fn execute(path: &str, arguments: &[String]) -> Result<(), String> {
         install_host_globals(&context, path, arguments)?;
         context
             .eval::<(), _>(BOOTSTRAP)
+            .catch(&context)
+            .map_err(|error| error.to_string())?;
+        context
+            .eval::<(), _>(POLYFILLS)
             .catch(&context)
             .map_err(|error| error.to_string())?;
         let run_main: Function = context
@@ -148,6 +174,32 @@ fn install_host_globals<'js>(
         .map_err(|error| error.to_string())?;
     globals
         .set("__canaryoPrintError", print_error)
+        .map_err(|error| error.to_string())?;
+    let write = Function::new(context.clone(), |message: String| {
+        use std::io::Write;
+        print!("{message}");
+        let _ = std::io::stdout().flush();
+    })
+    .map_err(|error| error.to_string())?;
+    let write_error = Function::new(context.clone(), |message: String| {
+        use std::io::Write;
+        eprint!("{message}");
+        let _ = std::io::stderr().flush();
+    })
+    .map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoWrite", write)
+        .map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoWriteError", write_error)
+        .map_err(|error| error.to_string())?;
+    let cwd = Function::new(context.clone(), cwd).map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoCwd", cwd)
+        .map_err(|error| error.to_string())?;
+    let hash = Function::new(context.clone(), hash).map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoHash", hash)
         .map_err(|error| error.to_string())?;
     let listen = Function::new(context.clone(), http::listen).map_err(|error| error.to_string())?;
     globals
@@ -227,6 +279,39 @@ fn dirname(path: String) -> String {
         .parent()
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_else(|| ".".into())
+}
+
+fn cwd() -> String {
+    env::current_dir()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| ".".into())
+}
+
+fn hash<'js>(
+    context: rquickjs::Ctx<'js>,
+    algorithm: String,
+    contents: String,
+    encoding: String,
+) -> rquickjs::Result<String> {
+    if !algorithm.eq_ignore_ascii_case("sha1") {
+        return Err(rquickjs::Exception::throw_message(
+            &context,
+            &format!("algoritmo de hash não suportado: {algorithm}"),
+        ));
+    }
+
+    let digest = Sha1::digest(contents.as_bytes());
+    match encoding.as_str() {
+        "hex" => Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect()),
+        "base64" => {
+            use base64::Engine;
+            Ok(base64::engine::general_purpose::STANDARD.encode(digest))
+        }
+        _ => Err(rquickjs::Exception::throw_message(
+            &context,
+            &format!("codificação de hash não suportada: {encoding}"),
+        )),
+    }
 }
 
 #[cfg(test)]

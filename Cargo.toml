@@ -10,5 +10,7 @@ name = "canaryo"
 path = "src/main.rs"
 
 [dependencies]
+base64 = "0.22"
 rquickjs = "0.12.2"
 serde_json = "1"
+sha1 = "0.10"

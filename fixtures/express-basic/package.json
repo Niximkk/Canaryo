@@ -1,0 +1,8 @@
+{
+  "name": "canaryo-express-basic-fixture",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": {
+    "express": "5.2.1"
+  }
+}

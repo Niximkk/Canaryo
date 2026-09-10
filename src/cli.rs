@@ -1,5 +1,3 @@
-// Este enum é o resultado da interpretação dos textos recebidos no terminal.
-// Cada variante guarda apenas os dados necessários para executar aquele comando.
 #[derive(Debug, PartialEq, Eq)]
 pub enum RuntimeMode {
     Native,
@@ -35,7 +33,6 @@ pub fn parse(arguments: &[String]) -> Result<CliCommand, String> {
             })
             .ok_or_else(|| "informe o arquivo que deve ser analisado".into()),
         "run" => parse_run(&arguments[1..]),
-        // Um caminho sem `run` é aceito como atalho para melhorar a ergonomia.
         path => Ok(CliCommand::Run {
             path: path.to_owned(),
             arguments: arguments[1..].to_vec(),
@@ -66,7 +63,6 @@ fn parse_run(arguments: &[String]) -> Result<CliCommand, String> {
 mod tests {
     use super::*;
 
-    // Este auxiliar deixa cada teste próximo da forma digitada no terminal.
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()
     }

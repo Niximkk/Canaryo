@@ -1,4 +1,3 @@
-// Cada declaração `mod` carrega o arquivo de mesmo nome dentro de `src`.
 mod analyzer;
 mod cli;
 mod http;

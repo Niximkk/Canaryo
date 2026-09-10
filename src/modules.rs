@@ -54,12 +54,12 @@ fn resolve_candidate(candidate: &Path) -> io::Result<PathBuf> {
         return candidate.canonicalize();
     }
 
-    if candidate.extension().is_none() {
-        for extension in ["js", "json", "cjs"] {
-            let file = candidate.with_extension(extension);
-            if file.is_file() {
-                return file.canonicalize();
-            }
+    for extension in [".js", ".json", ".cjs"] {
+        let mut filename = candidate.as_os_str().to_os_string();
+        filename.push(extension);
+        let file = PathBuf::from(filename);
+        if file.is_file() {
+            return file.canonicalize();
         }
     }
 
