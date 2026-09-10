@@ -2,6 +2,7 @@
 mod analyzer;
 mod cli;
 mod http;
+mod modules;
 mod runner;
 mod runtime;
 

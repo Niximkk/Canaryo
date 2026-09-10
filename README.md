@@ -12,6 +12,7 @@ Node.js can be selected explicitly with `run --node` while native compatibility 
 
 ```sh
 cargo run -- examples/hello.js Canaryo
+cargo run -- examples/commonjs.js
 cargo run -- check src/server.js
 cargo run -- src/server.js
 cargo run -- run --node src/server.js
@@ -35,5 +36,7 @@ canaryo server.js
 ## Native API surface
 
 The first `node:http` surface supports `createServer`, `listen`, request method, URL, HTTP version, headers and body, plus response `statusCode`, `setHeader`, `writeHead`, `write`, and `end`.
+
+The CommonJS loader supports relative modules, `.js`, `.cjs`, `.json`, directory indexes, package `main` fields, scoped packages, module caching, `require.resolve`, and upward `node_modules` lookup.
 
 Current limitations include one request per connection, no streaming request events, no TLS, no keep-alive, and no native addons. Module resolution, streams, buffers, filesystem support, and a larger package compatibility suite remain in development.

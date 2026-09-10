@@ -2,7 +2,7 @@ use std::{env, fs, path::Path};
 
 use rquickjs::{Array, CatchResultExt, Context, Function, Object, Runtime};
 
-use crate::http;
+use crate::{http, modules};
 
 const BOOTSTRAP: &str = r#"
 globalThis.global = globalThis;
@@ -46,16 +46,69 @@ const httpModule = Object.freeze({
     }
 });
 
-globalThis.require = function require(name) {
-    if (name === "http" || name === "node:http") return httpModule;
-    throw new Error(`Canaryo ainda não implementa o módulo '${name}'`);
-};
+const moduleCache = Object.create(null);
+
+function loadModule(filename) {
+    if (moduleCache[filename]) return moduleCache[filename].exports;
+
+    const module = {
+        id: filename,
+        filename,
+        exports: {},
+        loaded: false,
+        children: []
+    };
+    moduleCache[filename] = module;
+
+    try {
+        const source = __canaryoReadFile(filename);
+        if (filename.endsWith(".json")) {
+            module.exports = JSON.parse(source);
+        } else {
+            const wrapper = new Function(
+                "require",
+                "module",
+                "exports",
+                "__filename",
+                "__dirname",
+                `${source}\n//# sourceURL=${filename}`
+            );
+            wrapper(
+                createRequire(filename),
+                module,
+                module.exports,
+                filename,
+                __canaryoDirname(filename)
+            );
+        }
+        module.loaded = true;
+        return module.exports;
+    } catch (error) {
+        delete moduleCache[filename];
+        throw error;
+    }
+}
+
+function createRequire(parentFilename) {
+    function require(name) {
+        if (name === "http" || name === "node:http") return httpModule;
+        return loadModule(__canaryoResolve(parentFilename, name));
+    }
+
+    require.resolve = name => __canaryoResolve(parentFilename, name);
+    require.cache = moduleCache;
+    return require;
+}
+
+globalThis.__canaryoRunMain = filename => loadModule(filename);
 })();
 "#;
 
 pub fn execute(path: &str, arguments: &[String]) -> Result<(), String> {
-    let source = fs::read_to_string(path)
-        .map_err(|error| format!("não foi possível ler {path}: {error}"))?;
+    fs::metadata(path).map_err(|error| format!("não foi possível ler {path}: {error}"))?;
+    let entry = Path::new(path)
+        .canonicalize()
+        .map_err(|error| format!("não foi possível resolver {path}: {error}"))?;
     let runtime = Runtime::new().map_err(|error| format!("erro ao criar runtime: {error}"))?;
     let context =
         Context::full(&runtime).map_err(|error| format!("erro ao criar contexto: {error}"))?;
@@ -66,8 +119,12 @@ pub fn execute(path: &str, arguments: &[String]) -> Result<(), String> {
             .eval::<(), _>(BOOTSTRAP)
             .catch(&context)
             .map_err(|error| error.to_string())?;
-        context
-            .eval::<(), _>(source)
+        let run_main: Function = context
+            .globals()
+            .get("__canaryoRunMain")
+            .map_err(|error| error.to_string())?;
+        run_main
+            .call::<_, ()>((entry.to_string_lossy().as_ref(),))
             .catch(&context)
             .map_err(|error| error.to_string())?;
 
@@ -95,6 +152,18 @@ fn install_host_globals<'js>(
     let listen = Function::new(context.clone(), http::listen).map_err(|error| error.to_string())?;
     globals
         .set("__canaryoListen", listen)
+        .map_err(|error| error.to_string())?;
+    let read_file = Function::new(context.clone(), read_file).map_err(|error| error.to_string())?;
+    let resolve = Function::new(context.clone(), resolve).map_err(|error| error.to_string())?;
+    let dirname = Function::new(context.clone(), dirname).map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoReadFile", read_file)
+        .map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoResolve", resolve)
+        .map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoDirname", dirname)
         .map_err(|error| error.to_string())?;
 
     let process = Object::new(context.clone()).map_err(|error| error.to_string())?;
@@ -136,6 +205,28 @@ fn install_host_globals<'js>(
         .map_err(|error| error.to_string())?;
 
     Ok(())
+}
+
+fn read_file<'js>(context: rquickjs::Ctx<'js>, path: String) -> rquickjs::Result<String> {
+    fs::read_to_string(path)
+        .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))
+}
+
+fn resolve<'js>(
+    context: rquickjs::Ctx<'js>,
+    parent: String,
+    specifier: String,
+) -> rquickjs::Result<String> {
+    modules::resolve(&parent, &specifier)
+        .map(|path| path.to_string_lossy().into_owned())
+        .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))
+}
+
+fn dirname(path: String) -> String {
+    Path::new(&path)
+        .parent()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|| ".".into())
 }
 
 #[cfg(test)]

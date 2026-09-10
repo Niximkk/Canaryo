@@ -11,3 +11,4 @@ path = "src/main.rs"
 
 [dependencies]
 rquickjs = "0.12.2"
+serde_json = "1"
