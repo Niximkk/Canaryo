@@ -27,6 +27,24 @@ canaryo run --node server.js
 canaryo server.js
 ```
 
+## Install from source
+
+```sh
+cargo install --path .
+```
+
+The `canaryo` binary will be installed in Cargo's binary directory and can run projects from any working directory.
+
+## Validation
+
+```sh
+cargo fmt --check
+cargo clippy -- -D warnings
+cargo test
+npm ci --prefix fixtures/express-basic
+cargo test --test runtime_smoke -- --ignored
+```
+
 ## Compatibility levels
 
 - **Compatible** — the currently scanned entry file uses no unsupported API.
