@@ -26,6 +26,6 @@ jobs:
       - run: npm ci
         working-directory: fixtures/express-basic
       - run: cargo fmt --check
-      - run: cargo clippy -- -D warnings
+      - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
       - run: cargo test --test runtime_smoke -- --ignored

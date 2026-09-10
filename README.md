@@ -39,11 +39,22 @@ The `canaryo` binary will be installed in Cargo's binary directory and can run p
 
 ```sh
 cargo fmt --check
-cargo clippy -- -D warnings
+cargo clippy --all-targets -- -D warnings
 cargo test
 npm ci --prefix fixtures/express-basic
 cargo test --test runtime_smoke -- --ignored
 ```
+
+## Benchmark
+
+The benchmark compares Node.js and the Canaryo release binary with the same `node:http` and Express applications. Every request uses a new TCP connection because keep-alive is not implemented by Canaryo yet.
+
+```sh
+cargo build --release
+cargo bench --bench runtime -- --duration 5 --runs 3 --startup-runs 7
+```
+
+See the latest local results and methodology in [`BENCHMARKS.md`](BENCHMARKS.md).
 
 ## Compatibility levels
 

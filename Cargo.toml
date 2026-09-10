@@ -9,6 +9,10 @@ license = "MIT"
 name = "canaryo"
 path = "src/main.rs"
 
+[[bench]]
+name = "runtime"
+harness = false
+
 [dependencies]
 base64 = "0.22"
 rquickjs = "0.12.2"
