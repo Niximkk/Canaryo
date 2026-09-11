@@ -314,6 +314,33 @@
         });
         return [formatted, ...values.slice(index).map(inspect)].join(" ");
     }
+    const promisifyCustom = Symbol.for("nodejs.util.promisify.custom");
+    function promisify(original) {
+        if (typeof original !== "function") throw new TypeError("original must be a function");
+        if (typeof original[promisifyCustom] === "function") return original[promisifyCustom];
+        function promisified(...args) {
+            return new Promise((resolve, reject) => {
+                original.call(this, ...args, (error, ...values) => {
+                    if (error) reject(error);
+                    else resolve(values.length > 1 ? values : values[0]);
+                });
+            });
+        }
+        Object.setPrototypeOf(promisified, Object.getPrototypeOf(original));
+        return promisified;
+    }
+    promisify.custom = promisifyCustom;
+    function callbackify(original) {
+        if (typeof original !== "function") throw new TypeError("original must be a function");
+        return function callbackified(...args) {
+            const callback = args.pop();
+            if (typeof callback !== "function") throw new TypeError("callback must be a function");
+            Promise.resolve(original.apply(this, args)).then(
+                value => process.nextTick(callback, null, value),
+                error => process.nextTick(callback, error || new Error("Promise was rejected with a falsy value"))
+            );
+        };
+    }
     const util = {
         inherits(constructor, parent) {
             constructor.super_ = parent;
@@ -324,6 +351,11 @@
         format,
         formatWithOptions(_options, ...args) { return format(...args); },
         inspect,
+        promisify,
+        callbackify,
+        stripVTControlCharacters(value) { return String(value).replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, ""); },
+        TextEncoder,
+        TextDecoder,
         types: { isDate: value => value instanceof Date, isRegExp: value => value instanceof RegExp, isNativeError: value => value instanceof Error }
     };
 

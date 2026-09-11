@@ -1213,4 +1213,41 @@ mod tests {
 
         assert!(supported);
     }
+
+    #[test]
+    fn converts_between_callback_and_promise_apis() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        let supported = context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            context
+                .eval::<(), _>(
+                    r#"
+                    globalThis.promisifiedResult = 0;
+                    globalThis.callbackifiedResult = 0;
+                    const util = __canaryoBuiltins.util;
+                    util.promisify((left, right, callback) => callback(null, left + right))(20, 22)
+                        .then(value => { promisifiedResult = value; });
+                    util.callbackify(async value => value * 2)(21, (error, value) => {
+                        if (!error) callbackifiedResult = value;
+                    });
+                    "#,
+                )
+                .unwrap();
+            while context.execute_pending_job() {}
+            context
+                .eval::<bool, _>(
+                    r#"
+                    promisifiedResult === 42 && callbackifiedResult === 42 &&
+                        __canaryoBuiltins.util.promisify.custom === Symbol.for("nodejs.util.promisify.custom") &&
+                        __canaryoBuiltins.util.stripVTControlCharacters("\u001b[31mred\u001b[0m") === "red"
+                    "#,
+                )
+                .unwrap()
+        });
+
+        assert!(supported);
+    }
 }
