@@ -374,6 +374,31 @@ fn install_host_globals<'js>(
     globals
         .set("__canaryoDirname", dirname)
         .map_err(|error| error.to_string())?;
+    let fs_read = Function::new(context.clone(), fs_read).map_err(|error| error.to_string())?;
+    let fs_write = Function::new(context.clone(), fs_write).map_err(|error| error.to_string())?;
+    let fs_stat = Function::new(context.clone(), fs_stat).map_err(|error| error.to_string())?;
+    let fs_exists = Function::new(context.clone(), fs_exists).map_err(|error| error.to_string())?;
+    let fs_mkdir = Function::new(context.clone(), fs_mkdir).map_err(|error| error.to_string())?;
+    let fs_readdir =
+        Function::new(context.clone(), fs_readdir).map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoFsRead", fs_read)
+        .map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoFsWrite", fs_write)
+        .map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoFsStat", fs_stat)
+        .map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoFsExists", fs_exists)
+        .map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoFsMkdir", fs_mkdir)
+        .map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoFsReaddir", fs_readdir)
+        .map_err(|error| error.to_string())?;
 
     let process = Object::new(context.clone()).map_err(|error| error.to_string())?;
     let argv = Array::new(context.clone()).map_err(|error| error.to_string())?;
@@ -419,6 +444,87 @@ fn install_host_globals<'js>(
 fn read_file<'js>(context: rquickjs::Ctx<'js>, path: String) -> rquickjs::Result<String> {
     fs::read_to_string(path)
         .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))
+}
+
+fn fs_read<'js>(context: rquickjs::Ctx<'js>, path: String) -> rquickjs::Result<Array<'js>> {
+    let bytes = fs::read(path)
+        .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))?;
+    let result = Array::new(context.clone())?;
+    for (index, byte) in bytes.into_iter().enumerate() {
+        result.set(index, byte)?;
+    }
+    Ok(result)
+}
+
+fn fs_write<'js>(
+    context: rquickjs::Ctx<'js>,
+    path: String,
+    bytes: Vec<u8>,
+    append: bool,
+) -> rquickjs::Result<()> {
+    use std::io::Write;
+
+    let mut options = fs::OpenOptions::new();
+    options.create(true).write(true);
+    if append {
+        options.append(true);
+    } else {
+        options.truncate(true);
+    }
+    let mut file = options
+        .open(path)
+        .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))?;
+    file.write_all(&bytes)
+        .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))
+}
+
+fn fs_stat<'js>(context: rquickjs::Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>> {
+    use std::time::UNIX_EPOCH;
+
+    let metadata = fs::metadata(path)
+        .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))?;
+    let result = Object::new(context.clone())?;
+    result.set("size", metadata.len() as f64)?;
+    result.set("file", metadata.is_file())?;
+    result.set("directory", metadata.is_dir())?;
+    result.set("symlink", metadata.file_type().is_symlink())?;
+    let modified = metadata
+        .modified()
+        .ok()
+        .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+        .map(|value| value.as_secs_f64() * 1000.0)
+        .unwrap_or(0.0);
+    result.set("mtimeMs", modified)?;
+    Ok(result)
+}
+
+fn fs_exists(path: String) -> bool {
+    Path::new(&path).exists()
+}
+
+fn fs_mkdir<'js>(
+    context: rquickjs::Ctx<'js>,
+    path: String,
+    recursive: bool,
+) -> rquickjs::Result<()> {
+    let result = if recursive {
+        fs::create_dir_all(path)
+    } else {
+        fs::create_dir(path)
+    };
+    result.map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))
+}
+
+fn fs_readdir<'js>(context: rquickjs::Ctx<'js>, path: String) -> rquickjs::Result<Array<'js>> {
+    let entries = fs::read_dir(path)
+        .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))?;
+    let result = Array::new(context.clone())?;
+    for (index, entry) in entries.enumerate() {
+        let entry = entry
+            .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))?;
+        result.set(index, entry.file_name().to_string_lossy().as_ref())?;
+    }
+    Ok(result)
 }
 
 fn resolve<'js>(
@@ -560,5 +666,51 @@ mod tests {
             assert_eq!(run_timers.call::<_, Option<u64>>(()).unwrap(), None);
             assert_eq!(context.globals().get::<_, i32>("timerResult").unwrap(), 42);
         });
+    }
+
+    #[test]
+    fn reads_and_writes_files_through_node_apis() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let id = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = env::temp_dir().join(format!("canaryo-fs-{}-{id}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        let filename = directory.join("message.txt");
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context
+                .globals()
+                .set("fixturePath", filename.to_string_lossy().as_ref())
+                .unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            let synchronous = context
+                .eval::<bool, _>(
+                    r#"
+                    const fs = __canaryoBuiltins.fs;
+                    fs.writeFileSync(fixturePath, "canário");
+                    fs.appendFileSync(fixturePath, "!");
+                    const raw = fs.readFileSync(fixturePath);
+                    globalThis.fsPromiseResult = false;
+                    fs.promises.readFile(fixturePath, "utf8").then(value => {
+                        fsPromiseResult = value === "canário!";
+                    });
+                    Buffer.isBuffer(raw) && raw.toString() === "canário!" &&
+                        fs.existsSync(fixturePath) && fs.statSync(fixturePath).isFile()
+                    "#,
+                )
+                .unwrap();
+            while context.execute_pending_job() {}
+
+            assert!(synchronous);
+            assert!(context.globals().get::<_, bool>("fsPromiseResult").unwrap());
+        });
+
+        fs::remove_dir_all(directory).unwrap();
     }
 }

@@ -355,6 +355,91 @@
     globalThis.setInterval = setInterval;
     globalThis.clearInterval = clearTimer;
     globalThis.queueMicrotask = callback => Promise.resolve().then(callback);
+
+    function Stats(values) {
+        Object.assign(this, values);
+        this.mtime = new Date(this.mtimeMs);
+    }
+    Stats.prototype.isFile = function () { return this.file; };
+    Stats.prototype.isDirectory = function () { return this.directory; };
+    Stats.prototype.isSymbolicLink = function () { return this.symlink; };
+    Stats.prototype.isBlockDevice = Stats.prototype.isCharacterDevice =
+        Stats.prototype.isFIFO = Stats.prototype.isSocket = function () { return false; };
+
+    function encodingFrom(options) {
+        return typeof options === "string" ? options : options && options.encoding;
+    }
+    function readFileSync(filename, options) {
+        const buffer = Buffer.from(__canaryoFsRead(String(filename)));
+        return encodingFrom(options) ? buffer.toString(encodingFrom(options)) : buffer;
+    }
+    function writeFileSync(filename, value, _options) {
+        __canaryoFsWrite(String(filename), [...Buffer.from(value)], false);
+    }
+    function appendFileSync(filename, value, _options) {
+        __canaryoFsWrite(String(filename), [...Buffer.from(value)], true);
+    }
+    function statSync(filename) { return new Stats(__canaryoFsStat(String(filename))); }
+    function existsSync(filename) { return __canaryoFsExists(String(filename)); }
+    function accessSync(filename) {
+        if (!existsSync(filename)) throw new Error(`ENOENT: no such file or directory, access '${filename}'`);
+    }
+    function mkdirSync(filename, options) {
+        const recursive = options === true || Boolean(options && options.recursive);
+        __canaryoFsMkdir(String(filename), recursive);
+    }
+    function readdirSync(filename, _options) { return [...__canaryoFsReaddir(String(filename))]; }
+    function callbackOperation(callback, operation) {
+        queueMicrotask(() => {
+            try { callback(null, operation()); }
+            catch (error) { callback(error); }
+        });
+    }
+    const fsPromises = {
+        readFile(filename, options) { return Promise.resolve().then(() => readFileSync(filename, options)); },
+        writeFile(filename, value, options) { return Promise.resolve().then(() => writeFileSync(filename, value, options)); },
+        appendFile(filename, value, options) { return Promise.resolve().then(() => appendFileSync(filename, value, options)); },
+        stat(filename) { return Promise.resolve().then(() => statSync(filename)); },
+        access(filename) { return Promise.resolve().then(() => accessSync(filename)); },
+        mkdir(filename, options) { return Promise.resolve().then(() => mkdirSync(filename, options)); },
+        readdir(filename, options) { return Promise.resolve().then(() => readdirSync(filename, options)); }
+    };
+    const fsModule = {
+        Stats,
+        constants: { F_OK: 0, R_OK: 4, W_OK: 2, X_OK: 1 },
+        promises: fsPromises,
+        readFileSync,
+        writeFileSync,
+        appendFileSync,
+        statSync,
+        existsSync,
+        accessSync,
+        mkdirSync,
+        readdirSync,
+        readFile(filename, options, callback) {
+            if (typeof options === "function") { callback = options; options = undefined; }
+            callbackOperation(callback, () => readFileSync(filename, options));
+        },
+        writeFile(filename, value, options, callback) {
+            if (typeof options === "function") { callback = options; options = undefined; }
+            callbackOperation(callback, () => writeFileSync(filename, value, options));
+        },
+        appendFile(filename, value, options, callback) {
+            if (typeof options === "function") { callback = options; options = undefined; }
+            callbackOperation(callback, () => appendFileSync(filename, value, options));
+        },
+        stat(filename, callback) { callbackOperation(callback, () => statSync(filename)); },
+        mkdir(filename, options, callback) {
+            if (typeof options === "function") { callback = options; options = undefined; }
+            callbackOperation(callback, () => mkdirSync(filename, options));
+        },
+        readdir(filename, options, callback) {
+            if (typeof options === "function") { callback = options; options = undefined; }
+            callbackOperation(callback, () => readdirSync(filename, options));
+        },
+        createReadStream() { throw new Error("fs.createReadStream ainda não implementado"); }
+    };
+
     globalThis.__canaryoBuiltins = Object.freeze({
         assert,
         async_hooks: { AsyncLocalStorage, AsyncResource, executionAsyncId: () => 0, triggerAsyncId: () => 0 },
@@ -377,7 +462,8 @@
             }
         },
         events: Object.assign(EventEmitter, { EventEmitter }),
-        fs: { Stats: function Stats() {}, statSync() { throw new Error("fs.statSync ainda não implementado"); }, stat(_path, callback) { callback(new Error("fs.stat ainda não implementado")); }, createReadStream() { throw new Error("fs.createReadStream ainda não implementado"); } },
+        fs: fsModule,
+        "fs/promises": fsPromises,
         net: { isIP: () => 0, isIPv4: () => false, isIPv6: () => false },
         os: { networkInterfaces: () => ({}) },
         path,

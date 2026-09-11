@@ -127,7 +127,7 @@ flowchart LR
 | Fastify | Partial | Fastify 5.12.3 startup, parameterized routes, query strings, request/response hooks, JSON request parsing, async handlers, timed handlers, and JSON responses. Plugin compatibility varies with the Node.js APIs each plugin uses. |
 | Promises and timers | Partial | Promise jobs, `AsyncResource`, `process.nextTick`, `queueMicrotask`, `setImmediate`, `setTimeout`, and `setInterval` in the native HTTP event loop. Standalone event-loop lifetime and timer handle behavior remain incomplete. |
 | Buffers and streams | Partial | Buffer creation, byte lengths, concatenation, UTF-8 decoding, `StringDecoder`, and request body events required by the current framework fixtures. |
-| Filesystem APIs | Partial | Initial synchronous compatibility methods. |
+| Filesystem APIs | Partial | Buffer-aware read, write, append, stat, exists, access, mkdir, and readdir operations through synchronous, callback, and `fs/promises` APIs. Streams, watches, links, permissions, and file descriptors remain incomplete. |
 | ESM | Planned | Native `import` and `export` execution is not available yet. |
 | Keep-alive | Supported | Connections persist by default on HTTP/1.1 and honor `Connection: close`. |
 | TLS | Planned | HTTPS sockets and certificates are not available yet. |

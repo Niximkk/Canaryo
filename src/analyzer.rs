@@ -17,6 +17,7 @@ const NODE_BUILTINS: &[&str] = &[
     "dns",
     "events",
     "fs",
+    "fs/promises",
     "http",
     "http2",
     "https",
