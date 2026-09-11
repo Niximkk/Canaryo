@@ -1425,7 +1425,13 @@
     globalThis.__canaryoBuiltins = Object.freeze({
         assert,
         async_hooks: { AsyncLocalStorage, AsyncResource, executionAsyncId: () => 0, triggerAsyncId: () => 0 },
-        buffer: { Buffer, SlowBuffer: Buffer, INSPECT_MAX_BYTES: 50, kMaxLength: 0x7fffffff },
+        buffer: {
+            Buffer,
+            SlowBuffer: Buffer,
+            INSPECT_MAX_BYTES: 50,
+            kMaxLength: 0x7fffffff,
+            constants: { MAX_LENGTH: 0x7fffffff, MAX_STRING_LENGTH: 0x1fffffe8 }
+        },
         crypto: {
             createHash(algorithm) {
                 let contents = "";

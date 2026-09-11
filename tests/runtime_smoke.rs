@@ -28,6 +28,10 @@ fn free_port() -> u16 {
 }
 
 fn start_fixture(fixture: &str) -> (Server, TcpStream) {
+    start_fixture_with_stdout(fixture, Stdio::null())
+}
+
+fn start_fixture_with_stdout(fixture: &str, stdout: Stdio) -> (Server, TcpStream) {
     let start_guard = SERVER_START.lock().unwrap();
     let port = free_port();
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -36,7 +40,7 @@ fn start_fixture(fixture: &str) -> (Server, TcpStream) {
             .current_dir(root)
             .arg(fixture)
             .arg(port.to_string())
-            .stdout(Stdio::null())
+            .stdout(stdout)
             .stderr(Stdio::inherit())
             .spawn()
             .unwrap(),
@@ -314,6 +318,34 @@ fn serves_a_native_fastify_application() {
     assert!(response.starts_with("HTTP/1.1 200 OK"));
     assert!(headers.contains("content-type: application/json; charset=utf-8"));
     assert!(response.ends_with(r#"{"runtime":"canaryo","framework":"fastify","status":"ok"}"#));
+}
+
+#[test]
+#[ignore = "requires npm ci in fixtures/fastify-basic"]
+fn serves_fastify_with_pino_logging_enabled() {
+    let (mut server, mut stream) =
+        start_fixture_with_stdout("fixtures/fastify-logger/server.js", Stdio::piped());
+    stream
+        .write_all(b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    thread::sleep(Duration::from_millis(25));
+    server.0.kill().unwrap();
+    server.0.wait().unwrap();
+    let mut logs = String::new();
+    server
+        .0
+        .stdout
+        .take()
+        .unwrap()
+        .read_to_string(&mut logs)
+        .unwrap();
+
+    assert!(response.starts_with("HTTP/1.1 200 OK"));
+    assert!(response.ends_with(r#"{"runtime":"canaryo","logger":"pino","status":"ok"}"#));
+    assert!(logs.contains(r#""runtime":"canaryo""#));
+    assert!(logs.contains("logger fixture handled request"));
 }
 
 #[test]

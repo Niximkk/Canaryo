@@ -201,7 +201,13 @@ fn builtin_source(name: &str) -> Option<String> {
             "METHODS",
             "STATUS_CODES",
         ],
-        "buffer" => &["Buffer", "SlowBuffer", "INSPECT_MAX_BYTES", "kMaxLength"],
+        "buffer" => &[
+            "Buffer",
+            "SlowBuffer",
+            "INSPECT_MAX_BYTES",
+            "kMaxLength",
+            "constants",
+        ],
         "crypto" => &["createHash"],
         "diagnostics_channel" => &[
             "channel",
