@@ -327,41 +327,113 @@
         types: { isDate: value => value instanceof Date, isRegExp: value => value instanceof RegExp, isNativeError: value => value instanceof Error }
     };
 
-    function normalizePath(value) {
-        const absolute = /^[A-Za-z]:[\\/]|^[\\/]/.test(value);
-        const prefix = /^[A-Za-z]:/.test(value) ? value.slice(0, 2) : "";
-        const parts = value.replace(/\\/g, "/").replace(/^[A-Za-z]:/, "").split("/");
-        const output = [];
-        for (const part of parts) {
-            if (!part || part === ".") continue;
-            if (part === "..") output.pop();
-            else output.push(part);
+    function createPathApi(separator, delimiter, windows) {
+        const toSlashes = value => windows ? String(value).replace(/\\/g, "/") : String(value);
+        function rootOf(value) {
+            const source = toSlashes(value);
+            if (windows) {
+                const unc = source.match(/^\/\/([^/]+)\/([^/]+)/);
+                if (unc) return { root: unc[0], rest: source.slice(unc[0].length), absolute: true };
+                const drive = source.match(/^([A-Za-z]:)(\/)?/);
+                if (drive) return { root: drive[1], rest: source.slice(drive[0].length), absolute: Boolean(drive[2]) };
+            }
+            return { root: source.startsWith("/") ? "/" : "", rest: source.replace(/^\/+/, ""), absolute: source.startsWith("/") };
         }
-        return prefix + (absolute ? "/" : "") + output.join("/") || ".";
-    }
-    const path = {
-        sep: "/",
-        delimiter: ";",
-        normalize: normalizePath,
-        join(...parts) { return normalizePath(parts.filter(Boolean).join("/")); },
-        resolve(...parts) {
+        function normalize(value) {
+            const source = toSlashes(value);
+            if (!source) return ".";
+            const root = rootOf(source);
+            const output = [];
+            for (const part of root.rest.split("/")) {
+                if (!part || part === ".") continue;
+                if (part === "..") {
+                    if (output.length && output[output.length - 1] !== "..") output.pop();
+                    else if (!root.absolute) output.push(part);
+                } else output.push(part);
+            }
+            let result;
+            if (windows && root.root.startsWith("//")) result = `${root.root}/${output.join("/")}`;
+            else if (windows && root.root) result = `${root.root}${root.absolute ? "/" : ""}${output.join("/")}`;
+            else result = `${root.absolute ? "/" : ""}${output.join("/")}`;
+            if (!result) result = root.absolute ? "/" : ".";
+            if (source.endsWith("/") && result !== "/" && !result.endsWith("/")) result += "/";
+            return separator === "/" ? result : result.replace(/\//g, separator);
+        }
+        function isAbsolute(value) {
+            const source = toSlashes(value);
+            return windows ? /^[A-Za-z]:\/|^\/\//.test(source) : source.startsWith("/");
+        }
+        function resolve(...parts) {
             let result = process.cwd();
-            for (const part of parts) result = /^[A-Za-z]:[\\/]|^[\\/]/.test(part) ? part : result + "/" + part;
-            return normalizePath(result);
-        },
-        dirname(value) { const normalized = normalizePath(value); const index = normalized.lastIndexOf("/"); return index <= 0 ? "." : normalized.slice(0, index); },
-        basename(value, suffix = "") { const name = normalizePath(value).split("/").pop(); return suffix && name.endsWith(suffix) ? name.slice(0, -suffix.length) : name; },
-        extname(value) { const name = path.basename(value); const index = name.lastIndexOf("."); return index <= 0 ? "" : name.slice(index); },
-        isAbsolute(value) { return /^[A-Za-z]:[\\/]|^[\\/]/.test(value); },
-        relative(from, to) {
-            const left = normalizePath(from).split("/");
-            const right = normalizePath(to).split("/");
-            while (left.length && right.length && left[0].toLowerCase() === right[0].toLowerCase()) { left.shift(); right.shift(); }
-            return [...left.map(() => ".."), ...right].join("/");
+            for (const part of parts.map(String)) result = isAbsolute(part) ? part : `${result}${separator}${part}`;
+            return normalize(result);
         }
-    };
-    path.win32 = path;
-    path.posix = path;
+        function basename(value, suffix = "") {
+            const normalized = toSlashes(normalize(value)).replace(/\/+$/, "");
+            let name = normalized.slice(normalized.lastIndexOf("/") + 1);
+            if (suffix && name.endsWith(suffix)) name = name.slice(0, -String(suffix).length);
+            return name;
+        }
+        function extname(value) {
+            const name = basename(value);
+            const index = name.lastIndexOf(".");
+            return index <= 0 ? "" : name.slice(index);
+        }
+        function dirname(value) {
+            const normalized = toSlashes(normalize(value)).replace(/\/+$/, "");
+            const root = rootOf(normalized);
+            const index = normalized.lastIndexOf("/");
+            if (index < 0) return root.root || ".";
+            if (index === 0) return separator;
+            const result = normalized.slice(0, index);
+            if (windows && root.absolute && result.toLowerCase() === root.root.toLowerCase()) return `${result}${separator}`;
+            return separator === "/" ? result : result.replace(/\//g, separator);
+        }
+        const api = {
+            sep: separator,
+            delimiter,
+            normalize,
+            join(...parts) { return normalize(parts.filter(part => String(part).length).join(separator)); },
+            resolve,
+            dirname,
+            basename,
+            extname,
+            isAbsolute,
+            relative(from, to) {
+                const leftValue = toSlashes(resolve(from));
+                const rightValue = toSlashes(resolve(to));
+                const leftRoot = rootOf(leftValue).root;
+                const rightRoot = rootOf(rightValue).root;
+                if (windows && leftRoot.toLowerCase() !== rightRoot.toLowerCase()) return normalize(rightValue);
+                const left = rootOf(leftValue).rest.split("/").filter(Boolean);
+                const right = rootOf(rightValue).rest.split("/").filter(Boolean);
+                while (left.length && right.length && (windows ? left[0].toLowerCase() === right[0].toLowerCase() : left[0] === right[0])) { left.shift(); right.shift(); }
+                return [...left.map(() => ".."), ...right].join(separator);
+            },
+            parse(value) {
+                const normalized = normalize(value);
+                const root = rootOf(normalized).root;
+                const dir = dirname(normalized);
+                const base = basename(normalized);
+                const ext = extname(base);
+                const parsedRoot = root && rootOf(normalized).absolute ? `${root}/` : root;
+                return { root: separator === "/" ? parsedRoot : parsedRoot.replace(/\//g, separator), dir, base, ext, name: base.slice(0, base.length - ext.length) };
+            },
+            format(value) {
+                const base = value.base || `${value.name || ""}${value.ext || ""}`;
+                return value.dir ? `${value.dir}${value.dir.endsWith(separator) ? "" : separator}${base}` : `${value.root || ""}${base}`;
+            },
+            toNamespacedPath(value) { return String(value); }
+        };
+        return api;
+    }
+    const win32Path = createPathApi("\\", ";", true);
+    const posixPath = createPathApi("/", ":", false);
+    win32Path.win32 = win32Path;
+    win32Path.posix = posixPath;
+    posixPath.win32 = win32Path;
+    posixPath.posix = posixPath;
+    const path = __canaryoOsInfo.platform === "win32" ? win32Path : posixPath;
 
     function parseUrl(value) {
         const hashIndex = value.indexOf("#");

@@ -1185,4 +1185,32 @@ mod tests {
 
         assert!(supported);
     }
+
+    #[test]
+    fn uses_platform_specific_path_semantics() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        let supported = context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            context
+                .eval::<bool, _>(
+                    r#"
+                    const path = __canaryoBuiltins.path;
+                    const shared = path.win32.normalize("C:\\one\\..\\two") === "C:\\two" &&
+                        path.win32.join("C:\\one", "two", "..", "file.js") === "C:\\one\\file.js" &&
+                        path.win32.dirname("C:\\one\\file.js") === "C:\\one" &&
+                        path.win32.parse("C:\\one\\file.js").root === "C:\\" &&
+                        path.posix.normalize("/one/../two") === "/two" &&
+                        path.posix.join("/one", "two") === "/one/two" &&
+                        path.posix.delimiter === ":";
+                    shared && (process.platform === "win32" ? path.sep === "\\" : path.sep === "/")
+                    "#,
+                )
+                .unwrap()
+        });
+
+        assert!(supported);
+    }
 }
