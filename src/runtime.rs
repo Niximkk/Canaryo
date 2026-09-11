@@ -285,6 +285,9 @@ function createRequire(parentFilename) {
     return require;
 }
 
+globalThis.__canaryoCreateRequire = createRequire;
+globalThis.__canaryoModuleCache = moduleCache;
+
 function resolveModule(parentFilename, name) {
     const separator = Math.max(
         parentFilename.lastIndexOf("/"),
@@ -1040,6 +1043,33 @@ mod tests {
                         __canaryoBuiltins.net.isIPv4("127.0.0.1") &&
                         __canaryoBuiltins.net.isIPv6("2001:db8::1") &&
                         __canaryoBuiltins.net.isIP("not-an-address") === 0
+                    "#,
+                )
+                .unwrap()
+        });
+
+        assert!(supported);
+    }
+
+    #[test]
+    fn exposes_node_module_helpers() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        let supported = context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(BOOTSTRAP).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            context
+                .eval::<bool, _>(
+                    r#"
+                    const Module = __canaryoBuiltins.module;
+                    const localRequire = Module.createRequire(__filename);
+                    Module === Module.Module && Module.isBuiltin("node:http") &&
+                        !Module.isBuiltin("left-pad") &&
+                        Module.builtinModules.includes("fs/promises") &&
+                        localRequire("node:path") === __canaryoBuiltins.path &&
+                        Module._cache === localRequire.cache
                     "#,
                 )
                 .unwrap()

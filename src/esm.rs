@@ -254,6 +254,13 @@ fn builtin_source(name: &str) -> Option<String> {
             "mkdir",
             "readdir",
         ],
+        "module" => &[
+            "Module",
+            "builtinModules",
+            "isBuiltin",
+            "createRequire",
+            "syncBuiltinESMExports",
+        ],
         "net" => &["isIP", "isIPv4", "isIPv6"],
         "os" => &["networkInterfaces"],
         "path" => &[

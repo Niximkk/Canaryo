@@ -968,6 +968,43 @@
         };
     })();
 
+    const builtinModules = [
+        "assert", "async_hooks", "buffer", "crypto", "diagnostics_channel", "dns",
+        "dns/promises", "events", "fs", "fs/promises", "http", "module", "net", "os",
+        "path", "perf_hooks", "querystring", "stream", "string_decoder", "timers", "tty",
+        "url", "util", "zlib"
+    ];
+    function isBuiltin(name) {
+        return builtinModules.includes(String(name).replace(/^node:/, ""));
+    }
+    function NodeModule(id = "", parent = null) {
+        this.id = id;
+        this.path = path.dirname(id || ".");
+        this.exports = {};
+        this.filename = null;
+        this.loaded = false;
+        this.parent = parent;
+        this.children = [];
+        this.paths = [];
+    }
+    NodeModule.builtinModules = builtinModules;
+    NodeModule.isBuiltin = isBuiltin;
+    NodeModule.createRequire = filename => {
+        const value = filename instanceof URL ? fileURLToPath(filename) : String(filename);
+        return __canaryoCreateRequire(value);
+    };
+    NodeModule.createRequireFromPath = NodeModule.createRequire;
+    NodeModule.syncBuiltinESMExports = () => {};
+    NodeModule._cache = globalThis.__canaryoModuleCache || Object.create(null);
+    const moduleModule = Object.assign(NodeModule, {
+        Module: NodeModule,
+        builtinModules,
+        isBuiltin,
+        createRequire: NodeModule.createRequire,
+        syncBuiltinESMExports: NodeModule.syncBuiltinESMExports,
+        _cache: NodeModule._cache
+    });
+
     globalThis.__canaryoBuiltins = Object.freeze({
         assert,
         async_hooks: { AsyncLocalStorage, AsyncResource, executionAsyncId: () => 0, triggerAsyncId: () => 0 },
@@ -988,6 +1025,7 @@
         events: Object.assign(EventEmitter, { EventEmitter }),
         fs: fsModule,
         "fs/promises": fsPromises,
+        module: moduleModule,
         net: {
             isIP: value => __canaryoIsIp(String(value)),
             isIPv4: value => __canaryoIsIp(String(value)) === 4,

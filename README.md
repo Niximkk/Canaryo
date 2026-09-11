@@ -142,7 +142,7 @@ flowchart LR
 
 | Area | Status | Current scope |
 |---|---|---|
-| CommonJS | Supported | Relative modules, JSON, package `main` and `exports`, conditional and wildcard exports, scoped packages, cache, and upward `node_modules` lookup. |
+| CommonJS | Supported | Relative modules, JSON, package `main` and `exports`, conditional and wildcard exports, scoped packages, cache, upward `node_modules` lookup, and common `node:module` helpers. |
 | `node:http` | Partial | Non-blocking `listen()` registration, server creation and shutdown, persistent HTTP/1.1 connections, pipelining, content-length and chunked request bodies, trailers, binary payloads, `HEAD`, socket metadata, response lifecycle events, custom status messages, header introspection, `write`, and `end`. |
 | Express | Partial | Express 5.2.1 startup, basic routing, JSON request parsing, and JSON responses. |
 | Fastify | Partial | Fastify 5.12.3 startup, parameterized routes, query strings, request/response hooks, JSON request parsing, async handlers, timed handlers, and JSON responses. Plugin compatibility varies with the Node.js APIs each plugin uses. |

@@ -234,12 +234,14 @@ fn scan_source(source: &str, path: &Path) -> Vec<Finding> {
                 "node:worker_threads",
                 "require('worker_threads')",
                 "require(\"worker_threads\")",
-                "node:module",
-                "require('module')",
-                "require(\"module\")",
             ],
             compatibility: Compatibility::Limited,
-            message: "usa uma API Node ainda indisponível em algumas configurações",
+            message: "usa worker_threads, que ainda não está disponível",
+        },
+        Rule {
+            patterns: &["node:module", "require('module')", "require(\"module\")"],
+            compatibility: Compatibility::Limited,
+            message: "usa node:module; os auxiliares principais estão disponíveis",
         },
     ];
     let mut findings = Vec::new();
