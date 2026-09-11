@@ -649,6 +649,17 @@ mod tests {
                     Buffer.byteLength("can\u00e1rio \ud83d\udc24") === 13 &&
                     Buffer.byteLength("\ud800") === 3 &&
                     Buffer.from("hello").toString() === "hello" &&
+                    Buffer.from("ff00a5", "hex").toString("hex") === "ff00a5" &&
+                    Buffer.from("Canaryo", "utf8").toString("base64") === "Q2FuYXJ5bw==" &&
+                    Buffer.from("Q2FuYXJ5bw==", "base64").toString() === "Canaryo" &&
+                    Buffer.from("canário").equals(Buffer.from("canário")) &&
+                    Buffer.compare(Buffer.from("a"), Buffer.from("b")) < 0 &&
+                    Buffer.isEncoding("utf-16le") && !Buffer.isEncoding("unknown") &&
+                    Buffer.from("Canaryo").includes("aryo") &&
+                    Buffer.from("Canaryo").indexOf("nar") === 2 &&
+                    Buffer.from([0x78, 0x56, 0x34, 0x12]).readUInt32LE() === 0x12345678 &&
+                    Buffer.alloc(4).writeUInt32BE(0x12345678) === 4 &&
+                    JSON.stringify(Buffer.from([1, 2])) === '{"type":"Buffer","data":[1,2]}' &&
                     new __canaryoBuiltins.string_decoder.StringDecoder("utf-8")
                         .write(Buffer.from("hello")) === "hello" &&
                     Buffer.byteLength(new Uint8Array([1, 2, 3])) === 3 &&
