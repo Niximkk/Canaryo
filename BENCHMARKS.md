@@ -97,6 +97,7 @@ npm ci --prefix fixtures/fastify-basic
 cargo build --release
 cargo bench --bench runtime -- --duration 3 --runs 3 --startup-runs 7
 cargo bench --bench runtime -- --keep-alive --duration 3 --runs 3 --startup-runs 7
+cargo bench --bench runtime -- --case fastify --keep-alive --duration 3 --runs 3 --startup-runs 7
 ```
 
-Increase `--duration` and `--runs` for a longer comparison. Use `--startup-only` to skip the load tests while optimizing initialization.
+Increase `--duration` and `--runs` for a longer comparison. Use `--case` to run only matching applications, such as `fastify` or `express`, and `--startup-only` to skip the load tests while optimizing initialization.

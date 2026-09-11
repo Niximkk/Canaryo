@@ -160,6 +160,8 @@ cargo bench --bench runtime -- --duration 3 --runs 3 --startup-runs 7
 cargo bench --bench runtime -- --keep-alive --duration 3 --runs 3 --startup-runs 7
 ```
 
+Add `--case fastify`, `--case express`, or `--case node:http` to isolate one application while investigating performance.
+
 Use `--startup-only` while working specifically on initialization:
 
 ```sh

@@ -33,6 +33,7 @@ struct Config {
     startup_runs: usize,
     startup_only: bool,
     keep_alive: bool,
+    case_filter: Option<String>,
 }
 
 struct Server(Child);
@@ -77,7 +78,16 @@ fn main() {
         ("node:http", "fixtures/http-basic/server.js"),
         ("Express 5.2.1", "fixtures/express-basic/server.js"),
         ("Fastify 5.12.3", "fixtures/fastify-basic/server.js"),
-    ];
+    ]
+    .into_iter()
+    .filter(|(label, _)| {
+        config
+            .case_filter
+            .as_ref()
+            .is_none_or(|filter| label.to_ascii_lowercase().contains(filter))
+    })
+    .collect::<Vec<_>>();
+    assert!(!cases.is_empty(), "no benchmark case matched --case");
 
     println!("# Canaryo benchmark\n");
     println!("- OS: {} {}", os_name(), env::consts::ARCH);
@@ -103,7 +113,7 @@ fn main() {
     println!("## Startup\n");
     println!("| Application | Runtime | Median | Minimum | Maximum |");
     println!("|---|---:|---:|---:|---:|");
-    for (label, fixture) in cases {
+    for &(label, fixture) in &cases {
         for runtime in [Runtime::Node, Runtime::Canaryo] {
             let mut times = Vec::with_capacity(config.startup_runs);
             for _ in 0..config.startup_runs {
@@ -129,7 +139,7 @@ fn main() {
         println!("| Application | Runtime | Requests/s | p50 | p95 | p99 | Errors | RSS |");
         println!("|---|---:|---:|---:|---:|---:|---:|---:|");
 
-        for (label, fixture) in cases {
+        for &(label, fixture) in &cases {
             for runtime in [Runtime::Node, Runtime::Canaryo] {
                 let mut samples = Vec::with_capacity(config.runs);
                 for _ in 0..config.runs {
@@ -174,6 +184,7 @@ fn parse_config() -> Config {
         startup_runs: 7,
         startup_only: false,
         keep_alive: false,
+        case_filter: None,
     };
     let arguments: Vec<String> = env::args().skip(1).collect();
     let mut index = 0;
@@ -200,6 +211,7 @@ fn parse_config() -> Config {
             "--duration" => config.duration = Duration::from_secs(parse_number(value)),
             "--runs" => config.runs = parse_number(value),
             "--startup-runs" => config.startup_runs = parse_number(value),
+            "--case" => config.case_filter = Some(value.to_ascii_lowercase()),
             option => panic!("unknown option: {option}"),
         }
         index += 2;
