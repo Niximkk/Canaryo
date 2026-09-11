@@ -93,7 +93,7 @@ Lower is better.
 |---|---:|---:|---:|
 | `node:http` | 54.83 ms | **21.55 ms** | **60.7% lower** |
 | Express 5.2.1 | 218.57 ms | **178.58 ms** | **18.3% lower** |
-| Fastify 5.12.3 | 361.39 ms | **213.63 ms** | **40.9% lower** |
+| Fastify 5.12.3 | 319.35 ms | **198.44 ms** | **37.9% lower** |
 
 ### Throughput at concurrency 16
 
@@ -103,7 +103,7 @@ Higher is better. “New connection” opens a TCP connection for every request;
 |---|---:|---:|---:|---:|---:|---:|
 | `node:http` | 4,971 req/s | **7,569 req/s** | **+52.3%** | 21,421 req/s | **28,341 req/s** | **+32.3%** |
 | Express 5.2.1 | 2,279 req/s | **3,211 req/s** | **+40.9%** | 6,318 req/s | **6,476 req/s** | **+2.5%** |
-| Fastify 5.12.3 | 4,166 req/s | **5,119 req/s** | **+22.9%** | **20,528 req/s** | 12,950 req/s | **−36.9%** |
+| Fastify 5.12.3 | 4,166 req/s | **5,119 req/s** | **+22.9%** | **18,042 req/s** | 10,818 req/s | **−40.0%** |
 
 ### Resident memory at concurrency 16
 
@@ -113,7 +113,7 @@ Lower is better. RSS is sampled from the runtime process during the selected thr
 |---|---:|---:|---:|---:|---:|---:|
 | `node:http` | 40.2 MiB | **11.7 MiB** | **70.9%** | 39.1 MiB | **7.1 MiB** | **81.8%** |
 | Express 5.2.1 | 62.2 MiB | **10.6 MiB** | **83.0%** | 90.4 MiB | **10.3 MiB** | **88.6%** |
-| Fastify 5.12.3 | 51.9 MiB | **12.9 MiB** | **75.1%** | 53.9 MiB | **13.3 MiB** | **75.3%** |
+| Fastify 5.12.3 | 51.9 MiB | **12.9 MiB** | **75.1%** | 54.1 MiB | **14.6 MiB** | **73.0%** |
 
 Canaryo currently leads startup and memory use in every tested application. It also leads throughput when requests reopen connections, and leads `node:http` and Express with persistent connections at concurrency 16. Persistent Fastify traffic remains the main performance gap because its JavaScript-heavy request path benefits from V8's optimizing JIT.
 

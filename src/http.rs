@@ -42,8 +42,9 @@ struct ConnectionReader {
     buffered: Vec<u8>,
 }
 
-struct Connection {
+struct Connection<'js> {
     stream: TcpStream,
+    socket: Object<'js>,
     reader: ConnectionReader,
     outgoing: Vec<u8>,
     written: usize,
@@ -91,11 +92,13 @@ pub fn listen<'js>(
         for event in &events {
             if event.token() == LISTENER {
                 accept_connections(
+                    &context,
+                    &socket_prototype,
                     &mut listener,
                     poll.registry(),
                     &mut connections,
                     &mut next_token,
-                );
+                )?;
                 continue;
             }
 
@@ -109,13 +112,17 @@ pub fn listen<'js>(
                     Some((requests, read_closed)) => {
                         for request in requests {
                             let keep_alive = request.keep_alive();
+                            let socket = connections
+                                .get(&token)
+                                .map(|connection| connection.socket.clone())
+                                .expect("connection exists while handling its request");
                             let response = handle_request(
                                 &context,
                                 &handler,
                                 &request,
                                 &request_prototype,
                                 &response_prototype,
-                                &socket_prototype,
+                                &socket,
                                 &run_timers,
                             )?;
                             if let Some(connection) = connections.get_mut(&token) {
@@ -186,12 +193,14 @@ pub fn listen<'js>(
     Ok(())
 }
 
-fn accept_connections(
+fn accept_connections<'js>(
+    context: &Ctx<'js>,
+    socket_prototype: &Object<'js>,
     listener: &mut mio::net::TcpListener,
     registry: &mio::Registry,
-    connections: &mut HashMap<Token, Connection>,
+    connections: &mut HashMap<Token, Connection<'js>>,
     next_token: &mut usize,
-) {
+) -> Result<()> {
     loop {
         match listener.accept() {
             Ok((mut stream, _)) => {
@@ -206,6 +215,7 @@ fn accept_connections(
                         token,
                         Connection {
                             stream,
+                            socket: socket_to_js(context, socket_prototype)?,
                             reader: ConnectionReader::default(),
                             outgoing: Vec::with_capacity(512),
                             written: 0,
@@ -216,13 +226,13 @@ fn accept_connections(
                     );
                 }
             }
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return,
-            Err(_) => return,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(()),
+            Err(_) => return Ok(()),
         }
     }
 }
 
-impl Connection {
+impl Connection<'_> {
     fn read_requests(&mut self) -> std::io::Result<(Vec<Request>, bool)> {
         let mut requests = Vec::new();
 
@@ -270,10 +280,10 @@ fn handle_request<'js>(
     request: &Request,
     request_prototype: &Object<'js>,
     response_prototype: &Object<'js>,
-    socket_prototype: &Object<'js>,
+    socket: &Object<'js>,
     run_timers: &Function<'js>,
 ) -> Result<Response> {
-    let request_object = request_to_js(context, request, request_prototype, socket_prototype)?;
+    let request_object = request_to_js(context, request, request_prototype, socket)?;
     let response_object = response_to_js(context, response_prototype)?;
     let socket: Object = request_object.get("socket")?;
     request_object.set("res", response_object.clone())?;
@@ -319,14 +329,13 @@ fn request_to_js<'js>(
     context: &Ctx<'js>,
     request: &Request,
     prototype: &Object<'js>,
-    socket_prototype: &Object<'js>,
+    socket: &Object<'js>,
 ) -> Result<Object<'js>> {
     let object = Object::new(context.clone())?;
     let headers = Object::new(context.clone())?;
     let raw_headers = Array::new(context.clone())?;
     let trailers = Object::new(context.clone())?;
     let raw_trailers = Array::new(context.clone())?;
-    let socket = Object::new(context.clone())?;
 
     for (index, (name, value)) in request.headers.iter().enumerate() {
         headers.set(name.as_str(), value.as_str())?;
@@ -350,16 +359,6 @@ fn request_to_js<'js>(
         .unwrap_or("1")
         .parse::<u8>()
         .unwrap_or(1);
-    socket.set("remoteAddress", "127.0.0.1")?;
-    socket.set("remoteFamily", "IPv4")?;
-    socket.set("localAddress", "127.0.0.1")?;
-    socket.set("encrypted", false)?;
-    socket.set("destroyed", false)?;
-    socket.set("connecting", false)?;
-    socket.set("readable", true)?;
-    socket.set("writable", true)?;
-    socket.set_prototype(Some(socket_prototype))?;
-
     object.set("method", request.method.as_str())?;
     object.set("url", request.url.as_str())?;
     object.set("httpVersion", request.version.as_str())?;
@@ -382,9 +381,23 @@ fn request_to_js<'js>(
     object.set("readable", true)?;
     object.set("readableEnded", false)?;
     object.set("socket", socket.clone())?;
-    object.set("connection", socket)?;
+    object.set("connection", socket.clone())?;
     object.set_prototype(Some(prototype))?;
     Ok(object)
+}
+
+fn socket_to_js<'js>(context: &Ctx<'js>, prototype: &Object<'js>) -> Result<Object<'js>> {
+    let socket = Object::new(context.clone())?;
+    socket.set("remoteAddress", "127.0.0.1")?;
+    socket.set("remoteFamily", "IPv4")?;
+    socket.set("localAddress", "127.0.0.1")?;
+    socket.set("encrypted", false)?;
+    socket.set("destroyed", false)?;
+    socket.set("connecting", false)?;
+    socket.set("readable", true)?;
+    socket.set("writable", true)?;
+    socket.set_prototype(Some(prototype))?;
+    Ok(socket)
 }
 
 fn response_to_js<'js>(context: &Ctx<'js>, prototype: &Object<'js>) -> Result<Object<'js>> {
@@ -399,6 +412,7 @@ fn response_to_js<'js>(context: &Ctx<'js>, prototype: &Object<'js>) -> Result<Ob
     object.set("destroyed", false)?;
     object.set("__canaryoHeaders", headers)?;
     object.set("__canaryoBody", Array::new(context.clone())?)?;
+    object.set("__canaryoTextBody", "")?;
     object.set_prototype(Some(prototype))?;
     Ok(object)
 }
@@ -410,11 +424,17 @@ fn response_from_js(response: &Object<'_>) -> Result<Response> {
         let (name, value) = property?;
         headers.push((name, value.0));
     }
-    let body_array: Array = response.get("__canaryoBody")?;
-    let mut body = Vec::with_capacity(body_array.len());
-    for byte in body_array.iter::<u8>() {
-        body.push(byte?);
-    }
+    let text_body: String = response.get("__canaryoTextBody")?;
+    let body = if text_body.is_empty() {
+        let body_array: Array = response.get("__canaryoBody")?;
+        let mut body = Vec::with_capacity(body_array.len());
+        for byte in body_array.iter::<u8>() {
+            body.push(byte?);
+        }
+        body
+    } else {
+        text_body.into_bytes()
+    };
 
     Ok(Response {
         status: response.get("statusCode")?,

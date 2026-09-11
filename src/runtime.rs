@@ -117,6 +117,15 @@ ServerResponse.prototype.writeHead = function(status, statusMessageOrHeaders, he
 };
 function appendResponseChunk(response, chunk) {
     if (chunk === undefined || chunk === null) return;
+    if (typeof chunk === "string" && response.__canaryoBody.length === 0) {
+        response.__canaryoTextBody += chunk;
+        return;
+    }
+    if (response.__canaryoTextBody.length > 0) {
+        const textBytes = Buffer.from(response.__canaryoTextBody);
+        for (const byte of textBytes) response.__canaryoBody.push(byte);
+        response.__canaryoTextBody = "";
+    }
     const bytes = Buffer.from(chunk);
     for (const byte of bytes) response.__canaryoBody.push(byte);
 }
