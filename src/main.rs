@@ -1,5 +1,6 @@
 mod analyzer;
 mod cli;
+mod esm;
 mod http;
 mod modules;
 mod runner;

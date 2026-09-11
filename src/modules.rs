@@ -4,6 +4,45 @@ use std::{
 };
 
 pub fn resolve(parent_file: &str, specifier: &str) -> io::Result<PathBuf> {
+    resolve_with_conditions(parent_file, specifier, &["require", "node", "default"])
+}
+
+pub fn resolve_import(parent_file: &str, specifier: &str) -> io::Result<PathBuf> {
+    resolve_with_conditions(parent_file, specifier, &["import", "node", "default"])
+}
+
+pub fn is_esm_path(path: &Path) -> bool {
+    match path.extension().and_then(|extension| extension.to_str()) {
+        Some("mjs") => return true,
+        Some("cjs") => return false,
+        Some("js") => {}
+        _ => return false,
+    }
+
+    for directory in path.parent().into_iter().flat_map(Path::ancestors) {
+        let package_file = directory.join("package.json");
+        if !package_file.is_file() {
+            continue;
+        }
+        return fs::read_to_string(package_file)
+            .ok()
+            .and_then(|contents| serde_json::from_str::<serde_json::Value>(&contents).ok())
+            .and_then(|package| {
+                package
+                    .get("type")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_owned)
+            })
+            .is_some_and(|kind| kind == "module");
+    }
+    false
+}
+
+fn resolve_with_conditions(
+    parent_file: &str,
+    specifier: &str,
+    conditions: &[&str],
+) -> io::Result<PathBuf> {
     let parent = Path::new(parent_file)
         .parent()
         .unwrap_or_else(|| Path::new("."));
@@ -24,7 +63,7 @@ pub fn resolve(parent_file: &str, specifier: &str) -> io::Result<PathBuf> {
     for directory in parent.ancestors() {
         let package_directory = directory.join("node_modules").join(package);
         if package_directory.is_dir() {
-            return resolve_package(&package_directory, subpath);
+            return resolve_package(&package_directory, subpath, conditions);
         }
     }
 
@@ -34,7 +73,11 @@ pub fn resolve(parent_file: &str, specifier: &str) -> io::Result<PathBuf> {
     ))
 }
 
-fn resolve_package(package_directory: &Path, subpath: &str) -> io::Result<PathBuf> {
+fn resolve_package(
+    package_directory: &Path,
+    subpath: &str,
+    conditions: &[&str],
+) -> io::Result<PathBuf> {
     let package_file = package_directory.join("package.json");
     if package_file.is_file()
         && let Ok(contents) = fs::read_to_string(&package_file)
@@ -46,7 +89,7 @@ fn resolve_package(package_directory: &Path, subpath: &str) -> io::Result<PathBu
         } else {
             format!("./{subpath}")
         };
-        let target = resolve_exports(exports, &export_key).ok_or_else(|| {
+        let target = resolve_exports(exports, &export_key, conditions).ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::NotFound,
                 format!(
@@ -80,17 +123,17 @@ fn resolve_package(package_directory: &Path, subpath: &str) -> io::Result<PathBu
     resolve_candidate(&candidate)
 }
 
-fn resolve_exports(exports: &serde_json::Value, key: &str) -> Option<String> {
+fn resolve_exports(exports: &serde_json::Value, key: &str, conditions: &[&str]) -> Option<String> {
     match exports {
         serde_json::Value::String(target) if key == "." => Some(target.clone()),
         serde_json::Value::Array(targets) => targets
             .iter()
-            .find_map(|target| resolve_exports(target, key)),
+            .find_map(|target| resolve_exports(target, key, conditions)),
         serde_json::Value::Object(entries) => {
             let uses_subpaths = entries.keys().any(|entry| entry.starts_with('.'));
             if uses_subpaths {
                 if let Some(target) = entries.get(key) {
-                    return resolve_export_target(target, None);
+                    return resolve_export_target(target, None, conditions);
                 }
 
                 let mut patterns = entries
@@ -104,14 +147,16 @@ fn resolve_exports(exports: &serde_json::Value, key: &str) -> Option<String> {
                     let (prefix, suffix) = pattern.split_once('*')?;
                     if key.starts_with(prefix) && key.ends_with(suffix) {
                         let matched = &key[prefix.len()..key.len() - suffix.len()];
-                        if let Some(target) = resolve_export_target(target, Some(matched)) {
+                        if let Some(target) =
+                            resolve_export_target(target, Some(matched), conditions)
+                        {
                             return Some(target);
                         }
                     }
                 }
                 None
             } else if key == "." {
-                resolve_export_target(exports, None)
+                resolve_export_target(exports, None, conditions)
             } else {
                 None
             }
@@ -120,7 +165,11 @@ fn resolve_exports(exports: &serde_json::Value, key: &str) -> Option<String> {
     }
 }
 
-fn resolve_export_target(target: &serde_json::Value, replacement: Option<&str>) -> Option<String> {
+fn resolve_export_target(
+    target: &serde_json::Value,
+    replacement: Option<&str>,
+    conditions: &[&str],
+) -> Option<String> {
     match target {
         serde_json::Value::String(target) => Some(match replacement {
             Some(replacement) => target.replace('*', replacement),
@@ -128,14 +177,12 @@ fn resolve_export_target(target: &serde_json::Value, replacement: Option<&str>) 
         }),
         serde_json::Value::Array(targets) => targets
             .iter()
-            .find_map(|target| resolve_export_target(target, replacement)),
-        serde_json::Value::Object(conditions) => {
-            ["require", "node", "default"].iter().find_map(|condition| {
-                conditions
-                    .get(*condition)
-                    .and_then(|target| resolve_export_target(target, replacement))
-            })
-        }
+            .find_map(|target| resolve_export_target(target, replacement, conditions)),
+        serde_json::Value::Object(targets) => conditions.iter().find_map(|condition| {
+            targets
+                .get(*condition)
+                .and_then(|target| resolve_export_target(target, replacement, conditions))
+        }),
         _ => None,
     }
 }
@@ -160,7 +207,7 @@ fn resolve_candidate(candidate: &Path) -> io::Result<PathBuf> {
         return Ok(normalize(candidate));
     }
 
-    for extension in [".js", ".json", ".cjs"] {
+    for extension in [".js", ".json", ".cjs", ".mjs"] {
         let mut filename = candidate.as_os_str().to_os_string();
         filename.push(extension);
         let file = PathBuf::from(filename);
@@ -184,7 +231,7 @@ fn resolve_candidate(candidate: &Path) -> io::Result<PathBuf> {
             }
         }
 
-        for index in ["index.js", "index.json", "index.cjs"] {
+        for index in ["index.js", "index.json", "index.cjs", "index.mjs"] {
             let file = candidate.join(index);
             if file.is_file() {
                 return Ok(normalize(&file));
@@ -293,6 +340,10 @@ mod tests {
         let feature = resolve(entry.to_str().unwrap(), "example/feature").unwrap();
 
         assert_eq!(package_root, normalize(&package.join("cjs.js")));
+        assert_eq!(
+            resolve_import(entry.to_str().unwrap(), "example").unwrap(),
+            normalize(&package.join("esm.js"))
+        );
         assert_eq!(feature, normalize(&package.join("lib/feature.js")));
         fs::remove_dir_all(root).unwrap();
     }
@@ -331,6 +382,24 @@ mod tests {
         let error = resolve(entry.to_str().unwrap(), "example/private").unwrap_err();
 
         assert!(error.to_string().contains("não exportado"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn detects_mjs_and_module_package_scopes() {
+        let root = fixture();
+        let module_directory = root.join("module-package");
+        fs::create_dir_all(&module_directory).unwrap();
+        fs::write(
+            module_directory.join("package.json"),
+            r#"{"type":"module"}"#,
+        )
+        .unwrap();
+        fs::write(module_directory.join("index.js"), "").unwrap();
+
+        assert!(is_esm_path(&root.join("entry.mjs")));
+        assert!(!is_esm_path(&root.join("entry.cjs")));
+        assert!(is_esm_path(&module_directory.join("index.js")));
         fs::remove_dir_all(root).unwrap();
     }
 

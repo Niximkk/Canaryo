@@ -1,9 +1,9 @@
 use std::{env, fs, path::Path};
 
-use rquickjs::{Array, CatchResultExt, Context, Function, Object, Runtime};
+use rquickjs::{Array, CatchResultExt, Context, Function, Module, Object, Runtime};
 use sha1::{Digest, Sha1};
 
-use crate::{http, modules};
+use crate::{esm, http, modules};
 
 const BOOTSTRAP: &str = r#"
 globalThis.global = globalThis;
@@ -281,6 +281,8 @@ function resolveModule(parentFilename, name) {
     return filename;
 }
 
+globalThis.__canaryoHttpModule = httpModule;
+globalThis.__canaryoLoadCommonJS = filename => loadModule(filename);
 globalThis.__canaryoRunMain = filename => loadModule(filename);
 })();
 "#;
@@ -294,6 +296,7 @@ pub fn execute(path: &str, arguments: &[String]) -> Result<(), String> {
         .map_err(|error| format!("não foi possível resolver {path}: {error}"))?;
     let runtime = Runtime::new().map_err(|error| format!("erro ao criar runtime: {error}"))?;
     runtime.set_gc_threshold(8 * 1024 * 1024);
+    runtime.set_loader(esm::NodeResolver, esm::NodeLoader);
     let context =
         Context::full(&runtime).map_err(|error| format!("erro ao criar contexto: {error}"))?;
 
@@ -307,14 +310,24 @@ pub fn execute(path: &str, arguments: &[String]) -> Result<(), String> {
             .eval::<(), _>(POLYFILLS)
             .catch(&context)
             .map_err(|error| error.to_string())?;
-        let run_main: Function = context
-            .globals()
-            .get("__canaryoRunMain")
-            .map_err(|error| error.to_string())?;
-        run_main
-            .call::<_, ()>((entry.to_string_lossy().as_ref(),))
-            .catch(&context)
-            .map_err(|error| error.to_string())?;
+        if modules::is_esm_path(&entry) {
+            let source = fs::read(&entry).map_err(|error| error.to_string())?;
+            Module::evaluate(context.clone(), entry.to_string_lossy().as_bytes(), source)
+                .catch(&context)
+                .map_err(|error| error.to_string())?
+                .finish::<()>()
+                .catch(&context)
+                .map_err(|error| error.to_string())?;
+        } else {
+            let run_main: Function = context
+                .globals()
+                .get("__canaryoRunMain")
+                .map_err(|error| error.to_string())?;
+            run_main
+                .call::<_, ()>((entry.to_string_lossy().as_ref(),))
+                .catch(&context)
+                .map_err(|error| error.to_string())?;
+        }
 
         while context.execute_pending_job() {}
         Ok(())

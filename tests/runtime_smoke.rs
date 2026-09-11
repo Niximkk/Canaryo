@@ -108,6 +108,16 @@ fn serves_a_native_node_http_application() {
 }
 
 #[test]
+fn serves_a_native_esm_http_application() {
+    let response = request_fixture("fixtures/http-esm/server.mjs");
+    let headers = response.to_ascii_lowercase();
+
+    assert!(response.starts_with("HTTP/1.1 200 OK"));
+    assert!(headers.contains("content-type: application/json; charset=utf-8"));
+    assert!(response.ends_with(r#"{"runtime":"canaryo","modules":"esm+cjs!"}"#));
+}
+
+#[test]
 fn serves_multiple_requests_on_a_persistent_connection() {
     let (_server, mut stream) = start_fixture("fixtures/http-basic/server.js");
 

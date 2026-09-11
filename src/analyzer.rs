@@ -260,7 +260,7 @@ fn scan_source(source: &str, path: &Path) -> Vec<Finding> {
         findings.push(Finding {
             file: path.to_path_buf(),
             compatibility: Compatibility::Limited,
-            message: "usa sintaxe ESM; a execução nativa atual aceita CommonJS".into(),
+            message: "usa sintaxe ESM; o suporte nativo ainda é parcial".into(),
         });
     }
 
