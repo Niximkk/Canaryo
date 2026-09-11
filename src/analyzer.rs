@@ -199,6 +199,11 @@ fn scan_source(source: &str, path: &Path) -> Vec<Finding> {
             message: "usa a API http",
         },
         Rule {
+            patterns: &["node:https", "require('https')", "require(\"https\")"],
+            compatibility: Compatibility::Limited,
+            message: "usa https; o cliente TLS está disponível, mas servidores HTTPS ainda não",
+        },
+        Rule {
             patterns: &["node:fs", "require('fs')", "require(\"fs\")"],
             compatibility: Compatibility::Limited,
             message: "usa fs; o suporte a filesystem ainda é limitado",

@@ -674,6 +674,7 @@ fn reason_phrase(status: u16) -> &'static str {
     match status {
         200 => "OK",
         201 => "Created",
+        202 => "Accepted",
         204 => "No Content",
         400 => "Bad Request",
         404 => "Not Found",

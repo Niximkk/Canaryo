@@ -1387,7 +1387,7 @@
 
     const builtinModules = [
         "assert", "async_hooks", "buffer", "crypto", "diagnostics_channel", "dns",
-        "dns/promises", "events", "fs", "fs/promises", "http", "module", "net", "os",
+        "dns/promises", "events", "fs", "fs/promises", "http", "https", "module", "net", "os",
         "path", "perf_hooks", "querystring", "stream", "string_decoder", "timers", "tty",
         "url", "util", "worker_threads", "zlib"
     ];
@@ -1448,6 +1448,7 @@
         events: Object.assign(EventEmitter, { EventEmitter }),
         fs: fsModule,
         "fs/promises": fsPromises,
+        https: globalThis.__canaryoHttpsModule,
         module: moduleModule,
         net: {
             isIP: value => __canaryoIsIp(String(value)),

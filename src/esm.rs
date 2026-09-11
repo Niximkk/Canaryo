@@ -158,6 +158,7 @@ fn is_builtin(name: &str) -> bool {
             | "fs"
             | "fs/promises"
             | "http"
+            | "https"
             | "net"
             | "os"
             | "path"
@@ -181,6 +182,8 @@ fn builtin_source(name: &str) -> Option<String> {
     }
     let expression = if normalized == "http" {
         "globalThis.__canaryoHttpModule".to_string()
+    } else if normalized == "https" {
+        "globalThis.__canaryoHttpsModule".to_string()
     } else {
         format!(
             "globalThis.__canaryoBuiltins[{}]",
@@ -196,8 +199,25 @@ fn builtin_source(name: &str) -> Option<String> {
         ],
         "http" => &[
             "createServer",
+            "request",
+            "get",
             "IncomingMessage",
             "ServerResponse",
+            "ClientRequest",
+            "Agent",
+            "globalAgent",
+            "METHODS",
+            "STATUS_CODES",
+        ],
+        "https" => &[
+            "createServer",
+            "request",
+            "get",
+            "IncomingMessage",
+            "ServerResponse",
+            "ClientRequest",
+            "Agent",
+            "globalAgent",
             "METHODS",
             "STATUS_CODES",
         ],

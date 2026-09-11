@@ -28,10 +28,18 @@ fn free_port() -> u16 {
 }
 
 fn start_fixture(fixture: &str) -> (Server, TcpStream) {
-    start_fixture_with_stdout(fixture, Stdio::null())
+    start_fixture_with_args(fixture, &[], Stdio::null())
 }
 
 fn start_fixture_with_stdout(fixture: &str, stdout: Stdio) -> (Server, TcpStream) {
+    start_fixture_with_args(fixture, &[], stdout)
+}
+
+fn start_fixture_with_args(
+    fixture: &str,
+    arguments: &[String],
+    stdout: Stdio,
+) -> (Server, TcpStream) {
     let start_guard = SERVER_START.lock().unwrap();
     let port = free_port();
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -40,6 +48,7 @@ fn start_fixture_with_stdout(fixture: &str, stdout: Stdio) -> (Server, TcpStream
             .current_dir(root)
             .arg(fixture)
             .arg(port.to_string())
+            .args(arguments)
             .stdout(stdout)
             .stderr(Stdio::inherit())
             .spawn()
@@ -155,6 +164,52 @@ fn serves_a_native_esm_http_application() {
     assert!(response.starts_with("HTTP/1.1 200 OK"));
     assert!(headers.contains("content-type: application/json; charset=utf-8"));
     assert!(response.ends_with(r#"{"runtime":"canaryo","modules":"esm+cjs!","ready":true}"#));
+}
+
+#[test]
+fn performs_outbound_http_requests() {
+    let upstream = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let upstream_port = upstream.local_addr().unwrap().port();
+    let upstream_thread = thread::spawn(move || {
+        let (mut stream, _) = upstream.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut request = Vec::new();
+        while !request.ends_with(b"\r\n\r\n") {
+            let mut byte = [0];
+            stream.read_exact(&mut byte).unwrap();
+            request.push(byte[0]);
+        }
+        stream
+            .write_all(
+                b"HTTP/1.1 202 Accepted\r\nContent-Length: 11\r\nX-Upstream: yes\r\nConnection: close\r\n\r\noutbound-ok",
+            )
+            .unwrap();
+        String::from_utf8(request).unwrap()
+    });
+    let (_server, mut stream) = start_fixture_with_args(
+        "fixtures/http-client/server.js",
+        &[upstream_port.to_string()],
+        Stdio::null(),
+    );
+
+    stream
+        .write_all(b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    let upstream_request = upstream_thread.join().unwrap();
+
+    assert!(upstream_request.starts_with("GET /source?value=42 HTTP/1.1"));
+    assert!(
+        upstream_request
+            .to_ascii_lowercase()
+            .contains("x-canaryo-client: yes")
+    );
+    assert!(response.starts_with("HTTP/1.1 202 Accepted"), "{response}");
+    assert!(response.contains("x-upstream: yes"));
+    assert!(response.ends_with("outbound-ok"));
 }
 
 #[test]

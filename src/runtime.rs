@@ -1,7 +1,9 @@
 use std::{
     env, fs,
+    io::Read,
     net::{IpAddr, ToSocketAddrs},
     path::Path,
+    time::Duration,
 };
 
 use rquickjs::{Array, CatchResultExt, Context, Function, Module, Object, Promise, Runtime};
@@ -134,11 +136,166 @@ ServerResponse.prototype.end = function(chunk) {
     return this;
 };
 
+function ensureHttpEventPrototypes() {
+    const EventEmitter = __canaryoBuiltins.events.EventEmitter;
+    for (const constructor of [IncomingMessage, ServerResponse, Socket, ClientRequest]) {
+        if (!(constructor.prototype instanceof EventEmitter)) {
+            Object.setPrototypeOf(constructor.prototype, EventEmitter.prototype);
+        }
+    }
+    return EventEmitter;
+}
+
+function normalizeClientRequest(input, options, defaultProtocol) {
+    let values;
+    if (typeof input === "string" || input instanceof URL) {
+        const parsed = input instanceof URL ? input : new URL(input);
+        values = Object.assign({
+            protocol: parsed.protocol,
+            hostname: parsed.hostname,
+            port: parsed.port,
+            path: parsed.pathname + parsed.search,
+            auth: parsed.username ? `${parsed.username}:${parsed.password}` : undefined
+        }, options || {});
+    } else {
+        values = Object.assign({}, input || {}, options || {});
+    }
+    const protocol = values.protocol || defaultProtocol;
+    const hostname = values.hostname || values.host || "localhost";
+    const port = values.port ? `:${values.port}` : "";
+    const path = values.path || values.pathname || "/";
+    return {
+        method: String(values.method || "GET").toUpperCase(),
+        url: `${protocol}//${hostname}${port}${path}`,
+        protocol,
+        hostname,
+        port: values.port || "",
+        path,
+        headers: Object.assign({}, values.headers || {}),
+        timeout: Number(values.timeout) || 0
+    };
+}
+
+function ClientRequest(input, options, callback, defaultProtocol = "http:") {
+    const EventEmitter = ensureHttpEventPrototypes();
+    EventEmitter.call(this);
+    const normalized = normalizeClientRequest(input, options, defaultProtocol);
+    this.method = normalized.method;
+    this.protocol = normalized.protocol;
+    this.host = normalized.hostname;
+    this.path = normalized.path;
+    this.finished = false;
+    this.writableEnded = false;
+    this.destroyed = false;
+    this._url = normalized.url;
+    this._headers = Object.create(null);
+    this._body = [];
+    for (const [name, value] of Object.entries(normalized.headers)) this.setHeader(name, value);
+    if (typeof callback === "function") this.once("response", callback);
+}
+ClientRequest.prototype.setHeader = function(name, value) {
+    this._headers[String(name).toLowerCase()] = Array.isArray(value) ? value.join(", ") : String(value);
+};
+ClientRequest.prototype.getHeader = function(name) { return this._headers[String(name).toLowerCase()]; };
+ClientRequest.prototype.hasHeader = function(name) {
+    return Object.prototype.hasOwnProperty.call(this._headers, String(name).toLowerCase());
+};
+ClientRequest.prototype.removeHeader = function(name) { delete this._headers[String(name).toLowerCase()]; };
+ClientRequest.prototype.getHeaders = function() { return Object.assign(Object.create(null), this._headers); };
+ClientRequest.prototype.getHeaderNames = function() { return Object.keys(this._headers); };
+ClientRequest.prototype.flushHeaders = function() { return this; };
+ClientRequest.prototype.write = function(chunk, encoding, callback) {
+    if (typeof encoding === "function") { callback = encoding; encoding = undefined; }
+    if (this.writableEnded) throw new Error("write after end");
+    const bytes = Buffer.from(chunk, encoding);
+    for (const byte of bytes) this._body.push(byte);
+    if (callback) process.nextTick(callback);
+    return true;
+};
+ClientRequest.prototype.end = function(chunk, encoding, callback) {
+    if (typeof chunk === "function") { callback = chunk; chunk = undefined; }
+    else if (typeof encoding === "function") { callback = encoding; encoding = undefined; }
+    if (chunk !== undefined) this.write(chunk, encoding);
+    if (this.writableEnded) return this;
+    this.finished = true;
+    this.writableEnded = true;
+    this.emit("finish");
+    if (callback) process.nextTick(callback);
+    process.nextTick(() => {
+        if (this.destroyed) return;
+        try {
+            const headers = Object.entries(this._headers);
+            const raw = __canaryoHttpRequest(
+                this.method,
+                this._url,
+                JSON.stringify(headers),
+                Buffer.from(this._body).toString("base64")
+            );
+            const result = JSON.parse(raw);
+            const response = new IncomingMessage();
+            ensureHttpEventPrototypes().call(response);
+            response.statusCode = result.status;
+            response.statusMessage = result.statusText;
+            response.headers = Object.create(null);
+            response.rawHeaders = [];
+            for (const [name, value] of result.headers) {
+                response.headers[name.toLowerCase()] = value;
+                response.rawHeaders.push(name, value);
+            }
+            response.httpVersion = "1.1";
+            response.method = null;
+            response.url = this._url;
+            response.readable = true;
+            response.readableEnded = false;
+            response.complete = false;
+            response.__canaryoBody = [...Buffer.from(result.body, "base64")];
+            this.emit("response", response);
+            process.nextTick(() => response.__canaryoDeliverBody());
+        } catch (error) {
+            this.emit("error", error);
+        }
+    });
+    return this;
+};
+ClientRequest.prototype.abort = function() {
+    this.aborted = true;
+    this.destroy();
+};
+ClientRequest.prototype.destroy = function(error) {
+    if (this.destroyed) return this;
+    this.destroyed = true;
+    if (error) this.emit("error", error);
+    this.emit("close");
+    return this;
+};
+ClientRequest.prototype.setTimeout = function(timeout, callback) {
+    this.timeout = Number(timeout);
+    if (typeof callback === "function") this.once("timeout", callback);
+    return this;
+};
+
+function clientRequest(defaultProtocol, input, options, callback) {
+    if (typeof options === "function") { callback = options; options = undefined; }
+    return new ClientRequest(input, options, callback, defaultProtocol);
+}
+function Agent(options = {}) { this.options = options; }
+Agent.prototype.destroy = function() {};
+const globalAgent = new Agent({ keepAlive: true });
+
 const httpModule = Object.freeze({
     IncomingMessage,
     ServerResponse,
+    ClientRequest,
+    Agent,
+    globalAgent,
     METHODS: ["GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH"],
-    STATUS_CODES: { 200: "OK", 201: "Created", 204: "No Content", 400: "Bad Request", 404: "Not Found", 500: "Internal Server Error" },
+    STATUS_CODES: { 200: "OK", 201: "Created", 202: "Accepted", 204: "No Content", 400: "Bad Request", 404: "Not Found", 500: "Internal Server Error" },
+    request(input, options, callback) { return clientRequest("http:", input, options, callback); },
+    get(input, options, callback) {
+        const request = clientRequest("http:", input, options, callback);
+        request.end();
+        return request;
+    },
     createServer(optionsOrListener, listener) {
         const requestListener = typeof optionsOrListener === "function"
             ? optionsOrListener
@@ -212,6 +369,16 @@ const httpModule = Object.freeze({
         return server;
     }
 });
+const httpsModule = Object.freeze(Object.assign({}, httpModule, {
+    globalAgent: new Agent({ keepAlive: true, protocol: "https:" }),
+    request(input, options, callback) { return clientRequest("https:", input, options, callback); },
+    get(input, options, callback) {
+        const request = clientRequest("https:", input, options, callback);
+        request.end();
+        return request;
+    },
+    createServer() { throw new Error("Canaryo does not support inbound HTTPS servers yet"); }
+}));
 
 const moduleCache = Object.create(null);
 const resolutionCache = new Map();
@@ -263,9 +430,7 @@ function loadModule(filename) {
 function createRequire(parentFilename) {
     function require(name) {
         if (name === "http" || name === "node:http") return httpModule;
-        if (name === "https" || name === "node:https") {
-            return { createServer() { throw new Error("node:https ainda não é suportado"); } };
-        }
+        if (name === "https" || name === "node:https") return httpsModule;
         if (name === "http2" || name === "node:http2") {
             return {
                 constants: {},
@@ -301,6 +466,7 @@ function resolveModule(parentFilename, name) {
 }
 
 globalThis.__canaryoHttpModule = httpModule;
+globalThis.__canaryoHttpsModule = httpsModule;
 globalThis.__canaryoLoadCommonJS = filename => loadModule(filename);
 globalThis.__canaryoRunMain = filename => loadModule(filename);
 globalThis.__canaryoStartPendingServer = () => {
@@ -431,6 +597,11 @@ fn install_host_globals<'js>(
         Function::new(context.clone(), dns_lookup).map_err(|error| error.to_string())?;
     globals
         .set("__canaryoDnsLookup", dns_lookup)
+        .map_err(|error| error.to_string())?;
+    let http_request =
+        Function::new(context.clone(), outbound_http_request).map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoHttpRequest", http_request)
         .map_err(|error| error.to_string())?;
     let os_info = Object::new(context.clone()).map_err(|error| error.to_string())?;
     os_info
@@ -577,6 +748,75 @@ fn is_ip(value: String) -> u8 {
         Ok(IpAddr::V6(_)) => 6,
         Err(_) => 0,
     }
+}
+
+fn outbound_http_request<'js>(
+    context: rquickjs::Ctx<'js>,
+    method: String,
+    url: String,
+    headers_json: String,
+    body_base64: String,
+) -> rquickjs::Result<String> {
+    use base64::Engine;
+
+    let headers: Vec<(String, String)> = serde_json::from_str(&headers_json)
+        .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))?;
+    let body = base64::engine::general_purpose::STANDARD
+        .decode(body_base64)
+        .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))?;
+    let agent = ureq::AgentBuilder::new()
+        .timeout(Duration::from_secs(30))
+        .build();
+    let mut request = agent.request(&method, &url);
+    for (name, value) in headers {
+        request = request.set(&name, &value);
+    }
+    let result = if body.is_empty() {
+        request.call()
+    } else {
+        request.send_bytes(&body)
+    };
+    let response = match result {
+        Ok(response) => response,
+        Err(ureq::Error::Status(_, response)) => response,
+        Err(error) => {
+            return Err(rquickjs::Exception::throw_message(
+                &context,
+                &error.to_string(),
+            ));
+        }
+    };
+    let status = response.status();
+    let status_text = response.status_text().to_string();
+    let response_headers = response
+        .headers_names()
+        .into_iter()
+        .filter_map(|name| {
+            response
+                .header(&name)
+                .map(|value| (name, value.to_string()))
+        })
+        .collect::<Vec<_>>();
+    let mut response_body = Vec::new();
+    response
+        .into_reader()
+        .take(16 * 1024 * 1024 + 1)
+        .read_to_end(&mut response_body)
+        .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))?;
+    if response_body.len() > 16 * 1024 * 1024 {
+        return Err(rquickjs::Exception::throw_message(
+            &context,
+            "outbound HTTP response exceeds the 16 MiB compatibility limit",
+        ));
+    }
+
+    serde_json::to_string(&serde_json::json!({
+        "status": status,
+        "statusText": status_text,
+        "headers": response_headers,
+        "body": base64::engine::general_purpose::STANDARD.encode(response_body),
+    }))
+    .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))
 }
 
 fn node_platform() -> &'static str {
