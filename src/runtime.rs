@@ -3,6 +3,12 @@ use std::{
     io::Read,
     net::{IpAddr, ToSocketAddrs},
     path::Path,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+        mpsc::{SyncSender, sync_channel},
+    },
+    thread,
     time::Duration,
 };
 
@@ -41,21 +47,46 @@ IncomingMessage.prototype.setEncoding = function(encoding) {
     this.__canaryoEncoding = String(encoding);
     return this;
 };
-IncomingMessage.prototype.pause = function() { return this; };
-IncomingMessage.prototype.resume = function() { return this; };
-IncomingMessage.prototype.__canaryoDeliverBody = function() {
-    if (this.readableEnded) return;
-    if (this.__canaryoBody.length > 0) {
-        const buffer = Buffer.from(this.__canaryoBody);
-        const chunk = this.__canaryoEncoding
-            ? buffer.toString(this.__canaryoEncoding)
-            : buffer;
-        this.emit("data", chunk);
+IncomingMessage.prototype.pause = function() {
+    this.__canaryoPaused = true;
+    return this;
+};
+IncomingMessage.prototype.resume = function() {
+    this.__canaryoPaused = false;
+    const queue = this.__canaryoChunkQueue || [];
+    while (!this.__canaryoPaused && queue.length > 0) {
+        this.__canaryoDeliverChunk(queue.shift());
     }
+    if (!this.__canaryoPaused && this.__canaryoEndPending) this.__canaryoFinishBody();
+    return this;
+};
+IncomingMessage.prototype.__canaryoDeliverChunk = function(buffer) {
+    if (this.readableEnded) return;
+    if (this.__canaryoPaused) {
+        (this.__canaryoChunkQueue || (this.__canaryoChunkQueue = [])).push(buffer);
+        return;
+    }
+    const chunk = this.__canaryoEncoding ? buffer.toString(this.__canaryoEncoding) : buffer;
+    this.emit("data", chunk);
+};
+IncomingMessage.prototype.__canaryoFinishBody = function() {
+    if (this.readableEnded) return;
+    if (this.__canaryoPaused || (this.__canaryoChunkQueue && this.__canaryoChunkQueue.length)) {
+        this.__canaryoEndPending = true;
+        return;
+    }
+    this.__canaryoEndPending = false;
     this.readable = false;
     this.readableEnded = true;
     this.complete = true;
     this.emit("end");
+};
+IncomingMessage.prototype.__canaryoDeliverBody = function() {
+    if (this.readableEnded) return;
+    if (this.__canaryoBody.length > 0) {
+        this.__canaryoDeliverChunk(Buffer.from(this.__canaryoBody));
+    }
+    this.__canaryoFinishBody();
 };
 
 Socket.prototype.setTimeout = function(value, callback) {
@@ -196,6 +227,7 @@ function ClientRequest(input, options, callback, defaultProtocol = "http:") {
     this.finished = false;
     this.writableEnded = false;
     this.destroyed = false;
+    this.timeout = normalized.timeout;
     this._url = normalized.url;
     this._headers = Object.create(null);
     this._body = [];
@@ -213,6 +245,14 @@ ClientRequest.prototype.removeHeader = function(name) { delete this._headers[Str
 ClientRequest.prototype.getHeaders = function() { return Object.assign(Object.create(null), this._headers); };
 ClientRequest.prototype.getHeaderNames = function() { return Object.keys(this._headers); };
 ClientRequest.prototype.flushHeaders = function() { return this; };
+ClientRequest.prototype.__canaryoArmTimeout = function() {
+    if (this._timeoutHandle) clearTimeout(this._timeoutHandle);
+    if (this.timeout > 0 && this._requestId !== undefined && pendingClientRequests.has(this._requestId)) {
+        this._timeoutHandle = setTimeout(() => {
+            if (!this.destroyed && pendingClientRequests.has(this._requestId)) this.emit("timeout");
+        }, this.timeout);
+    }
+};
 ClientRequest.prototype.write = function(chunk, encoding, callback) {
     if (typeof encoding === "function") { callback = encoding; encoding = undefined; }
     if (this.writableEnded) throw new Error("write after end");
@@ -230,40 +270,19 @@ ClientRequest.prototype.end = function(chunk, encoding, callback) {
     this.writableEnded = true;
     this.emit("finish");
     if (callback) process.nextTick(callback);
-    process.nextTick(() => {
-        if (this.destroyed) return;
-        try {
-            const headers = Object.entries(this._headers);
-            const raw = __canaryoHttpRequest(
-                this.method,
-                this._url,
-                JSON.stringify(headers),
-                Buffer.from(this._body).toString("base64")
-            );
-            const result = JSON.parse(raw);
-            const response = new IncomingMessage();
-            ensureHttpEventPrototypes().call(response);
-            response.statusCode = result.status;
-            response.statusMessage = result.statusText;
-            response.headers = Object.create(null);
-            response.rawHeaders = [];
-            for (const [name, value] of result.headers) {
-                response.headers[name.toLowerCase()] = value;
-                response.rawHeaders.push(name, value);
-            }
-            response.httpVersion = "1.1";
-            response.method = null;
-            response.url = this._url;
-            response.readable = true;
-            response.readableEnded = false;
-            response.complete = false;
-            response.__canaryoBody = [...Buffer.from(result.body, "base64")];
-            this.emit("response", response);
-            process.nextTick(() => response.__canaryoDeliverBody());
-        } catch (error) {
-            this.emit("error", error);
-        }
-    });
+    try {
+        const headers = Object.entries(this._headers);
+        this._requestId = __canaryoHttpRequestStart(
+            this.method,
+            this._url,
+            JSON.stringify(headers),
+            Buffer.from(this._body).toString("base64")
+        );
+        pendingClientRequests.set(this._requestId, this);
+        this.__canaryoArmTimeout();
+    } catch (error) {
+        process.nextTick(() => this.emit("error", error));
+    }
     return this;
 };
 ClientRequest.prototype.abort = function() {
@@ -273,6 +292,8 @@ ClientRequest.prototype.abort = function() {
 ClientRequest.prototype.destroy = function(error) {
     if (this.destroyed) return this;
     this.destroyed = true;
+    if (this._requestId !== undefined) pendingClientRequests.delete(this._requestId);
+    if (this._timeoutHandle) clearTimeout(this._timeoutHandle);
     if (error) this.emit("error", error);
     this.emit("close");
     return this;
@@ -280,6 +301,7 @@ ClientRequest.prototype.destroy = function(error) {
 ClientRequest.prototype.setTimeout = function(timeout, callback) {
     this.timeout = Number(timeout);
     if (typeof callback === "function") this.once("timeout", callback);
+    this.__canaryoArmTimeout();
     return this;
 };
 
@@ -290,6 +312,57 @@ function clientRequest(defaultProtocol, input, options, callback) {
 function Agent(options = {}) { this.options = options; }
 Agent.prototype.destroy = function() {};
 const globalAgent = new Agent({ keepAlive: true });
+const pendingClientRequests = new Map();
+
+function finishClientRequest(request) {
+    pendingClientRequests.delete(request._requestId);
+    if (request._timeoutHandle) clearTimeout(request._timeoutHandle);
+    request.emit("close");
+}
+
+globalThis.__canaryoPollHttpRequests = function() {
+    for (let count = 0; count < 64; count++) {
+        const raw = __canaryoHttpRequestPoll();
+        if (raw === undefined || raw === null) break;
+        const event = JSON.parse(raw);
+        const request = pendingClientRequests.get(event.id);
+        if (!request || request.destroyed) continue;
+        if (event.type === "headers") {
+            const response = new IncomingMessage();
+            ensureHttpEventPrototypes().call(response);
+            response.statusCode = event.status;
+            response.statusMessage = event.statusText;
+            response.headers = Object.create(null);
+            response.rawHeaders = [];
+            for (const [name, value] of event.headers) {
+                response.headers[name.toLowerCase()] = value;
+                response.rawHeaders.push(name, value);
+            }
+            response.httpVersion = "1.1";
+            response.method = null;
+            response.url = request._url;
+            response.readable = true;
+            response.readableEnded = false;
+            response.complete = false;
+            response.__canaryoPaused = false;
+            response.__canaryoChunkQueue = [];
+            request._response = response;
+            request.emit("response", response);
+        } else if (event.type === "data") {
+            if (request._response) {
+                request._response.__canaryoDeliverChunk(Buffer.from(event.body, "base64"));
+            }
+        } else if (event.type === "end") {
+            if (request._response) request._response.__canaryoFinishBody();
+            finishClientRequest(request);
+        } else if (event.type === "error") {
+            request.emit("error", new Error(event.message));
+            finishClientRequest(request);
+        }
+    }
+    return pendingClientRequests.size;
+};
+globalThis.__canaryoPendingHttpRequests = () => pendingClientRequests.size;
 
 const httpModule = Object.freeze({
     IncomingMessage,
@@ -298,7 +371,7 @@ const httpModule = Object.freeze({
     Agent,
     globalAgent,
     METHODS: ["GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH"],
-    STATUS_CODES: { 200: "OK", 201: "Created", 202: "Accepted", 204: "No Content", 400: "Bad Request", 404: "Not Found", 500: "Internal Server Error" },
+    STATUS_CODES: { 200: "OK", 201: "Created", 202: "Accepted", 204: "No Content", 400: "Bad Request", 404: "Not Found", 500: "Internal Server Error", 504: "Gateway Timeout" },
     request(input, options, callback) { return clientRequest("http:", input, options, callback); },
     get(input, options, callback) {
         const request = clientRequest("http:", input, options, callback);
@@ -547,8 +620,31 @@ pub fn execute(path: &str, arguments: &[String]) -> Result<(), String> {
                 .map_err(|error| error.to_string())?;
         }
         while context.execute_pending_job() {}
+        drain_outbound_http_requests(&context)?;
         Ok(())
     })
+}
+
+fn drain_outbound_http_requests(context: &rquickjs::Ctx<'_>) -> Result<(), String> {
+    let poll: Function = context
+        .globals()
+        .get("__canaryoPollHttpRequests")
+        .map_err(|error| error.to_string())?;
+    let deadline = std::time::Instant::now() + Duration::from_secs(31);
+    loop {
+        let pending = poll
+            .call::<_, usize>(())
+            .catch(context)
+            .map_err(|error| error.to_string())?;
+        while context.execute_pending_job() {}
+        if pending == 0 {
+            return Ok(());
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err("outbound HTTP requests did not finish within 31 seconds".into());
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
 }
 
 fn install_host_globals<'js>(
@@ -607,10 +703,40 @@ fn install_host_globals<'js>(
     globals
         .set("__canaryoDnsLookup", dns_lookup)
         .map_err(|error| error.to_string())?;
-    let http_request =
-        Function::new(context.clone(), outbound_http_request).map_err(|error| error.to_string())?;
+    let (http_sender, http_receiver) = sync_channel(64);
+    let http_runtime = OutboundHttpRuntime {
+        sender: http_sender,
+        next_id: Arc::new(AtomicU64::new(1)),
+        agent: ureq::AgentBuilder::new()
+            .timeout(Duration::from_secs(30))
+            .build(),
+    };
+    let http_request = {
+        Function::new(
+            context.clone(),
+            move |context, method, url, headers, body| {
+                start_outbound_http_request(context, method, url, headers, body, &http_runtime)
+            },
+        )
+        .map_err(|error| error.to_string())?
+    };
     globals
-        .set("__canaryoHttpRequest", http_request)
+        .set("__canaryoHttpRequestStart", http_request)
+        .map_err(|error| error.to_string())?;
+    let http_receiver = Arc::new(Mutex::new(http_receiver));
+    let poll_http_request = {
+        let receiver = http_receiver;
+        Function::new(context.clone(), move || {
+            receiver
+                .lock()
+                .ok()
+                .and_then(|receiver| receiver.try_recv().ok())
+                .map(|event| event.to_json())
+        })
+        .map_err(|error| error.to_string())?
+    };
+    globals
+        .set("__canaryoHttpRequestPoll", poll_http_request)
         .map_err(|error| error.to_string())?;
     let os_info = Object::new(context.clone()).map_err(|error| error.to_string())?;
     os_info
@@ -759,13 +885,67 @@ fn is_ip(value: String) -> u8 {
     }
 }
 
-fn outbound_http_request<'js>(
+enum OutboundHttpEvent {
+    Headers {
+        id: u64,
+        status: u16,
+        status_text: String,
+        headers: Vec<(String, String)>,
+    },
+    Data {
+        id: u64,
+        body: String,
+    },
+    End {
+        id: u64,
+    },
+    Error {
+        id: u64,
+        message: String,
+    },
+}
+
+struct OutboundHttpRuntime {
+    sender: SyncSender<OutboundHttpEvent>,
+    next_id: Arc<AtomicU64>,
+    agent: ureq::Agent,
+}
+
+impl OutboundHttpEvent {
+    fn to_json(&self) -> String {
+        let value = match self {
+            Self::Headers {
+                id,
+                status,
+                status_text,
+                headers,
+            } => serde_json::json!({
+                "type": "headers",
+                "id": id,
+                "status": status,
+                "statusText": status_text,
+                "headers": headers,
+            }),
+            Self::Data { id, body } => {
+                serde_json::json!({ "type": "data", "id": id, "body": body })
+            }
+            Self::End { id } => serde_json::json!({ "type": "end", "id": id }),
+            Self::Error { id, message } => {
+                serde_json::json!({ "type": "error", "id": id, "message": message })
+            }
+        };
+        value.to_string()
+    }
+}
+
+fn start_outbound_http_request<'js>(
     context: rquickjs::Ctx<'js>,
     method: String,
     url: String,
     headers_json: String,
     body_base64: String,
-) -> rquickjs::Result<String> {
+    runtime: &OutboundHttpRuntime,
+) -> rquickjs::Result<u64> {
     use base64::Engine;
 
     let headers: Vec<(String, String)> = serde_json::from_str(&headers_json)
@@ -773,9 +953,26 @@ fn outbound_http_request<'js>(
     let body = base64::engine::general_purpose::STANDARD
         .decode(body_base64)
         .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))?;
-    let agent = ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(30))
-        .build();
+    let id = runtime.next_id.fetch_add(1, Ordering::Relaxed);
+    let sender = runtime.sender.clone();
+    let agent = runtime.agent.clone();
+    thread::spawn(move || {
+        perform_outbound_http_request(id, method, url, headers, body, agent, sender)
+    });
+    Ok(id)
+}
+
+fn perform_outbound_http_request(
+    id: u64,
+    method: String,
+    url: String,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+    agent: ureq::Agent,
+    sender: SyncSender<OutboundHttpEvent>,
+) {
+    use base64::Engine;
+
     let mut request = agent.request(&method, &url);
     for (name, value) in headers {
         request = request.set(&name, &value);
@@ -789,10 +986,11 @@ fn outbound_http_request<'js>(
         Ok(response) => response,
         Err(ureq::Error::Status(_, response)) => response,
         Err(error) => {
-            return Err(rquickjs::Exception::throw_message(
-                &context,
-                &error.to_string(),
-            ));
+            let _ = sender.send(OutboundHttpEvent::Error {
+                id,
+                message: error.to_string(),
+            });
+            return;
         }
     };
     let status = response.status();
@@ -806,26 +1004,45 @@ fn outbound_http_request<'js>(
                 .map(|value| (name, value.to_string()))
         })
         .collect::<Vec<_>>();
-    let mut response_body = Vec::new();
-    response
-        .into_reader()
-        .take(16 * 1024 * 1024 + 1)
-        .read_to_end(&mut response_body)
-        .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))?;
-    if response_body.len() > 16 * 1024 * 1024 {
-        return Err(rquickjs::Exception::throw_message(
-            &context,
-            "outbound HTTP response exceeds the 16 MiB compatibility limit",
-        ));
+    if sender
+        .send(OutboundHttpEvent::Headers {
+            id,
+            status,
+            status_text,
+            headers: response_headers,
+        })
+        .is_err()
+    {
+        return;
     }
-
-    serde_json::to_string(&serde_json::json!({
-        "status": status,
-        "statusText": status_text,
-        "headers": response_headers,
-        "body": base64::engine::general_purpose::STANDARD.encode(response_body),
-    }))
-    .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))
+    let mut reader = response.into_reader();
+    let mut chunk = [0_u8; 16 * 1024];
+    loop {
+        match reader.read(&mut chunk) {
+            Ok(0) => {
+                let _ = sender.send(OutboundHttpEvent::End { id });
+                return;
+            }
+            Ok(read) => {
+                if sender
+                    .send(OutboundHttpEvent::Data {
+                        id,
+                        body: base64::engine::general_purpose::STANDARD.encode(&chunk[..read]),
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            Err(error) => {
+                let _ = sender.send(OutboundHttpEvent::Error {
+                    id,
+                    message: error.to_string(),
+                });
+                return;
+            }
+        }
+    }
 }
 
 fn node_platform() -> &'static str {

@@ -213,6 +213,133 @@ fn performs_outbound_http_requests() {
 }
 
 #[test]
+fn keeps_serving_while_an_outbound_request_is_pending() {
+    let upstream = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let upstream_port = upstream.local_addr().unwrap().port();
+    let (request_started, wait_for_request) = std::sync::mpsc::sync_channel(1);
+    let upstream_thread = thread::spawn(move || {
+        let (mut stream, _) = upstream.accept().unwrap();
+        let mut request = Vec::new();
+        while !request.ends_with(b"\r\n\r\n") {
+            let mut byte = [0];
+            stream.read_exact(&mut byte).unwrap();
+            request.push(byte[0]);
+        }
+        request_started.send(()).unwrap();
+        thread::sleep(Duration::from_millis(300));
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 11\r\nConnection: close\r\n\r\noutbound-ok",
+            )
+            .unwrap();
+    });
+    let (_server, mut slow_stream) = start_fixture_with_args(
+        "fixtures/http-client/server.js",
+        &[upstream_port.to_string()],
+        Stdio::null(),
+    );
+    let server_address = slow_stream.peer_addr().unwrap();
+    let slow_request = thread::spawn(move || {
+        slow_stream
+            .write_all(b"GET /proxy HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+            .unwrap();
+        let mut response = String::new();
+        slow_stream.read_to_string(&mut response).unwrap();
+        response
+    });
+    wait_for_request
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap();
+
+    let started = Instant::now();
+    let mut health_stream = TcpStream::connect(server_address).unwrap();
+    health_stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    health_stream
+        .write_all(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let mut health_response = String::new();
+    health_stream.read_to_string(&mut health_response).unwrap();
+    let health_elapsed = started.elapsed();
+
+    assert!(health_response.ends_with("healthy"));
+    assert!(
+        health_elapsed < Duration::from_millis(200),
+        "health request took {health_elapsed:?} while outbound I/O was pending"
+    );
+    assert!(slow_request.join().unwrap().ends_with("outbound-ok"));
+    upstream_thread.join().unwrap();
+}
+
+#[test]
+fn streams_and_pauses_outbound_response_bodies() {
+    let upstream = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let upstream_port = upstream.local_addr().unwrap().port();
+    let upstream_thread = thread::spawn(move || {
+        let (mut stream, _) = upstream.accept().unwrap();
+        let mut request = Vec::new();
+        while !request.ends_with(b"\r\n\r\n") {
+            let mut byte = [0];
+            stream.read_exact(&mut byte).unwrap();
+            request.push(byte[0]);
+        }
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 40000\r\nConnection: close\r\n\r\n")
+            .unwrap();
+        stream.write_all(&vec![b'x'; 40_000]).unwrap();
+    });
+    let (_server, mut stream) = start_fixture_with_args(
+        "fixtures/http-client/server.js",
+        &[upstream_port.to_string()],
+        Stdio::null(),
+    );
+
+    stream
+        .write_all(b"GET /stream HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    upstream_thread.join().unwrap();
+    let body = response.rsplit("\r\n\r\n").next().unwrap();
+    let (chunks, bytes) = body.split_once(':').unwrap();
+
+    assert!(chunks.parse::<usize>().unwrap() >= 3);
+    assert_eq!(bytes, "40000");
+}
+
+#[test]
+fn times_out_and_aborts_outbound_requests() {
+    let upstream = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let upstream_port = upstream.local_addr().unwrap().port();
+    let upstream_thread = thread::spawn(move || {
+        let (mut stream, _) = upstream.accept().unwrap();
+        let mut request = Vec::new();
+        while !request.ends_with(b"\r\n\r\n") {
+            let mut byte = [0];
+            stream.read_exact(&mut byte).unwrap();
+            request.push(byte[0]);
+        }
+        thread::sleep(Duration::from_millis(100));
+    });
+    let (_server, mut stream) = start_fixture_with_args(
+        "fixtures/http-client/server.js",
+        &[upstream_port.to_string()],
+        Stdio::null(),
+    );
+
+    stream
+        .write_all(b"GET /timeout HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    upstream_thread.join().unwrap();
+
+    assert!(response.starts_with("HTTP/1.1 504"), "{response}");
+    assert!(response.ends_with("outbound-timeout"));
+}
+
+#[test]
 fn serves_multiple_requests_on_a_persistent_connection() {
     let (_server, mut stream) = start_fixture("fixtures/http-basic/server.js");
 

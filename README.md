@@ -93,7 +93,7 @@ Lower is better.
 |---|---:|---:|---:|
 | `node:http` | 54.83 ms | **21.55 ms** | **60.7% lower** |
 | Express 5.2.1 | 218.57 ms | **178.58 ms** | **18.3% lower** |
-| Fastify 5.12.3 | 319.35 ms | **198.44 ms** | **37.9% lower** |
+| Fastify 5.12.3 | 316.42 ms | **199.47 ms** | **37.0% lower** |
 
 ### Throughput at concurrency 16
 
@@ -103,7 +103,7 @@ Higher is better. “New connection” opens a TCP connection for every request;
 |---|---:|---:|---:|---:|---:|---:|
 | `node:http` | 4,971 req/s | **7,569 req/s** | **+52.3%** | 21,421 req/s | **28,341 req/s** | **+32.3%** |
 | Express 5.2.1 | 2,279 req/s | **3,211 req/s** | **+40.9%** | 6,318 req/s | **6,476 req/s** | **+2.5%** |
-| Fastify 5.12.3 | 4,166 req/s | **5,119 req/s** | **+22.9%** | **18,042 req/s** | 10,818 req/s | **−40.0%** |
+| Fastify 5.12.3 | 4,166 req/s | **5,119 req/s** | **+22.9%** | **18,148 req/s** | 10,441 req/s | **−42.5%** |
 
 ### Resident memory at concurrency 16
 
@@ -113,7 +113,7 @@ Lower is better. RSS is sampled from the runtime process during the selected thr
 |---|---:|---:|---:|---:|---:|---:|
 | `node:http` | 40.2 MiB | **11.7 MiB** | **70.9%** | 39.1 MiB | **7.1 MiB** | **81.8%** |
 | Express 5.2.1 | 62.2 MiB | **10.6 MiB** | **83.0%** | 90.4 MiB | **10.3 MiB** | **88.6%** |
-| Fastify 5.12.3 | 51.9 MiB | **12.9 MiB** | **75.1%** | 54.1 MiB | **14.6 MiB** | **73.0%** |
+| Fastify 5.12.3 | 51.9 MiB | **12.9 MiB** | **75.1%** | 54.5 MiB | **15.1 MiB** | **72.3%** |
 
 Canaryo currently leads startup and memory use in every tested application. It also leads throughput when requests reopen connections, and leads `node:http` and Express with persistent connections at concurrency 16. Persistent Fastify traffic remains the main performance gap because its JavaScript-heavy request path benefits from V8's optimizing JIT.
 
@@ -143,7 +143,7 @@ flowchart LR
 | Area | Status | Current scope |
 |---|---|---|
 | CommonJS | Supported | Relative modules, JSON, package `main` and `exports`, conditional and wildcard exports, scoped packages, cache, upward `node_modules` lookup, and common `node:module` helpers. |
-| `node:http` | Partial | Non-blocking server registration and shutdown, persistent HTTP/1.1 connections, pipelining, request bodies and trailers, binary payloads, `HEAD`, response lifecycle and headers, plus outbound `request` and `get`. Outbound calls are currently blocking and buffer responses up to 16 MiB. |
+| `node:http` | Partial | Non-blocking servers, persistent HTTP/1.1 connections, pipelining, request bodies and trailers, binary payloads, `HEAD`, response lifecycle and headers, plus outbound `request` and `get`. Outbound responses stream from background network tasks through a bounded queue, support pause/resume, timeouts and aborts, and reuse a shared connection pool. Upload bodies, custom agents, redirects and some socket options remain incomplete. |
 | Express | Partial | Express 5.2.1 startup, basic routing, JSON request parsing, and JSON responses. |
 | Fastify | Partial | Fastify 5.12.3 startup, parameterized routes, query strings, request/response hooks, JSON request parsing, async and timed handlers, JSON responses, and built-in Pino request logging. Plugin compatibility varies with the Node.js APIs each plugin uses. |
 | Promises and timers | Partial | Promise jobs, `AsyncResource`, `process.nextTick`, `queueMicrotask`, `setImmediate`, `setTimeout`, and `setInterval` in the native HTTP event loop. Standalone event-loop lifetime and timer handle behavior remain incomplete. |
@@ -159,7 +159,7 @@ flowchart LR
 | Filesystem APIs | Partial | Buffer-aware read, write, append, stat, exists, access, mkdir, readdir, and file streams through synchronous, callback, and `fs/promises` APIs. Watches, links, permissions, real file descriptors, and positional writes remain incomplete. |
 | ESM | Partial | Native `.mjs` and `type: module` execution, relative imports, package `import` conditions, JSON loading, named imports from common built-ins, default CommonJS interop, and static detection of `exports.name`. Dynamic CJS exports and some Node resolution rules remain incomplete. |
 | Keep-alive | Supported | Connections persist by default on HTTP/1.1 and honor `Connection: close`. |
-| TLS | Partial | Outbound `node:https` `request` and `get` validate public certificates through rustls and WebPKI roots. Inbound HTTPS servers, custom agents, client certificates, and streaming network I/O remain incomplete. |
+| TLS | Partial | Asynchronous outbound `node:https` `request` and `get` validate public certificates through rustls and WebPKI roots and stream response bodies. Inbound HTTPS servers, custom agents and client certificates remain incomplete. |
 | Native `.node` addons | Unsupported | Native Node.js ABI modules cannot be loaded. |
 
 `canaryo check` reports one of three project-level outcomes:
@@ -199,13 +199,13 @@ cargo bench --bench runtime -- --startup-only --startup-runs 15
 
 ## Roadmap
 
-- Connection timeouts, limits, backpressure, and graceful shutdown.
-- Streaming request and response bodies.
+- Remaining server connection limits, backpressure, and graceful shutdown behavior.
+- Incremental inbound request bodies and streaming upload bodies.
 - Additional asynchronous I/O sources and complete timer lifecycle behavior.
 - Wider Buffer, stream, filesystem, crypto, and networking support.
 - Complete ESM/CommonJS interop and the remaining Node package-resolution rules.
 - A larger Express, Fastify, and plugin compatibility suite.
-- TLS, workers, diagnostics, and production observability.
+- Inbound TLS, isolated workers, diagnostics, and production observability.
 
 ## License
 

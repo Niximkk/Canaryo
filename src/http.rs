@@ -1,8 +1,7 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     io::{Read, Write},
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
-    thread,
     time::{Duration, Instant},
 };
 
@@ -45,12 +44,20 @@ struct ConnectionReader {
 struct Connection<'js> {
     stream: TcpStream,
     socket: Object<'js>,
+    pending_responses: VecDeque<PendingResponse<'js>>,
     reader: ConnectionReader,
     outgoing: Vec<u8>,
     written: usize,
     writable_interest: bool,
     close_after_write: bool,
     read_closed: bool,
+}
+
+struct PendingResponse<'js> {
+    object: Object<'js>,
+    keep_alive: bool,
+    suppress_body: bool,
+    deadline: Instant,
 }
 
 pub fn listen<'js>(
@@ -74,19 +81,38 @@ pub fn listen<'js>(
     let mut connections = HashMap::new();
     let mut next_token = 1;
     let run_timers: Function = context.globals().get("__canaryoRunTimers")?;
+    let poll_http_requests: Function = context.globals().get("__canaryoPollHttpRequests")?;
     let should_close: Function = context.globals().get("__canaryoServerShouldClose")?;
     on_listening.call::<_, ()>(())?;
 
     loop {
         while context.execute_pending_job() {}
+        let pending_http_requests = poll_http_requests.call::<_, usize>(())?;
+        while context.execute_pending_job() {}
         let timer_delay = run_timers
             .call::<_, Option<u64>>(())?
             .map(Duration::from_millis);
         while context.execute_pending_job() {}
+        progress_connections(poll.registry(), &mut connections)?;
         if should_close.call::<_, bool>(())? {
             break;
         }
-        poll.poll(&mut events, timer_delay)
+        let response_delay = next_response_deadline(&connections);
+        let poll_delay = if pending_http_requests > 0 {
+            Some(
+                timer_delay
+                    .unwrap_or(Duration::from_millis(2))
+                    .min(Duration::from_millis(2)),
+            )
+        } else {
+            timer_delay
+        };
+        let poll_delay = match (poll_delay, response_delay) {
+            (Some(left), Some(right)) => Some(left.min(right)),
+            (None, right) => right,
+            (left, None) => left,
+        };
+        poll.poll(&mut events, poll_delay)
             .map_err(|error| Exception::throw_message(&context, &error.to_string()))?;
 
         for event in &events {
@@ -116,23 +142,25 @@ pub fn listen<'js>(
                                 .get(&token)
                                 .map(|connection| connection.socket.clone())
                                 .expect("connection exists while handling its request");
-                            let response = handle_request(
+                            let response = begin_request(
                                 &context,
                                 &handler,
                                 &request,
                                 &request_prototype,
                                 &response_prototype,
                                 &socket,
-                                &run_timers,
                             )?;
                             if let Some(connection) = connections.get_mut(&token) {
-                                append_response(
-                                    &mut connection.outgoing,
-                                    &response,
+                                connection.pending_responses.push_back(PendingResponse {
+                                    object: response,
                                     keep_alive,
-                                    request.method == "HEAD",
-                                );
-                                connection.close_after_write |= !keep_alive;
+                                    suppress_body: request.method == "HEAD",
+                                    deadline: Instant::now() + MAX_ASYNC_RESPONSE_WAIT,
+                                });
+                            }
+                            while context.execute_pending_job() {}
+                            if let Some(connection) = connections.get_mut(&token) {
+                                collect_completed_responses(connection)?;
                             }
                             if !keep_alive {
                                 break;
@@ -160,6 +188,7 @@ pub fn listen<'js>(
 
             if let Some(connection) = connections.get_mut(&token) {
                 if connection.outgoing.is_empty()
+                    && connection.pending_responses.is_empty()
                     && (connection.close_after_write || connection.read_closed)
                 {
                     remove = true;
@@ -216,6 +245,7 @@ fn accept_connections<'js>(
                         Connection {
                             stream,
                             socket: socket_to_js(context, socket_prototype)?,
+                            pending_responses: VecDeque::new(),
                             reader: ConnectionReader::default(),
                             outgoing: Vec::with_capacity(512),
                             written: 0,
@@ -274,15 +304,89 @@ impl Connection<'_> {
     }
 }
 
-fn handle_request<'js>(
+fn progress_connections<'js>(
+    registry: &mio::Registry,
+    connections: &mut HashMap<Token, Connection<'js>>,
+) -> Result<()> {
+    let tokens = connections.keys().copied().collect::<Vec<_>>();
+    for token in tokens {
+        let mut remove = false;
+        if let Some(connection) = connections.get_mut(&token) {
+            collect_completed_responses(connection)?;
+
+            let flush_failed = connection.flush().is_err();
+            let closed = connection.outgoing.is_empty()
+                && connection.pending_responses.is_empty()
+                && (connection.close_after_write || connection.read_closed);
+            if flush_failed || closed {
+                remove = true;
+            } else {
+                let wants_write = !connection.outgoing.is_empty();
+                if wants_write != connection.writable_interest {
+                    let interest = if wants_write {
+                        Interest::READABLE | Interest::WRITABLE
+                    } else {
+                        Interest::READABLE
+                    };
+                    if registry
+                        .reregister(&mut connection.stream, token, interest)
+                        .is_err()
+                    {
+                        remove = true;
+                    } else {
+                        connection.writable_interest = wants_write;
+                    }
+                }
+            }
+        }
+        if remove {
+            connections.remove(&token);
+        }
+    }
+    Ok(())
+}
+
+fn collect_completed_responses(connection: &mut Connection<'_>) -> Result<()> {
+    while let Some(pending) = connection.pending_responses.front() {
+        if !pending.object.get::<_, bool>("writableEnded")? {
+            if Instant::now() >= pending.deadline {
+                return Err(Exception::throw_message(
+                    pending.object.ctx(),
+                    "a resposta assíncrona excedeu o limite de 30 segundos",
+                ));
+            }
+            break;
+        }
+        let response = response_from_js(&pending.object)?;
+        append_response(
+            &mut connection.outgoing,
+            &response,
+            pending.keep_alive,
+            pending.suppress_body,
+        );
+        connection.close_after_write |= !pending.keep_alive;
+        connection.pending_responses.pop_front();
+    }
+    Ok(())
+}
+
+fn next_response_deadline(connections: &HashMap<Token, Connection<'_>>) -> Option<Duration> {
+    let now = Instant::now();
+    connections
+        .values()
+        .filter_map(|connection| connection.pending_responses.front())
+        .map(|pending| pending.deadline.saturating_duration_since(now))
+        .min()
+}
+
+fn begin_request<'js>(
     context: &Ctx<'js>,
     handler: &Function<'js>,
     request: &Request,
     request_prototype: &Object<'js>,
     response_prototype: &Object<'js>,
     socket: &Object<'js>,
-    run_timers: &Function<'js>,
-) -> Result<Response> {
+) -> Result<Object<'js>> {
     let request_object = request_to_js(context, request, request_prototype, socket)?;
     let response_object = response_to_js(context, response_prototype)?;
     let socket: Object = request_object.get("socket")?;
@@ -294,35 +398,7 @@ fn handle_request<'js>(
     handler.call::<_, ()>((request_object.clone(), response_object.clone()))?;
     let deliver_body: Function = request_object.get("__canaryoDeliverBody")?;
     deliver_body.call::<_, ()>((This(request_object),))?;
-
-    let deadline = Instant::now() + MAX_ASYNC_RESPONSE_WAIT;
-    loop {
-        while context.execute_pending_job() {}
-        if response_object.get::<_, bool>("writableEnded")? {
-            break;
-        }
-
-        let timer_delay = run_timers.call::<_, Option<u64>>(())?;
-        while context.execute_pending_job() {}
-        if response_object.get::<_, bool>("writableEnded")? {
-            continue;
-        }
-        let Some(delay) = timer_delay else {
-            break;
-        };
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return Err(Exception::throw_message(
-                context,
-                "a resposta assíncrona excedeu o limite de 30 segundos",
-            ));
-        }
-        if delay > 0 {
-            thread::sleep(Duration::from_millis(delay).min(remaining));
-        }
-    }
-
-    response_from_js(&response_object)
+    Ok(response_object)
 }
 
 fn request_to_js<'js>(
@@ -699,6 +775,7 @@ fn reason_phrase(status: u16) -> &'static str {
         400 => "Bad Request",
         404 => "Not Found",
         500 => "Internal Server Error",
+        504 => "Gateway Timeout",
         _ => "Unknown",
     }
 }
