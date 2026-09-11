@@ -592,7 +592,9 @@
     Stream.prototype.pipe = function (destination) {
         this.on("data", chunk => destination.write(chunk));
         this.on("end", () => destination.end());
-        this.on("error", error => destination.destroy(error));
+        this.on("error", error => {
+            if (typeof destination.destroy === "function") destination.destroy(error);
+        });
         destination.emit("pipe", this);
         return destination;
     };
@@ -620,7 +622,7 @@
             this.emit("end");
             return false;
         }
-        const value = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+        const value = typeof chunk === "string" && !this._readableEncoding ? Buffer.from(chunk) : chunk;
         this._readableQueue.push(value);
         this.emit("data", value);
         this.emit("readable");
@@ -629,6 +631,7 @@
     Readable.prototype.read = function () { return this._readableQueue.shift() ?? null; };
     Readable.prototype.pause = function () { this._paused = true; return this; };
     Readable.prototype.resume = function () { this._paused = false; return this; };
+    Readable.prototype.setEncoding = function (encoding) { this._readableEncoding = encoding; return this; };
     Readable.from = function (iterable) {
         const readable = new Readable();
         setImmediate(() => {
@@ -944,32 +947,150 @@
     function encodingFrom(options) {
         return typeof options === "string" ? options : options && options.encoding;
     }
+    function normalizeFsPath(filename) {
+        return filename instanceof URL ? fileURLToPath(filename) : String(filename);
+    }
     function readFileSync(filename, options) {
-        const buffer = Buffer.from(__canaryoFsRead(String(filename)));
+        const buffer = Buffer.from(__canaryoFsRead(normalizeFsPath(filename)));
         return encodingFrom(options) ? buffer.toString(encodingFrom(options)) : buffer;
     }
     function writeFileSync(filename, value, _options) {
-        __canaryoFsWrite(String(filename), [...Buffer.from(value)], false);
+        __canaryoFsWrite(normalizeFsPath(filename), [...Buffer.from(value)], false);
     }
     function appendFileSync(filename, value, _options) {
-        __canaryoFsWrite(String(filename), [...Buffer.from(value)], true);
+        __canaryoFsWrite(normalizeFsPath(filename), [...Buffer.from(value)], true);
     }
-    function statSync(filename) { return new Stats(__canaryoFsStat(String(filename))); }
-    function existsSync(filename) { return __canaryoFsExists(String(filename)); }
+    function statSync(filename) { return new Stats(__canaryoFsStat(normalizeFsPath(filename))); }
+    function existsSync(filename) { return __canaryoFsExists(normalizeFsPath(filename)); }
     function accessSync(filename) {
         if (!existsSync(filename)) throw new Error(`ENOENT: no such file or directory, access '${filename}'`);
     }
     function mkdirSync(filename, options) {
         const recursive = options === true || Boolean(options && options.recursive);
-        __canaryoFsMkdir(String(filename), recursive);
+        __canaryoFsMkdir(normalizeFsPath(filename), recursive);
     }
-    function readdirSync(filename, _options) { return [...__canaryoFsReaddir(String(filename))]; }
+    function readdirSync(filename, _options) { return [...__canaryoFsReaddir(normalizeFsPath(filename))]; }
     function callbackOperation(callback, operation) {
         queueMicrotask(() => {
             try { callback(null, operation()); }
             catch (error) { callback(error); }
         });
     }
+    let nextFileDescriptor = 10;
+    function ReadStream(filename, options = {}) {
+        if (!(this instanceof ReadStream)) return new ReadStream(filename, options);
+        if (typeof options === "string") options = { encoding: options };
+        Readable.call(this, options);
+        this.path = normalizeFsPath(filename);
+        this.fd = options.fd ?? null;
+        this.flags = options.flags || "r";
+        this.mode = options.mode ?? 0o666;
+        this.start = Math.max(0, Number(options.start) || 0);
+        this.end = options.end === undefined ? Infinity : Math.max(this.start, Number(options.end));
+        this.pos = this.start;
+        this.bytesRead = 0;
+        this.pending = this.fd === null;
+        this.closed = false;
+        this.autoClose = options.autoClose !== false;
+        this.emitClose = options.emitClose !== false;
+        this._highWaterMark = Math.max(1, Number(options.highWaterMark) || 64 * 1024);
+        this._readableEncoding = options.encoding;
+        setImmediate(() => {
+            if (this.destroyed) return;
+            try {
+                const contents = readFileSync(this.path);
+                if (this.fd === null) this.fd = nextFileDescriptor++;
+                this.pending = false;
+                this.emit("open", this.fd);
+                this.emit("ready");
+                const last = Math.min(contents.length, Number.isFinite(this.end) ? this.end + 1 : contents.length);
+                for (let offset = this.start; offset < last; offset += this._highWaterMark) {
+                    const chunk = contents.slice(offset, Math.min(last, offset + this._highWaterMark));
+                    this.pos = offset + chunk.length;
+                    this.bytesRead += chunk.length;
+                    this.push(this._readableEncoding ? chunk.toString(this._readableEncoding) : chunk);
+                }
+                this.push(null);
+                if (this.autoClose) this.close();
+            } catch (error) {
+                this.pending = false;
+                this.emit("error", error);
+                if (this.autoClose) this.close();
+            }
+        });
+    }
+    util.inherits(ReadStream, Readable);
+    ReadStream.prototype.close = function (callback) {
+        if (typeof callback === "function") this.once("close", callback);
+        if (this.closed) return this;
+        this.closed = true;
+        this.fd = null;
+        this.readable = false;
+        if (this.emitClose) this.emit("close");
+        return this;
+    };
+    ReadStream.prototype.destroy = function (error) {
+        if (this.destroyed) return this;
+        this.destroyed = true;
+        if (error) this.emit("error", error);
+        return this.close();
+    };
+
+    function WriteStream(filename, options = {}) {
+        if (!(this instanceof WriteStream)) return new WriteStream(filename, options);
+        if (typeof options === "string") options = { encoding: options };
+        Writable.call(this, options);
+        this.path = normalizeFsPath(filename);
+        this.fd = options.fd ?? nextFileDescriptor++;
+        this.flags = options.flags || "w";
+        this.mode = options.mode ?? 0o666;
+        this.start = Math.max(0, Number(options.start) || 0);
+        this.pos = this.start;
+        this.bytesWritten = 0;
+        this.pending = false;
+        this.closed = false;
+        this.autoClose = options.autoClose !== false;
+        this.emitClose = options.emitClose !== false;
+        this._streamError = null;
+        try {
+            if (!this.flags.startsWith("a")) writeFileSync(this.path, Buffer.alloc(0));
+        } catch (error) {
+            this._streamError = error;
+        }
+        setImmediate(() => {
+            if (this._streamError) this.emit("error", this._streamError);
+            else { this.emit("open", this.fd); this.emit("ready"); }
+        });
+    }
+    util.inherits(WriteStream, Writable);
+    WriteStream.prototype._write = function (chunk, encoding, callback) {
+        if (this._streamError) { callback(this._streamError); return; }
+        try {
+            const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding);
+            appendFileSync(this.path, buffer);
+            this.pos += buffer.length;
+            this.bytesWritten += buffer.length;
+            callback();
+        } catch (error) { callback(error); }
+    };
+    WriteStream.prototype._final = function (callback) {
+        callback(this._streamError);
+        if (this.autoClose) setImmediate(() => this.close());
+    };
+    WriteStream.prototype.close = function (callback) {
+        if (typeof callback === "function") this.once("close", callback);
+        if (this.closed) return this;
+        this.closed = true;
+        this.fd = null;
+        if (this.emitClose) this.emit("close");
+        return this;
+    };
+    WriteStream.prototype.destroy = function (error) {
+        if (this.destroyed) return this;
+        this.destroyed = true;
+        if (error) this.emit("error", error);
+        return this.close();
+    };
     const fsPromises = {
         readFile(filename, options) { return Promise.resolve().then(() => readFileSync(filename, options)); },
         writeFile(filename, value, options) { return Promise.resolve().then(() => writeFileSync(filename, value, options)); },
@@ -982,6 +1103,8 @@
     const fsModule = {
         Stats,
         constants: { F_OK: 0, R_OK: 4, W_OK: 2, X_OK: 1 },
+        ReadStream,
+        WriteStream,
         promises: fsPromises,
         readFileSync,
         writeFileSync,
@@ -1012,7 +1135,8 @@
             if (typeof options === "function") { callback = options; options = undefined; }
             callbackOperation(callback, () => readdirSync(filename, options));
         },
-        createReadStream() { throw new Error("fs.createReadStream ainda não implementado"); }
+        createReadStream(filename, options) { return new ReadStream(filename, options); },
+        createWriteStream(filename, options) { return new WriteStream(filename, options); }
     };
 
     const dnsModule = (() => {

@@ -250,6 +250,25 @@ fn serves_a_native_express_application() {
 
 #[test]
 #[ignore = "requires npm ci in fixtures/express-basic"]
+fn serves_static_files_from_express() {
+    let (_server, mut stream) = start_fixture("fixtures/express-static/server.js");
+    stream
+        .write_all(b"GET /hello.txt HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+
+    assert!(response.starts_with("HTTP/1.1 200 OK"));
+    assert!(
+        response
+            .to_ascii_lowercase()
+            .contains("content-type: text/plain")
+    );
+    assert!(response.ends_with("hello from express static\n"));
+}
+
+#[test]
+#[ignore = "requires npm ci in fixtures/express-basic"]
 fn parses_an_express_json_request_body() {
     let (_server, mut stream) = start_fixture("fixtures/express-basic/server.js");
 

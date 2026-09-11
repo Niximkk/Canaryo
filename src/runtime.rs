@@ -909,6 +909,7 @@ mod tests {
         let directory = env::temp_dir().join(format!("canaryo-fs-{}-{id}", std::process::id()));
         fs::create_dir_all(&directory).unwrap();
         let filename = directory.join("message.txt");
+        let stream_filename = directory.join("stream.bin");
         let runtime = Runtime::new().unwrap();
         let context = Context::full(&runtime).unwrap();
 
@@ -917,6 +918,10 @@ mod tests {
             context
                 .globals()
                 .set("fixturePath", filename.to_string_lossy().as_ref())
+                .unwrap();
+            context
+                .globals()
+                .set("fixtureStreamPath", stream_filename.to_string_lossy().as_ref())
                 .unwrap();
             context.eval::<(), _>(POLYFILLS).unwrap();
             let synchronous = context
@@ -930,15 +935,33 @@ mod tests {
                     fs.promises.readFile(fixturePath, "utf8").then(value => {
                         fsPromiseResult = value === "canário!";
                     });
+                    globalThis.fsStreamResult = false;
+                    const output = fs.createWriteStream(fixtureStreamPath);
+                    output.on("finish", () => {
+                        const chunks = [];
+                        const input = fs.createReadStream(fixtureStreamPath, { start: 1, end: 3, highWaterMark: 2 });
+                        input.on("data", chunk => chunks.push(chunk));
+                        input.on("end", () => {
+                            fsStreamResult = Buffer.concat(chunks).equals(Buffer.from([20, 30, 40])) &&
+                                input.bytesRead === 3 && output.bytesWritten === 5;
+                        });
+                    });
+                    output.end(Buffer.from([10, 20, 30, 40, 50]));
                     Buffer.isBuffer(raw) && raw.toString() === "canário!" &&
                         fs.existsSync(fixturePath) && fs.statSync(fixturePath).isFile()
                     "#,
                 )
                 .unwrap();
             while context.execute_pending_job() {}
+            let run_timers: Function = context.globals().get("__canaryoRunTimers").unwrap();
+            for _ in 0..4 {
+                run_timers.call::<_, Option<u64>>(()).unwrap();
+                while context.execute_pending_job() {}
+            }
 
             assert!(synchronous);
             assert!(context.globals().get::<_, bool>("fsPromiseResult").unwrap());
+            assert!(context.globals().get::<_, bool>("fsStreamResult").unwrap());
         });
 
         fs::remove_dir_all(directory).unwrap();
