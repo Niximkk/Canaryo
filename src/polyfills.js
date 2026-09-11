@@ -371,10 +371,141 @@
         const search = queryIndex < 0 ? null : href.slice(queryIndex);
         return { href: value, path: href, pathname, search, query: search ? search.slice(1) : null };
     }
-    function Stream() { EventEmitter.call(this); }
+    function Stream() { EventEmitter.call(this); this.destroyed = false; }
     util.inherits(Stream, EventEmitter);
-    Stream.Readable = Stream.Writable = Stream.Duplex = Stream.Transform = Stream.PassThrough = Stream;
-    Stream.prototype.pipe = function (destination) { this.on("data", chunk => destination.write(chunk)); this.on("end", () => destination.end()); return destination; };
+    Stream.prototype.pipe = function (destination) {
+        this.on("data", chunk => destination.write(chunk));
+        this.on("end", () => destination.end());
+        this.on("error", error => destination.destroy(error));
+        destination.emit("pipe", this);
+        return destination;
+    };
+    Stream.prototype.destroy = function (error) {
+        if (this.destroyed) return this;
+        this.destroyed = true;
+        if (error) this.emit("error", error);
+        this.emit("close");
+        return this;
+    };
+
+    function Readable(options = {}) {
+        Stream.call(this);
+        this.readable = true;
+        this.readableEnded = false;
+        this._readableQueue = [];
+        if (typeof options.read === "function") this._read = options.read;
+    }
+    util.inherits(Readable, Stream);
+    Readable.prototype._read = function () {};
+    Readable.prototype.push = function (chunk) {
+        if (chunk === null) {
+            this.readable = false;
+            this.readableEnded = true;
+            this.emit("end");
+            return false;
+        }
+        const value = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+        this._readableQueue.push(value);
+        this.emit("data", value);
+        this.emit("readable");
+        return true;
+    };
+    Readable.prototype.read = function () { return this._readableQueue.shift() ?? null; };
+    Readable.prototype.pause = function () { this._paused = true; return this; };
+    Readable.prototype.resume = function () { this._paused = false; return this; };
+    Readable.from = function (iterable) {
+        const readable = new Readable();
+        setImmediate(() => {
+            for (const chunk of iterable) readable.push(chunk);
+            readable.push(null);
+        });
+        return readable;
+    };
+
+    function Writable(options = {}) {
+        Stream.call(this);
+        this.writable = true;
+        this.writableEnded = false;
+        this.writableFinished = false;
+        if (typeof options.write === "function") this._write = options.write;
+        if (typeof options.final === "function") this._final = options.final;
+    }
+    util.inherits(Writable, Stream);
+    Writable.prototype._write = function (_chunk, _encoding, callback) { callback(); };
+    Writable.prototype.write = function (chunk, encoding, callback) {
+        if (typeof encoding === "function") { callback = encoding; encoding = undefined; }
+        const done = error => {
+            if (error) this.emit("error", error);
+            if (callback) callback(error);
+        };
+        this._write(chunk, encoding || "utf8", done);
+        return true;
+    };
+    Writable.prototype.end = function (chunk, encoding, callback) {
+        if (typeof chunk === "function") { callback = chunk; chunk = undefined; }
+        else if (typeof encoding === "function") { callback = encoding; encoding = undefined; }
+        if (chunk !== undefined) this.write(chunk, encoding);
+        const finish = error => {
+            if (error) { this.emit("error", error); if (callback) callback(error); return; }
+            this.writable = false;
+            this.writableEnded = true;
+            this.writableFinished = true;
+            this.emit("finish");
+            if (callback) callback();
+        };
+        if (this._final) this._final(finish); else finish();
+        return this;
+    };
+
+    function Duplex(options = {}) {
+        Readable.call(this, options);
+        this.writable = true;
+        this.writableEnded = false;
+        this.writableFinished = false;
+        if (typeof options.write === "function") this._write = options.write;
+        if (typeof options.final === "function") this._final = options.final;
+    }
+    util.inherits(Duplex, Readable);
+    for (const name of ["_write", "write", "end"]) Duplex.prototype[name] = Writable.prototype[name];
+
+    function Transform(options = {}) {
+        Duplex.call(this, options);
+        if (typeof options.transform === "function") this._transform = options.transform;
+    }
+    util.inherits(Transform, Duplex);
+    Transform.prototype._transform = function (chunk, _encoding, callback) { callback(null, chunk); };
+    Transform.prototype._write = function (chunk, encoding, callback) {
+        this._transform(chunk, encoding, (error, output) => {
+            if (!error && output !== undefined && output !== null) this.push(output);
+            callback(error);
+        });
+    };
+    Transform.prototype.end = function (chunk, encoding, callback) {
+        if (typeof chunk === "function") { callback = chunk; chunk = undefined; }
+        else if (typeof encoding === "function") { callback = encoding; encoding = undefined; }
+        return Writable.prototype.end.call(this, chunk, encoding, error => {
+            if (!error) this.push(null);
+            if (callback) callback(error);
+        });
+    };
+
+    function PassThrough(options) { Transform.call(this, options); }
+    util.inherits(PassThrough, Transform);
+    PassThrough.prototype._transform = function (chunk, _encoding, callback) { callback(null, chunk); };
+
+    function finished(stream, callback) {
+        const event = stream.writable ? "finish" : "end";
+        stream.once(event, () => callback());
+        stream.once("error", callback);
+        return () => stream.removeListener(event, callback);
+    }
+    function pipeline(...streams) {
+        const callback = typeof streams[streams.length - 1] === "function" ? streams.pop() : () => {};
+        for (let index = 0; index + 1 < streams.length; index++) streams[index].pipe(streams[index + 1]);
+        finished(streams[streams.length - 1], callback);
+        return streams[streams.length - 1];
+    }
+    Object.assign(Stream, { Stream, Readable, Writable, Duplex, Transform, PassThrough, finished, pipeline });
 
     function AsyncLocalStorage() { this.store = undefined; }
     AsyncLocalStorage.prototype.run = function (store, callback, ...args) { const previous = this.store; this.store = store; try { return callback(...args); } finally { this.store = previous; } };

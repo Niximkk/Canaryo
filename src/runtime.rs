@@ -793,4 +793,42 @@ mod tests {
             );
         });
     }
+
+    #[test]
+    fn pipes_data_through_node_streams() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        let streamed = context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            context
+                .eval::<bool, _>(
+                    r#"
+                    const { Readable, Writable, PassThrough, pipeline } = __canaryoBuiltins.stream;
+                    const chunks = [];
+                    let completed = false;
+                    const source = new Readable();
+                    const destination = new Writable({
+                        write(chunk, _encoding, callback) {
+                            chunks.push(Buffer.from(chunk).toString());
+                            callback();
+                        }
+                    });
+                    pipeline(source, new PassThrough(), destination, error => {
+                        if (error) throw error;
+                        completed = true;
+                    });
+                    source.push("Canar");
+                    source.push("yo");
+                    source.push(null);
+                    completed && chunks.join("") === "Canaryo" &&
+                        destination.writableFinished
+                    "#,
+                )
+                .unwrap()
+        });
+
+        assert!(streamed);
+    }
 }

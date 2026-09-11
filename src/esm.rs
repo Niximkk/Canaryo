@@ -263,7 +263,16 @@ fn builtin_source(name: &str) -> Option<String> {
         ],
         "perf_hooks" => &["performance"],
         "querystring" => &["parse", "stringify", "escape", "unescape"],
-        "stream" => &["Readable", "Writable", "Duplex", "Transform", "PassThrough"],
+        "stream" => &[
+            "Stream",
+            "Readable",
+            "Writable",
+            "Duplex",
+            "Transform",
+            "PassThrough",
+            "finished",
+            "pipeline",
+        ],
         "string_decoder" => &["StringDecoder"],
         "timers" => &[
             "setTimeout",
