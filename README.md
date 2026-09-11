@@ -83,20 +83,41 @@ Execution starts directly for low startup overhead. Use `canaryo check` in devel
 
 ## Performance
 
-Latest local results on Windows 11, a Ryzen 5 5600X, and Node.js 22.15.1:
+Results collected on Windows 11 with an AMD Ryzen 5 5600X, Node.js 22.15.1, and a release build of Canaryo 0.1.0. Every load result is the median of three 3-second samples after warm-up; all measured requests completed without errors.
 
-| Scenario | Node.js | Canaryo | Difference |
+### Startup latency
+
+Lower is better.
+
+| Application | Node.js | Canaryo | Canaryo improvement |
 |---|---:|---:|---:|
-| `node:http` startup | 54.83 ms | 21.55 ms | 60.7% lower |
-| Express startup | 218.57 ms | 178.58 ms | 18.3% lower |
-| Fastify startup | 361.39 ms | 213.63 ms | 40.9% lower |
-| Express, new connections × 16 | 2,279 req/s | 3,211 req/s | 40.9% higher |
-| Fastify, new connections × 16 | 4,166 req/s | 5,119 req/s | 22.9% higher |
-| Express, keep-alive × 16 | 6,318 req/s | 6,476 req/s | 2.5% higher |
-| Fastify, keep-alive × 16 | 20,528 req/s | 12,950 req/s | 36.9% lower |
-| Fastify RSS, keep-alive × 16 | 53.9 MiB | 13.3 MiB | 75.3% lower |
+| `node:http` | 54.83 ms | **21.55 ms** | **60.7% lower** |
+| Express 5.2.1 | 218.57 ms | **178.58 ms** | **18.3% lower** |
+| Fastify 5.12.3 | 361.39 ms | **213.63 ms** | **40.9% lower** |
 
-Canaryo leads startup and memory use across the tested applications. It leads all three applications when connections are reopened for every request and leads `node:http` and Express with persistent connections at concurrency 16. Node.js remains faster for persistent Fastify traffic. These numbers measure the current compatibility surface on one machine, not every Node.js workload. See [BENCHMARKS.md](BENCHMARKS.md) for the complete results and methodology.
+### Throughput at concurrency 16
+
+Higher is better. “New connection” opens a TCP connection for every request; “keep-alive” reuses one connection per worker.
+
+| Application | New connection: Node.js | New connection: Canaryo | Difference | Keep-alive: Node.js | Keep-alive: Canaryo | Difference |
+|---|---:|---:|---:|---:|---:|---:|
+| `node:http` | 4,971 req/s | **7,569 req/s** | **+52.3%** | 21,421 req/s | **28,341 req/s** | **+32.3%** |
+| Express 5.2.1 | 2,279 req/s | **3,211 req/s** | **+40.9%** | 6,318 req/s | **6,476 req/s** | **+2.5%** |
+| Fastify 5.12.3 | 4,166 req/s | **5,119 req/s** | **+22.9%** | **20,528 req/s** | 12,950 req/s | **−36.9%** |
+
+### Resident memory at concurrency 16
+
+Lower is better. RSS is sampled from the runtime process during the selected throughput run.
+
+| Application | New connection: Node.js | New connection: Canaryo | Reduction | Keep-alive: Node.js | Keep-alive: Canaryo | Reduction |
+|---|---:|---:|---:|---:|---:|---:|
+| `node:http` | 40.2 MiB | **11.7 MiB** | **70.9%** | 39.1 MiB | **7.1 MiB** | **81.8%** |
+| Express 5.2.1 | 62.2 MiB | **10.6 MiB** | **83.0%** | 90.4 MiB | **10.3 MiB** | **88.6%** |
+| Fastify 5.12.3 | 51.9 MiB | **12.9 MiB** | **75.1%** | 53.9 MiB | **13.3 MiB** | **75.3%** |
+
+Canaryo currently leads startup and memory use in every tested application. It also leads throughput when requests reopen connections, and leads `node:http` and Express with persistent connections at concurrency 16. Persistent Fastify traffic remains the main performance gap because its JavaScript-heavy request path benefits from V8's optimizing JIT.
+
+These synthetic loopback results cover the current compatibility surface on one machine. See [BENCHMARKS.md](BENCHMARKS.md) for latency percentiles, concurrency 1 results, methodology, limitations, and reproduction commands.
 
 ## How it works
 
