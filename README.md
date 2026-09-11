@@ -87,16 +87,16 @@ Latest local results on Windows 11, a Ryzen 5 5600X, and Node.js 22.15.1:
 
 | Scenario | Node.js | Canaryo | Difference |
 |---|---:|---:|---:|
-| `node:http` startup | 52.62 ms | 10.47 ms | 80.1% lower |
-| Express startup | 194.94 ms | 153.39 ms | 21.3% lower |
-| Fastify startup | 333.27 ms | 199.03 ms | 40.3% lower |
-| Express, new connections × 16 | 3,455 req/s | 3,979 req/s | 15.2% higher |
-| Fastify, new connections × 16 | 5,852 req/s | 5,368 req/s | 8.3% lower |
-| Express, keep-alive × 16 | 6,081 req/s | 5,941 req/s | 2.3% lower |
-| Fastify, keep-alive × 16 | 17,401 req/s | 9,197 req/s | 47.1% lower |
-| Fastify RSS, keep-alive × 16 | 51.4 MiB | 12.9 MiB | 74.9% lower |
+| `node:http` startup | 54.83 ms | 21.55 ms | 60.7% lower |
+| Express startup | 218.57 ms | 178.58 ms | 18.3% lower |
+| Fastify startup | 361.39 ms | 213.63 ms | 40.9% lower |
+| Express, new connections × 16 | 2,279 req/s | 3,211 req/s | 40.9% higher |
+| Fastify, new connections × 16 | 4,166 req/s | 5,119 req/s | 22.9% higher |
+| Express, keep-alive × 16 | 6,318 req/s | 6,476 req/s | 2.5% higher |
+| Fastify, keep-alive × 16 | 20,528 req/s | 12,950 req/s | 36.9% lower |
+| Fastify RSS, keep-alive × 16 | 53.9 MiB | 13.3 MiB | 75.3% lower |
 
-Canaryo leads startup and memory use across the tested applications. Node.js remains substantially faster for persistent Fastify traffic, while Canaryo leads `node:http` under concurrency and Express when connections are reopened for every request. These numbers measure the current compatibility surface on one machine, not every Node.js workload. See [BENCHMARKS.md](BENCHMARKS.md) for the complete results and methodology.
+Canaryo leads startup and memory use across the tested applications. It leads all three applications when connections are reopened for every request and leads `node:http` and Express with persistent connections at concurrency 16. Node.js remains faster for persistent Fastify traffic. These numbers measure the current compatibility surface on one machine, not every Node.js workload. See [BENCHMARKS.md](BENCHMARKS.md) for the complete results and methodology.
 
 ## How it works
 
