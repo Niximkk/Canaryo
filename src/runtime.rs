@@ -432,6 +432,46 @@ fn install_host_globals<'js>(
     globals
         .set("__canaryoDnsLookup", dns_lookup)
         .map_err(|error| error.to_string())?;
+    let os_info = Object::new(context.clone()).map_err(|error| error.to_string())?;
+    os_info
+        .set("platform", node_platform())
+        .map_err(|error| error.to_string())?;
+    os_info
+        .set("arch", node_arch())
+        .map_err(|error| error.to_string())?;
+    os_info
+        .set("type", os_type())
+        .map_err(|error| error.to_string())?;
+    os_info
+        .set("tempDir", env::temp_dir().to_string_lossy().into_owned())
+        .map_err(|error| error.to_string())?;
+    os_info
+        .set("homeDir", home_dir())
+        .map_err(|error| error.to_string())?;
+    os_info
+        .set("hostname", hostname())
+        .map_err(|error| error.to_string())?;
+    os_info
+        .set(
+            "parallelism",
+            std::thread::available_parallelism()
+                .map(|value| value.get())
+                .unwrap_or(1),
+        )
+        .map_err(|error| error.to_string())?;
+    os_info
+        .set(
+            "endianness",
+            if cfg!(target_endian = "little") {
+                "LE"
+            } else {
+                "BE"
+            },
+        )
+        .map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoOsInfo", os_info)
+        .map_err(|error| error.to_string())?;
     let listen = Function::new(context.clone(), http::listen).map_err(|error| error.to_string())?;
     globals
         .set("__canaryoListen", listen)
@@ -537,6 +577,45 @@ fn is_ip(value: String) -> u8 {
         Ok(IpAddr::V6(_)) => 6,
         Err(_) => 0,
     }
+}
+
+fn node_platform() -> &'static str {
+    match env::consts::OS {
+        "windows" => "win32",
+        "macos" => "darwin",
+        value => value,
+    }
+}
+
+fn node_arch() -> &'static str {
+    match env::consts::ARCH {
+        "x86_64" => "x64",
+        "x86" => "ia32",
+        "aarch64" => "arm64",
+        value => value,
+    }
+}
+
+fn os_type() -> &'static str {
+    match env::consts::OS {
+        "windows" => "Windows_NT",
+        "macos" => "Darwin",
+        "linux" => "Linux",
+        value => value,
+    }
+}
+
+fn home_dir() -> String {
+    env::var_os("USERPROFILE")
+        .or_else(|| env::var_os("HOME"))
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+fn hostname() -> String {
+    env::var("COMPUTERNAME")
+        .or_else(|_| env::var("HOSTNAME"))
+        .unwrap_or_else(|_| "localhost".into())
 }
 
 fn dns_lookup<'js>(
@@ -993,7 +1072,8 @@ mod tests {
                     process.once("warning", warning => { warned = warning.message === "careful"; });
                     process.emitWarning("careful");
                     const elapsed = process.hrtime();
-                    process.pid > 0 && process.arch === "x64" && process.platform === "win32" &&
+                    process.pid > 0 && process.arch === __canaryoOsInfo.arch &&
+                        process.platform === __canaryoOsInfo.platform &&
                         process.argv[2] === "argument" && typeof process.execPath === "string" &&
                         process.uptime() >= 0 && elapsed.length === 2 &&
                         typeof process.hrtime.bigint() === "bigint" && warned &&
@@ -1070,6 +1150,34 @@ mod tests {
                         Module.builtinModules.includes("fs/promises") &&
                         localRequire("node:path") === __canaryoBuiltins.path &&
                         Module._cache === localRequire.cache
+                    "#,
+                )
+                .unwrap()
+        });
+
+        assert!(supported);
+    }
+
+    #[test]
+    fn exposes_host_operating_system_metadata() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        let supported = context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            context
+                .eval::<bool, _>(
+                    r#"
+                    const os = __canaryoBuiltins.os;
+                    os.platform() === process.platform && os.arch() === process.arch &&
+                        typeof os.type() === "string" && os.type().length > 0 &&
+                        typeof os.tmpdir() === "string" && os.tmpdir().length > 0 &&
+                        typeof os.homedir() === "string" && typeof os.hostname() === "string" &&
+                        ["LE", "BE"].includes(os.endianness()) &&
+                        os.availableParallelism() >= 1 &&
+                        os.cpus().length === os.availableParallelism() &&
+                        os.uptime() >= 0 && typeof os.userInfo().username === "string"
                     "#,
                 )
                 .unwrap()

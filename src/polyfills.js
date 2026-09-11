@@ -709,8 +709,8 @@
     EventEmitter.call(process);
     Object.setPrototypeOf(process, EventEmitter.prototype);
     process.cwd = () => __canaryoCwd();
-    process.platform = "win32";
-    process.arch = "x64";
+    process.platform = __canaryoOsInfo.platform;
+    process.arch = __canaryoOsInfo.arch;
     process.version = "v22.0.0-canaryo";
     process.versions = { node: "22.0.0", canaryo: "0.1.0" };
     process.release = { name: "canaryo", sourceUrl: "", headersUrl: "" };
@@ -1031,7 +1031,35 @@
             isIPv4: value => __canaryoIsIp(String(value)) === 4,
             isIPv6: value => __canaryoIsIp(String(value)) === 6
         },
-        os: { networkInterfaces: () => ({}) },
+        os: {
+            EOL: process.platform === "win32" ? "\r\n" : "\n",
+            constants: { signals: {}, errno: {}, priority: {}, dlopen: {} },
+            arch: () => __canaryoOsInfo.arch,
+            platform: () => __canaryoOsInfo.platform,
+            type: () => __canaryoOsInfo.type,
+            endianness: () => __canaryoOsInfo.endianness,
+            homedir: () => __canaryoOsInfo.homeDir,
+            tmpdir: () => __canaryoOsInfo.tempDir,
+            hostname: () => __canaryoOsInfo.hostname,
+            availableParallelism: () => __canaryoOsInfo.parallelism,
+            cpus: () => Array.from({ length: __canaryoOsInfo.parallelism }, () => ({
+                model: "Canaryo virtual CPU", speed: 0,
+                times: { user: 0, nice: 0, sys: 0, idle: 0, irq: 0 }
+            })),
+            freemem: () => 0,
+            totalmem: () => 0,
+            uptime: () => process.uptime(),
+            release: () => "",
+            version: () => "",
+            machine: () => __canaryoOsInfo.arch,
+            userInfo: () => ({
+                uid: -1, gid: -1,
+                username: process.env.USERNAME || process.env.USER || "",
+                homedir: __canaryoOsInfo.homeDir,
+                shell: null
+            }),
+            networkInterfaces: () => ({})
+        },
         path,
         perf_hooks: { performance },
         querystring: { parse(value) { return Object.fromEntries(String(value).split("&").filter(Boolean).map(item => item.split("=").map(decodeURIComponent))); }, stringify(value) { return Object.entries(value).map(([key, item]) => `${encodeURIComponent(key)}=${encodeURIComponent(item)}`).join("&"); }, escape: encodeURIComponent, unescape: decodeURIComponent },
