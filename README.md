@@ -143,7 +143,7 @@ flowchart LR
 | Area | Status | Current scope |
 |---|---|---|
 | CommonJS | Supported | Relative modules, JSON, package `main` and `exports`, conditional and wildcard exports, scoped packages, cache, upward `node_modules` lookup, and common `node:module` helpers. |
-| `node:http` | Partial | Non-blocking servers, persistent HTTP/1.1 connections, pipelining, request bodies and trailers, binary payloads, `HEAD`, response lifecycle and headers, plus outbound `request` and `get`. Outbound responses stream from background network tasks through a bounded queue, support pause/resume, timeouts and aborts, and reuse a shared connection pool. Upload bodies, custom agents, redirects and some socket options remain incomplete. |
+| `node:http` | Partial | Non-blocking servers, persistent HTTP/1.1 connections, pipelining, request bodies and trailers, binary payloads, `HEAD`, response lifecycle and headers, plus outbound `request` and `get`. Outbound uploads and responses stream through bounded queues, support pause/resume, timeouts and aborts, and reuse a shared connection pool. Custom agents, redirects and some socket options remain incomplete. |
 | Express | Partial | Express 5.2.1 startup, basic routing, JSON request parsing, and JSON responses. |
 | Fastify | Partial | Fastify 5.12.3 startup, parameterized routes, query strings, request/response hooks, JSON request parsing, async and timed handlers, JSON responses, and built-in Pino request logging. Plugin compatibility varies with the Node.js APIs each plugin uses. |
 | Promises and timers | Partial | Promise jobs, `AsyncResource`, `process.nextTick`, `queueMicrotask`, `setImmediate`, `setTimeout`, and `setInterval` in the native HTTP event loop. Standalone event-loop lifetime and timer handle behavior remain incomplete. |
@@ -200,7 +200,7 @@ cargo bench --bench runtime -- --startup-only --startup-runs 15
 ## Roadmap
 
 - Remaining server connection limits, backpressure, and graceful shutdown behavior.
-- Incremental inbound request bodies and streaming upload bodies.
+- Incremental inbound request bodies.
 - Additional asynchronous I/O sources and complete timer lifecycle behavior.
 - Wider Buffer, stream, filesystem, crypto, and networking support.
 - Complete ESM/CommonJS interop and the remaining Node package-resolution rules.

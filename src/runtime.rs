@@ -1,12 +1,13 @@
 use std::{
+    collections::HashMap,
     env, fs,
-    io::Read,
+    io::{self, Read},
     net::{IpAddr, ToSocketAddrs},
     path::Path,
     sync::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
-        mpsc::{SyncSender, sync_channel},
+        mpsc::{Receiver, SyncSender, sync_channel},
     },
     thread,
     time::Duration,
@@ -230,21 +231,39 @@ function ClientRequest(input, options, callback, defaultProtocol = "http:") {
     this.timeout = normalized.timeout;
     this._url = normalized.url;
     this._headers = Object.create(null);
-    this._body = [];
     for (const [name, value] of Object.entries(normalized.headers)) this.setHeader(name, value);
     if (typeof callback === "function") this.once("response", callback);
 }
 ClientRequest.prototype.setHeader = function(name, value) {
+    if (this.headersSent) throw new Error("Cannot set headers after they are sent");
     this._headers[String(name).toLowerCase()] = Array.isArray(value) ? value.join(", ") : String(value);
 };
 ClientRequest.prototype.getHeader = function(name) { return this._headers[String(name).toLowerCase()]; };
 ClientRequest.prototype.hasHeader = function(name) {
     return Object.prototype.hasOwnProperty.call(this._headers, String(name).toLowerCase());
 };
-ClientRequest.prototype.removeHeader = function(name) { delete this._headers[String(name).toLowerCase()]; };
+ClientRequest.prototype.removeHeader = function(name) {
+    if (this.headersSent) throw new Error("Cannot remove headers after they are sent");
+    delete this._headers[String(name).toLowerCase()];
+};
 ClientRequest.prototype.getHeaders = function() { return Object.assign(Object.create(null), this._headers); };
 ClientRequest.prototype.getHeaderNames = function() { return Object.keys(this._headers); };
-ClientRequest.prototype.flushHeaders = function() { return this; };
+ClientRequest.prototype.__canaryoStart = function(hasBody) {
+    if (this._requestId !== undefined) return;
+    this._requestId = __canaryoHttpRequestStart(
+        this.method,
+        this._url,
+        JSON.stringify(Object.entries(this._headers)),
+        Boolean(hasBody)
+    );
+    this.headersSent = true;
+    pendingClientRequests.set(this._requestId, this);
+    this.__canaryoArmTimeout();
+};
+ClientRequest.prototype.flushHeaders = function() {
+    this.__canaryoStart(true);
+    return this;
+};
 ClientRequest.prototype.__canaryoArmTimeout = function() {
     if (this._timeoutHandle) clearTimeout(this._timeoutHandle);
     if (this.timeout > 0 && this._requestId !== undefined && pendingClientRequests.has(this._requestId)) {
@@ -257,7 +276,8 @@ ClientRequest.prototype.write = function(chunk, encoding, callback) {
     if (typeof encoding === "function") { callback = encoding; encoding = undefined; }
     if (this.writableEnded) throw new Error("write after end");
     const bytes = Buffer.from(chunk, encoding);
-    for (const byte of bytes) this._body.push(byte);
+    this.__canaryoStart(true);
+    __canaryoHttpRequestWrite(this._requestId, bytes.toString("base64"));
     if (callback) process.nextTick(callback);
     return true;
 };
@@ -271,15 +291,8 @@ ClientRequest.prototype.end = function(chunk, encoding, callback) {
     this.emit("finish");
     if (callback) process.nextTick(callback);
     try {
-        const headers = Object.entries(this._headers);
-        this._requestId = __canaryoHttpRequestStart(
-            this.method,
-            this._url,
-            JSON.stringify(headers),
-            Buffer.from(this._body).toString("base64")
-        );
-        pendingClientRequests.set(this._requestId, this);
-        this.__canaryoArmTimeout();
+        this.__canaryoStart(false);
+        __canaryoHttpRequestEnd(this._requestId);
     } catch (error) {
         process.nextTick(() => this.emit("error", error));
     }
@@ -292,7 +305,10 @@ ClientRequest.prototype.abort = function() {
 ClientRequest.prototype.destroy = function(error) {
     if (this.destroyed) return this;
     this.destroyed = true;
-    if (this._requestId !== undefined) pendingClientRequests.delete(this._requestId);
+    if (this._requestId !== undefined) {
+        pendingClientRequests.delete(this._requestId);
+        __canaryoHttpRequestAbort(this._requestId);
+    }
     if (this._timeoutHandle) clearTimeout(this._timeoutHandle);
     if (error) this.emit("error", error);
     this.emit("close");
@@ -704,24 +720,56 @@ fn install_host_globals<'js>(
         .set("__canaryoDnsLookup", dns_lookup)
         .map_err(|error| error.to_string())?;
     let (http_sender, http_receiver) = sync_channel(64);
-    let http_runtime = OutboundHttpRuntime {
+    let http_runtime = Arc::new(OutboundHttpRuntime {
         sender: http_sender,
         next_id: Arc::new(AtomicU64::new(1)),
         agent: ureq::AgentBuilder::new()
             .timeout(Duration::from_secs(30))
             .build(),
-    };
+        uploads: Mutex::new(HashMap::new()),
+    });
     let http_request = {
+        let runtime = Arc::clone(&http_runtime);
         Function::new(
             context.clone(),
-            move |context, method, url, headers, body| {
-                start_outbound_http_request(context, method, url, headers, body, &http_runtime)
+            move |context, method, url, headers, has_body| {
+                start_outbound_http_request(context, method, url, headers, has_body, &runtime)
             },
         )
         .map_err(|error| error.to_string())?
     };
     globals
         .set("__canaryoHttpRequestStart", http_request)
+        .map_err(|error| error.to_string())?;
+    let http_write = {
+        let runtime = Arc::clone(&http_runtime);
+        Function::new(context.clone(), move |context, id, body| {
+            write_outbound_http_request(context, id, body, &runtime)
+        })
+        .map_err(|error| error.to_string())?
+    };
+    globals
+        .set("__canaryoHttpRequestWrite", http_write)
+        .map_err(|error| error.to_string())?;
+    let http_end = {
+        let runtime = Arc::clone(&http_runtime);
+        Function::new(context.clone(), move |context, id| {
+            finish_outbound_http_request(context, id, &runtime)
+        })
+        .map_err(|error| error.to_string())?
+    };
+    globals
+        .set("__canaryoHttpRequestEnd", http_end)
+        .map_err(|error| error.to_string())?;
+    let http_abort = {
+        let runtime = Arc::clone(&http_runtime);
+        Function::new(context.clone(), move |id| {
+            abort_outbound_http_request(id, &runtime)
+        })
+        .map_err(|error| error.to_string())?
+    };
+    globals
+        .set("__canaryoHttpRequestAbort", http_abort)
         .map_err(|error| error.to_string())?;
     let http_receiver = Arc::new(Mutex::new(http_receiver));
     let poll_http_request = {
@@ -909,6 +957,44 @@ struct OutboundHttpRuntime {
     sender: SyncSender<OutboundHttpEvent>,
     next_id: Arc<AtomicU64>,
     agent: ureq::Agent,
+    uploads: Mutex<HashMap<u64, SyncSender<OutboundHttpUpload>>>,
+}
+
+enum OutboundHttpUpload {
+    Data(Vec<u8>),
+    End,
+    Abort,
+}
+
+struct OutboundHttpUploadReader {
+    receiver: Receiver<OutboundHttpUpload>,
+    chunk: Vec<u8>,
+    offset: usize,
+}
+
+impl Read for OutboundHttpUploadReader {
+    fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+        while self.offset == self.chunk.len() {
+            match self.receiver.recv() {
+                Ok(OutboundHttpUpload::Data(chunk)) => {
+                    self.chunk = chunk;
+                    self.offset = 0;
+                }
+                Ok(OutboundHttpUpload::End) | Err(_) => return Ok(0),
+                Ok(OutboundHttpUpload::Abort) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::Interrupted,
+                        "request aborted",
+                    ));
+                }
+            }
+        }
+        let available = &self.chunk[self.offset..];
+        let length = available.len().min(output.len());
+        output[..length].copy_from_slice(&available[..length]);
+        self.offset += length;
+        Ok(length)
+    }
 }
 
 impl OutboundHttpEvent {
@@ -943,23 +1029,91 @@ fn start_outbound_http_request<'js>(
     method: String,
     url: String,
     headers_json: String,
-    body_base64: String,
+    has_body: bool,
     runtime: &OutboundHttpRuntime,
 ) -> rquickjs::Result<u64> {
-    use base64::Engine;
-
     let headers: Vec<(String, String)> = serde_json::from_str(&headers_json)
-        .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))?;
-    let body = base64::engine::general_purpose::STANDARD
-        .decode(body_base64)
         .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))?;
     let id = runtime.next_id.fetch_add(1, Ordering::Relaxed);
     let sender = runtime.sender.clone();
     let agent = runtime.agent.clone();
+    let upload = if has_body {
+        let (upload_sender, upload_receiver) = sync_channel(16);
+        runtime
+            .uploads
+            .lock()
+            .map_err(|_| rquickjs::Exception::throw_message(&context, "HTTP upload lock poisoned"))?
+            .insert(id, upload_sender);
+        Some(OutboundHttpUploadReader {
+            receiver: upload_receiver,
+            chunk: Vec::new(),
+            offset: 0,
+        })
+    } else {
+        None
+    };
     thread::spawn(move || {
-        perform_outbound_http_request(id, method, url, headers, body, agent, sender)
+        perform_outbound_http_request(id, method, url, headers, upload, agent, sender)
     });
     Ok(id)
+}
+
+fn write_outbound_http_request<'js>(
+    context: rquickjs::Ctx<'js>,
+    id: u64,
+    body_base64: String,
+    runtime: &OutboundHttpRuntime,
+) -> rquickjs::Result<()> {
+    use base64::Engine;
+
+    let body = base64::engine::general_purpose::STANDARD
+        .decode(body_base64)
+        .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))?;
+    send_outbound_http_upload(&context, id, OutboundHttpUpload::Data(body), runtime)
+}
+
+fn finish_outbound_http_request<'js>(
+    context: rquickjs::Ctx<'js>,
+    id: u64,
+    runtime: &OutboundHttpRuntime,
+) -> rquickjs::Result<()> {
+    let sender = runtime
+        .uploads
+        .lock()
+        .map_err(|_| rquickjs::Exception::throw_message(&context, "HTTP upload lock poisoned"))?
+        .remove(&id);
+    if let Some(sender) = sender {
+        sender
+            .send(OutboundHttpUpload::End)
+            .map_err(|_| rquickjs::Exception::throw_message(&context, "HTTP upload closed"))?;
+    }
+    Ok(())
+}
+
+fn abort_outbound_http_request(id: u64, runtime: &OutboundHttpRuntime) {
+    if let Ok(mut uploads) = runtime.uploads.lock()
+        && let Some(sender) = uploads.remove(&id)
+    {
+        let _ = sender.send(OutboundHttpUpload::Abort);
+    }
+}
+
+fn send_outbound_http_upload<'js>(
+    context: &rquickjs::Ctx<'js>,
+    id: u64,
+    message: OutboundHttpUpload,
+    runtime: &OutboundHttpRuntime,
+) -> rquickjs::Result<()> {
+    let uploads = runtime
+        .uploads
+        .lock()
+        .map_err(|_| rquickjs::Exception::throw_message(context, "HTTP upload lock poisoned"))?;
+    let sender = uploads
+        .get(&id)
+        .ok_or_else(|| rquickjs::Exception::throw_message(context, "HTTP upload is not active"))?;
+    sender
+        .send(message)
+        .map_err(|_| rquickjs::Exception::throw_message(context, "HTTP upload closed"))
 }
 
 fn perform_outbound_http_request(
@@ -967,7 +1121,7 @@ fn perform_outbound_http_request(
     method: String,
     url: String,
     headers: Vec<(String, String)>,
-    body: Vec<u8>,
+    upload: Option<OutboundHttpUploadReader>,
     agent: ureq::Agent,
     sender: SyncSender<OutboundHttpEvent>,
 ) {
@@ -977,10 +1131,9 @@ fn perform_outbound_http_request(
     for (name, value) in headers {
         request = request.set(&name, &value);
     }
-    let result = if body.is_empty() {
-        request.call()
-    } else {
-        request.send_bytes(&body)
+    let result = match upload {
+        Some(reader) => request.send(reader),
+        None => request.call(),
     };
     let response = match result {
         Ok(response) => response,

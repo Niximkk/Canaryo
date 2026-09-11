@@ -213,6 +213,54 @@ fn performs_outbound_http_requests() {
 }
 
 #[test]
+fn streams_outbound_request_bodies_before_end() {
+    let upstream = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let upstream_port = upstream.local_addr().unwrap().port();
+    let (first_chunk_sent, first_chunk_received) = std::sync::mpsc::sync_channel(1);
+    let upstream_thread = thread::spawn(move || {
+        let (mut stream, _) = upstream.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut request = Vec::new();
+        while !request.ends_with(b"\r\n\r\n") {
+            let mut byte = [0];
+            stream.read_exact(&mut byte).unwrap();
+            request.push(byte[0]);
+        }
+        let mut body = vec![0; 11];
+        stream.read_exact(&mut body[..6]).unwrap();
+        first_chunk_sent.send(()).unwrap();
+        stream.read_exact(&mut body[6..]).unwrap();
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 11\r\nConnection: close\r\n\r\nhello world",
+            )
+            .unwrap();
+        body
+    });
+    let (_server, mut stream) = start_fixture_with_args(
+        "fixtures/http-client/server.js",
+        &[upstream_port.to_string()],
+        Stdio::null(),
+    );
+
+    let started = Instant::now();
+    stream
+        .write_all(b"GET /upload HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    first_chunk_received
+        .recv_timeout(Duration::from_millis(250))
+        .expect("first upload chunk was buffered until request.end()");
+    assert!(started.elapsed() < Duration::from_millis(300));
+
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    assert!(response.ends_with("hello world"), "{response}");
+    assert_eq!(upstream_thread.join().unwrap(), b"hello world");
+}
+
+#[test]
 fn keeps_serving_while_an_outbound_request_is_pending() {
     let upstream = TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let upstream_port = upstream.local_addr().unwrap().port();

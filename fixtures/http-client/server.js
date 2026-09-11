@@ -9,6 +9,26 @@ http.createServer((incomingRequest, response) => {
         response.end("healthy");
         return;
     }
+    if (incomingRequest.url === "/upload") {
+        const outbound = http.request({
+            hostname: "127.0.0.1",
+            port: upstreamPort,
+            path: "/upload",
+            method: "POST",
+            headers: { "content-length": "11" }
+        }, upstreamResponse => {
+            const chunks = [];
+            upstreamResponse.on("data", chunk => chunks.push(chunk));
+            upstreamResponse.on("end", () => response.end(Buffer.concat(chunks)));
+        });
+        outbound.on("error", error => {
+            response.statusCode = 500;
+            response.end(error.message);
+        });
+        outbound.write("hello ");
+        setTimeout(() => outbound.end("world"), 400);
+        return;
+    }
     const outbound = http.get({
         hostname: "127.0.0.1",
         port: upstreamPort,
