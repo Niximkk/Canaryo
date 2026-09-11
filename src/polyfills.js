@@ -1,9 +1,19 @@
 (() => {
     function EventEmitter() { this._events = Object.create(null); }
     EventEmitter.prototype.on = EventEmitter.prototype.addListener = function (name, listener) {
+        if (typeof listener !== "function") throw new TypeError("listener must be a function");
         const events = this._events || (this._events = Object.create(null));
+        if (name !== "newListener" && events.newListener) this.emit("newListener", name, listener);
         const listeners = events[name] || (events[name] = []);
         listeners.push(listener);
+        return this;
+    };
+    EventEmitter.prototype.prependListener = function (name, listener) {
+        if (typeof listener !== "function") throw new TypeError("listener must be a function");
+        const events = this._events || (this._events = Object.create(null));
+        if (name !== "newListener" && events.newListener) this.emit("newListener", name, listener);
+        const listeners = events[name] || (events[name] = []);
+        listeners.unshift(listener);
         return this;
     };
     EventEmitter.prototype.once = function (name, listener) {
@@ -15,16 +25,36 @@
         onceListener.listener = listener;
         return this.on(name, onceListener);
     };
+    EventEmitter.prototype.prependOnceListener = function (name, listener) {
+        const emitter = this;
+        function onceListener(...args) {
+            emitter.removeListener(name, onceListener);
+            listener.apply(emitter, args);
+        }
+        onceListener.listener = listener;
+        return this.prependListener(name, onceListener);
+    };
     EventEmitter.prototype.emit = function (name, ...args) {
         const listeners = this._events && this._events[name];
-        if (!listeners) return false;
+        if (!listeners || listeners.length === 0) {
+            if (name === "error") {
+                throw args[0] instanceof Error ? args[0] : new Error(`Unhandled error: ${args[0]}`);
+            }
+            return false;
+        }
         for (const listener of [...listeners]) listener.apply(this, args);
         return true;
     };
     EventEmitter.prototype.removeListener = function (name, listener) {
         const listeners = this._events && this._events[name];
         if (!listeners) return this;
-        this._events[name] = listeners.filter(item => item !== listener && item.listener !== listener);
+        const retained = listeners.filter(item => item !== listener && item.listener !== listener);
+        if (retained.length === listeners.length) return this;
+        if (retained.length) this._events[name] = retained;
+        else delete this._events[name];
+        if (name !== "removeListener" && this._events.removeListener) {
+            this.emit("removeListener", name, listener);
+        }
         return this;
     };
     EventEmitter.prototype.off = EventEmitter.prototype.removeListener;
@@ -33,11 +63,33 @@
         else if (this._events) delete this._events[name];
         return this;
     };
-    EventEmitter.prototype.listeners = function (name) { return [...(this._events && this._events[name] || [])]; };
-    EventEmitter.prototype.rawListeners = EventEmitter.prototype.listeners;
+    EventEmitter.prototype.listeners = function (name) {
+        return (this._events && this._events[name] || []).map(listener => listener.listener || listener);
+    };
+    EventEmitter.prototype.rawListeners = function (name) {
+        return [...(this._events && this._events[name] || [])];
+    };
     EventEmitter.prototype.listenerCount = function (name) { return this.listeners(name).length; };
+    EventEmitter.prototype.eventNames = function () { return Reflect.ownKeys(this._events || {}); };
     EventEmitter.prototype.setMaxListeners = function (value) { this._maxListeners = Number(value); return this; };
     EventEmitter.prototype.getMaxListeners = function () { return this._maxListeners ?? 10; };
+    EventEmitter.once = function (emitter, name) {
+        return new Promise((resolve, reject) => {
+            function cleanup() {
+                emitter.removeListener(name, onEvent);
+                if (name !== "error") emitter.removeListener("error", onError);
+            }
+            function onEvent(...args) { cleanup(); resolve(args); }
+            function onError(error) { cleanup(); reject(error); }
+            emitter.once(name, onEvent);
+            if (name !== "error") emitter.once("error", onError);
+        });
+    };
+    EventEmitter.getEventListeners = (emitter, name) => emitter.listeners(name);
+    EventEmitter.listenerCount = (emitter, name) => emitter.listenerCount(name);
+    EventEmitter.setMaxListeners = (value, ...emitters) => {
+        for (const emitter of emitters) emitter.setMaxListeners(value);
+    };
 
     function encodeUtf8(value) {
         const bytes = [];

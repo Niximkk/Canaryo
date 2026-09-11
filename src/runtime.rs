@@ -736,4 +736,50 @@ mod tests {
 
         fs::remove_dir_all(directory).unwrap();
     }
+
+    #[test]
+    fn supports_event_emitter_ordering_and_helpers() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            let synchronous = context
+                .eval::<bool, _>(
+                    r#"
+                    const EventEmitter = __canaryoBuiltins.events;
+                    const emitter = new EventEmitter();
+                    const order = [];
+                    function regular(value) { order.push(`regular:${value}`); }
+                    emitter.on("value", regular);
+                    emitter.prependOnceListener("value", value => order.push(`first:${value}`));
+                    emitter.emit("value", 1);
+                    emitter.emit("value", 2);
+                    globalThis.eventPromiseResolved = false;
+                    EventEmitter.once(emitter, "done").then(([value]) => {
+                        eventPromiseResolved = value === 42;
+                    });
+                    emitter.emit("done", 42);
+                    let errorThrown = false;
+                    try { emitter.emit("error", new Error("boom")); }
+                    catch (error) { errorThrown = error.message === "boom"; }
+                    order.join(",") === "first:1,regular:1,regular:2" &&
+                        emitter.listeners("value")[0] === regular &&
+                        emitter.rawListeners("value")[0] === regular &&
+                        emitter.eventNames().includes("value") && errorThrown
+                    "#,
+                )
+                .unwrap();
+            while context.execute_pending_job() {}
+
+            assert!(synchronous);
+            assert!(
+                context
+                    .globals()
+                    .get::<_, bool>("eventPromiseResolved")
+                    .unwrap()
+            );
+        });
+    }
 }

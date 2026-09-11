@@ -210,7 +210,13 @@ fn builtin_source(name: &str) -> Option<String> {
             "tracingChannel",
         ],
         "dns" => &["lookup"],
-        "events" => &["EventEmitter"],
+        "events" => &[
+            "EventEmitter",
+            "once",
+            "getEventListeners",
+            "listenerCount",
+            "setMaxListeners",
+        ],
         "fs" => &[
             "readFile",
             "readFileSync",
