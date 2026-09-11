@@ -73,6 +73,42 @@ fn request_fixture(fixture: &str) -> String {
     response
 }
 
+#[test]
+fn closes_the_native_http_server_and_exits() {
+    let port = free_port();
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut child = Command::new(env!("CARGO_BIN_EXE_canaryo"))
+        .current_dir(root)
+        .arg("fixtures/http-close/server.js")
+        .arg(port.to_string())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            let mut stdout = String::new();
+            child
+                .stdout
+                .take()
+                .unwrap()
+                .read_to_string(&mut stdout)
+                .unwrap();
+            assert!(status.success());
+            assert_eq!(stdout.trim(), "closed");
+            break;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("servidor não encerrou após server.close()");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
 fn read_response(stream: &mut TcpStream) -> String {
     let mut response = Vec::new();
 

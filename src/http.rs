@@ -73,6 +73,7 @@ pub fn listen<'js>(
     let mut connections = HashMap::new();
     let mut next_token = 1;
     let run_timers: Function = context.globals().get("__canaryoRunTimers")?;
+    let should_close: Function = context.globals().get("__canaryoServerShouldClose")?;
     on_listening.call::<_, ()>(())?;
 
     loop {
@@ -80,6 +81,10 @@ pub fn listen<'js>(
         let timer_delay = run_timers
             .call::<_, Option<u64>>(())?
             .map(Duration::from_millis);
+        while context.execute_pending_job() {}
+        if should_close.call::<_, bool>(())? {
+            break;
+        }
         poll.poll(&mut events, timer_delay)
             .map_err(|error| Exception::throw_message(&context, &error.to_string()))?;
 
@@ -177,6 +182,8 @@ pub fn listen<'js>(
             }
         }
     }
+
+    Ok(())
 }
 
 fn accept_connections(

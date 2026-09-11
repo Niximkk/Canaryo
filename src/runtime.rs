@@ -145,6 +145,8 @@ const httpModule = Object.freeze({
 
         const server = {
             listening: false,
+            __canaryoCloseRequested: false,
+            __canaryoCloseCallbacks: [],
             keepAliveTimeout: 5000,
             requestTimeout: 300000,
             timeout: 0,
@@ -159,18 +161,26 @@ const httpModule = Object.freeze({
                         : null;
                 this.__canaryoAddress = { address: listenHost || "127.0.0.1", family: "IPv4", port: listenPort };
                 const currentServer = this;
-                globalThis.__canaryoPendingServerStart = () => __canaryoListen(
-                    listenPort,
-                    requestListener,
-                    () => {
-                        currentServer.listening = true;
-                        currentServer.emit("listening");
-                        if (explicitCallback) explicitCallback();
-                    },
-                    IncomingMessage.prototype,
-                    ServerResponse.prototype,
-                    Socket.prototype
-                );
+                currentServer.__canaryoCloseRequested = false;
+                globalThis.__canaryoActiveServer = currentServer;
+                globalThis.__canaryoPendingServerStart = () => {
+                    __canaryoListen(
+                        listenPort,
+                        requestListener,
+                        () => {
+                            currentServer.listening = true;
+                            currentServer.emit("listening");
+                            if (explicitCallback) explicitCallback();
+                        },
+                        IncomingMessage.prototype,
+                        ServerResponse.prototype,
+                        Socket.prototype
+                    );
+                    currentServer.listening = false;
+                    const callbacks = currentServer.__canaryoCloseCallbacks.splice(0);
+                    for (const closeCallback of callbacks) closeCallback();
+                    currentServer.emit("close");
+                };
                 return this;
             },
             address() { return this.__canaryoAddress || null; },
@@ -182,11 +192,12 @@ const httpModule = Object.freeze({
             ref() { return this; },
             unref() { return this; },
             close(callback) {
-                this.listening = false;
-                if (typeof callback === "function") callback();
-                this.emit("close");
+                if (typeof callback === "function") this.__canaryoCloseCallbacks.push(callback);
+                this.__canaryoCloseRequested = true;
                 return this;
-            }
+            },
+            closeAllConnections() { this.__canaryoCloseRequested = true; },
+            closeIdleConnections() { this.__canaryoCloseRequested = true; }
         };
         const EventEmitter = __canaryoBuiltins.events.EventEmitter;
         Object.setPrototypeOf(IncomingMessage.prototype, EventEmitter.prototype);
@@ -290,6 +301,9 @@ globalThis.__canaryoStartPendingServer = () => {
     globalThis.__canaryoPendingServerStart = null;
     if (start) start();
 };
+globalThis.__canaryoServerShouldClose = () => Boolean(
+    globalThis.__canaryoActiveServer && globalThis.__canaryoActiveServer.__canaryoCloseRequested
+);
 })();
 "#;
 
