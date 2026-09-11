@@ -86,6 +86,9 @@
         }
         toString() { return decodeUtf8(this); }
     }
+    for (const method of ["from", "alloc", "allocUnsafe", "isBuffer", "byteLength", "concat"]) {
+        Object.defineProperty(Buffer, method, { enumerable: true });
+    }
 
     class TextEncoder {
         encode(value) { return new Uint8Array(encodeUtf8(value)); }
@@ -93,6 +96,17 @@
 
     class TextDecoder {
         decode(value = new Uint8Array()) { return decodeUtf8(value); }
+    }
+
+    class StringDecoder {
+        constructor(encoding = "utf8") {
+            const normalized = String(encoding).toLowerCase().replace(/[-_]/g, "");
+            if (normalized !== "utf8") throw new Error(`encoding not supported: ${encoding}`);
+            this.encoding = "utf8";
+        }
+        write(value) { return Buffer.from(value).toString(); }
+        end(value) { return value === undefined ? "" : this.write(value); }
+        text(value, offset = 0) { return this.write(value.subarray(offset)); }
     }
 
     function inspect(value) {
@@ -180,6 +194,23 @@
     AsyncLocalStorage.prototype.enterWith = function (store) { this.store = store; };
     AsyncLocalStorage.prototype.disable = function () { this.store = undefined; };
 
+    function AsyncResource(type) { this.type = String(type); }
+    AsyncResource.prototype.runInAsyncScope = function (fn, thisArg, ...args) {
+        return fn.apply(thisArg, args);
+    };
+    AsyncResource.prototype.bind = function (fn, thisArg) {
+        const resource = this;
+        return function (...args) {
+            return resource.runInAsyncScope(fn, thisArg === undefined ? this : thisArg, ...args);
+        };
+    };
+    AsyncResource.prototype.emitDestroy = function () { return this; };
+    AsyncResource.prototype.asyncId = function () { return 0; };
+    AsyncResource.prototype.triggerAsyncId = function () { return 0; };
+    AsyncResource.bind = function (fn, type, thisArg) {
+        return new AsyncResource(type || fn.name || "bound-anonymous-fn").bind(fn, thisArg);
+    };
+
     function createDiagnosticsChannel(name) {
         return {
             name,
@@ -263,7 +294,7 @@
     globalThis.queueMicrotask = callback => Promise.resolve().then(callback);
     globalThis.__canaryoBuiltins = Object.freeze({
         assert,
-        async_hooks: { AsyncLocalStorage },
+        async_hooks: { AsyncLocalStorage, AsyncResource, executionAsyncId: () => 0, triggerAsyncId: () => 0 },
         buffer: { Buffer, SlowBuffer: Buffer, INSPECT_MAX_BYTES: 50, kMaxLength: 0x7fffffff },
         crypto: {
             createHash(algorithm) {
@@ -290,6 +321,7 @@
         perf_hooks: { performance },
         querystring: { parse(value) { return Object.fromEntries(String(value).split("&").filter(Boolean).map(item => item.split("=").map(decodeURIComponent))); }, stringify(value) { return Object.entries(value).map(([key, item]) => `${encodeURIComponent(key)}=${encodeURIComponent(item)}`).join("&"); }, escape: encodeURIComponent, unescape: decodeURIComponent },
         stream: Stream,
+        string_decoder: { StringDecoder },
         tty: { isatty: () => false, ReadStream: function () {}, WriteStream: function () {} },
         url: { parse: parseUrl, format: value => value.href || value.path || String(value), resolve: (base, target) => target.startsWith("/") ? target : path.join(path.dirname(base), target) },
         util,

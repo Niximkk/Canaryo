@@ -37,6 +37,19 @@ IncomingMessage.prototype.setEncoding = function(encoding) {
 };
 IncomingMessage.prototype.pause = function() { return this; };
 IncomingMessage.prototype.resume = function() { return this; };
+IncomingMessage.prototype.__canaryoDeliverBody = function() {
+    if (this.readableEnded) return;
+    if (this.__canaryoBody.length > 0) {
+        const chunk = this.__canaryoEncoding
+            ? this.__canaryoBody
+            : Buffer.from(this.__canaryoBody);
+        this.emit("data", chunk);
+    }
+    this.readable = false;
+    this.readableEnded = true;
+    this.complete = true;
+    this.emit("end");
+};
 
 Socket.prototype.setTimeout = function(value, callback) {
     this.timeout = Number(value);
@@ -504,6 +517,9 @@ mod tests {
                     Buffer.byteLength("Canaryo") === 7 &&
                     Buffer.byteLength("can\u00e1rio \ud83d\udc24") === 13 &&
                     Buffer.byteLength("\ud800") === 3 &&
+                    Buffer.from("hello").toString() === "hello" &&
+                    new __canaryoBuiltins.string_decoder.StringDecoder("utf-8")
+                        .write(Buffer.from("hello")) === "hello" &&
                     Buffer.byteLength(new Uint8Array([1, 2, 3])) === 3 &&
                     Buffer.byteLength(new Uint8Array([1, 2, 3]).subarray(1)) === 2 &&
                     Buffer.byteLength(new ArrayBuffer(4)) === 4

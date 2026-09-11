@@ -122,11 +122,11 @@ flowchart LR
 | Area | Status | Current scope |
 |---|---|---|
 | CommonJS | Supported | Relative modules, JSON, package `main`, scoped packages, cache, and upward `node_modules` lookup. |
-| `node:http` | Partial | Server creation, persistent HTTP/1.1 connections, pipelining, request and socket metadata, response lifecycle events, status, headers, `write`, and `end`. |
-| Express | Partial | Express 5.2.1 startup, basic routing, and JSON responses. |
-| Fastify | Partial | Fastify 5.12.3 startup, parameterized routes, query strings, request/response hooks, async handlers, and JSON responses. Plugin compatibility varies with the Node.js APIs each plugin uses. |
-| Promises and microtasks | Partial | Promise jobs, `process.nextTick`, `queueMicrotask`, and immediate callbacks used during framework boot and request handling. Timed callbacks are not scheduled yet. |
-| Buffers and streams | Partial | Compatibility methods required by the current Express fixture. |
+| `node:http` | Partial | Server creation, persistent HTTP/1.1 connections, pipelining, request body events and socket metadata, response lifecycle events, status, headers, `write`, and `end`. |
+| Express | Partial | Express 5.2.1 startup, basic routing, JSON request parsing, and JSON responses. |
+| Fastify | Partial | Fastify 5.12.3 startup, parameterized routes, query strings, request/response hooks, JSON request parsing, async handlers, and JSON responses. Plugin compatibility varies with the Node.js APIs each plugin uses. |
+| Promises and microtasks | Partial | Promise jobs, `AsyncResource`, `process.nextTick`, `queueMicrotask`, and immediate callbacks used during framework boot and request handling. Timed callbacks are not scheduled yet. |
+| Buffers and streams | Partial | Buffer creation, byte lengths, concatenation, UTF-8 decoding, `StringDecoder`, and request body events required by the current framework fixtures. |
 | Filesystem APIs | Partial | Initial synchronous compatibility methods. |
 | ESM | Planned | Native `import` and `export` execution is not available yet. |
 | Keep-alive | Supported | Connections persist by default on HTTP/1.1 and honor `Connection: close`. |

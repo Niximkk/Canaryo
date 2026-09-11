@@ -33,7 +33,7 @@ fn start_fixture(fixture: &str) -> (Server, TcpStream) {
             .arg(fixture)
             .arg(port.to_string())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::inherit())
             .spawn()
             .unwrap(),
     );
@@ -133,6 +133,25 @@ fn serves_a_native_express_application() {
 }
 
 #[test]
+#[ignore = "requires npm ci in fixtures/express-basic"]
+fn parses_an_express_json_request_body() {
+    let (_server, mut stream) = start_fixture("fixtures/express-basic/server.js");
+
+    stream
+        .write_all(
+            b"POST /echo HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: 19\r\nConnection: close\r\n\r\n{\"message\":\"hello\"}",
+        )
+        .unwrap();
+    let response = read_response(&mut stream);
+
+    assert!(response.starts_with("HTTP/1.1 200 OK"));
+    assert!(
+        response.ends_with(r#"{"body":{"message":"hello"}}"#),
+        "unexpected response: {response}"
+    );
+}
+
+#[test]
 #[ignore = "requires npm ci in fixtures/fastify-basic"]
 fn serves_a_native_fastify_application() {
     let response = request_fixture("fixtures/fastify-basic/server.js");
@@ -170,4 +189,20 @@ fn supports_fastify_params_query_and_response_hooks() {
         .unwrap();
     let second_hook = read_response(&mut stream);
     assert!(second_hook.ends_with(r#"{"completedResponses":1}"#));
+}
+
+#[test]
+#[ignore = "requires npm ci in fixtures/fastify-basic"]
+fn parses_a_fastify_json_request_body() {
+    let (_server, mut stream) = start_fixture("fixtures/fastify-basic/server.js");
+
+    stream
+        .write_all(
+            b"POST /echo HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: 19\r\nConnection: close\r\n\r\n{\"message\":\"hello\"}",
+        )
+        .unwrap();
+    let response = read_response(&mut stream);
+
+    assert!(response.starts_with("HTTP/1.1 200 OK"));
+    assert!(response.ends_with(r#"{"body":{"message":"hello"},"contentType":"application/json"}"#));
 }

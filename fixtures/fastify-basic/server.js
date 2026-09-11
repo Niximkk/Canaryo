@@ -10,6 +10,10 @@ fastify.get("/users/:id", async request => {
     return { id: request.params.id, active: request.query.active };
 });
 
+fastify.post("/echo", async request => {
+    return { body: request.body, contentType: request.headers["content-type"] };
+});
+
 fastify.get("/hooks", {
     onRequest: async (_request, reply) => {
         reply.header("x-canaryo-hook", "on-request");

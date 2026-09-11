@@ -5,6 +5,7 @@ use std::{
 };
 
 use mio::{Events, Interest, Poll, Token, net::TcpStream};
+use rquickjs::function::This;
 use rquickjs::{Array, Coerced, Ctx, Exception, Function, Object, Result};
 
 const MAX_REQUEST_SIZE: usize = 1024 * 1024;
@@ -250,7 +251,9 @@ fn handle_request<'js>(
     response_object.set("socket", socket.clone())?;
     response_object.set("connection", socket)?;
 
-    handler.call::<_, ()>((request_object, response_object.clone()))?;
+    handler.call::<_, ()>((request_object.clone(), response_object.clone()))?;
+    let deliver_body: Function = request_object.get("__canaryoDeliverBody")?;
+    deliver_body.call::<_, ()>((This(request_object),))?;
     while context.execute_pending_job() {}
 
     response_from_js(&response_object)
@@ -290,6 +293,8 @@ fn request_to_js<'js>(
     socket.set("encrypted", false)?;
     socket.set("destroyed", false)?;
     socket.set("connecting", false)?;
+    socket.set("readable", true)?;
+    socket.set("writable", true)?;
     socket.set_prototype(Some(socket_prototype))?;
 
     object.set("method", request.method.as_str())?;
@@ -299,12 +304,14 @@ fn request_to_js<'js>(
     object.set("httpVersionMinor", version_minor)?;
     object.set("headers", headers)?;
     object.set("rawHeaders", raw_headers)?;
-    object.set("body", String::from_utf8_lossy(&request.body).as_ref())?;
+    let body = String::from_utf8_lossy(&request.body);
+    object.set("body", body.as_ref())?;
+    object.set("__canaryoBody", body.as_ref())?;
     object.set("aborted", false)?;
-    object.set("complete", true)?;
+    object.set("complete", false)?;
     object.set("destroyed", false)?;
     object.set("readable", true)?;
-    object.set("readableEnded", true)?;
+    object.set("readableEnded", false)?;
     object.set("socket", socket.clone())?;
     object.set("connection", socket)?;
     object.set_prototype(Some(prototype))?;
