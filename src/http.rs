@@ -5,7 +5,7 @@ use std::{
 };
 
 use mio::{Events, Interest, Poll, Token, net::TcpStream};
-use rquickjs::{Coerced, Ctx, Exception, Function, Object, Result};
+use rquickjs::{Array, Coerced, Ctx, Exception, Function, Object, Result};
 
 const MAX_REQUEST_SIZE: usize = 1024 * 1024;
 const LISTENER: Token = Token(0);
@@ -47,6 +47,7 @@ pub fn listen<'js>(
     on_listening: Function<'js>,
     request_prototype: Object<'js>,
     response_prototype: Object<'js>,
+    socket_prototype: Object<'js>,
 ) -> Result<()> {
     let address = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port));
     let mut listener = mio::net::TcpListener::bind(address)
@@ -92,6 +93,7 @@ pub fn listen<'js>(
                                 &request,
                                 &request_prototype,
                                 &response_prototype,
+                                &socket_prototype,
                             )?;
                             if let Some(connection) = connections.get_mut(&token) {
                                 append_response(&mut connection.outgoing, &response, keep_alive);
@@ -238,11 +240,15 @@ fn handle_request<'js>(
     request: &Request,
     request_prototype: &Object<'js>,
     response_prototype: &Object<'js>,
+    socket_prototype: &Object<'js>,
 ) -> Result<Response> {
-    let request_object = request_to_js(context, request, request_prototype)?;
+    let request_object = request_to_js(context, request, request_prototype, socket_prototype)?;
     let response_object = response_to_js(context, response_prototype)?;
+    let socket: Object = request_object.get("socket")?;
     request_object.set("res", response_object.clone())?;
     response_object.set("req", request_object.clone())?;
+    response_object.set("socket", socket.clone())?;
+    response_object.set("connection", socket)?;
 
     handler.call::<_, ()>((request_object, response_object.clone()))?;
     while context.execute_pending_job() {}
@@ -254,19 +260,53 @@ fn request_to_js<'js>(
     context: &Ctx<'js>,
     request: &Request,
     prototype: &Object<'js>,
+    socket_prototype: &Object<'js>,
 ) -> Result<Object<'js>> {
     let object = Object::new(context.clone())?;
     let headers = Object::new(context.clone())?;
+    let raw_headers = Array::new(context.clone())?;
+    let socket = Object::new(context.clone())?;
 
-    for (name, value) in &request.headers {
+    for (index, (name, value)) in request.headers.iter().enumerate() {
         headers.set(name.as_str(), value.as_str())?;
+        raw_headers.set(index * 2, name.as_str())?;
+        raw_headers.set(index * 2 + 1, value.as_str())?;
     }
+
+    let mut version_parts = request.version.split('.');
+    let version_major = version_parts
+        .next()
+        .unwrap_or("1")
+        .parse::<u8>()
+        .unwrap_or(1);
+    let version_minor = version_parts
+        .next()
+        .unwrap_or("1")
+        .parse::<u8>()
+        .unwrap_or(1);
+    socket.set("remoteAddress", "127.0.0.1")?;
+    socket.set("remoteFamily", "IPv4")?;
+    socket.set("localAddress", "127.0.0.1")?;
+    socket.set("encrypted", false)?;
+    socket.set("destroyed", false)?;
+    socket.set("connecting", false)?;
+    socket.set_prototype(Some(socket_prototype))?;
 
     object.set("method", request.method.as_str())?;
     object.set("url", request.url.as_str())?;
     object.set("httpVersion", request.version.as_str())?;
+    object.set("httpVersionMajor", version_major)?;
+    object.set("httpVersionMinor", version_minor)?;
     object.set("headers", headers)?;
+    object.set("rawHeaders", raw_headers)?;
     object.set("body", String::from_utf8_lossy(&request.body).as_ref())?;
+    object.set("aborted", false)?;
+    object.set("complete", true)?;
+    object.set("destroyed", false)?;
+    object.set("readable", true)?;
+    object.set("readableEnded", true)?;
+    object.set("socket", socket.clone())?;
+    object.set("connection", socket)?;
     object.set_prototype(Some(prototype))?;
     Ok(object)
 }
@@ -277,6 +317,9 @@ fn response_to_js<'js>(context: &Ctx<'js>, prototype: &Object<'js>) -> Result<Ob
     object.set("statusCode", 200)?;
     object.set("headersSent", false)?;
     object.set("writableEnded", false)?;
+    object.set("writableFinished", false)?;
+    object.set("finished", false)?;
+    object.set("destroyed", false)?;
     object.set("__canaryoHeaders", headers)?;
     object.set("__canaryoBody", "")?;
     object.set_prototype(Some(prototype))?;

@@ -359,14 +359,21 @@ fn is_node_builtin(specifier: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
     fn fixture() -> PathBuf {
         let id = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!("canaryo-analyzer-{id}"));
+        let sequence = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "canaryo-analyzer-{}-{id}-{sequence}",
+            std::process::id()
+        ));
         fs::create_dir_all(&root).unwrap();
         root
     }

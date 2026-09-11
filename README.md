@@ -122,9 +122,9 @@ flowchart LR
 | Area | Status | Current scope |
 |---|---|---|
 | CommonJS | Supported | Relative modules, JSON, package `main`, scoped packages, cache, and upward `node_modules` lookup. |
-| `node:http` | Partial | Server creation, persistent HTTP/1.1 connections, pipelining, request metadata and body, response status, headers, `write`, and `end`. |
+| `node:http` | Partial | Server creation, persistent HTTP/1.1 connections, pipelining, request and socket metadata, response lifecycle events, status, headers, `write`, and `end`. |
 | Express | Partial | Express 5.2.1 startup, basic routing, and JSON responses. |
-| Fastify | Partial | Fastify 5.12.3 startup, basic routing, async handlers, and JSON responses. Plugin compatibility varies with the Node.js APIs each plugin uses. |
+| Fastify | Partial | Fastify 5.12.3 startup, parameterized routes, query strings, request/response hooks, async handlers, and JSON responses. Plugin compatibility varies with the Node.js APIs each plugin uses. |
 | Promises and microtasks | Partial | Promise jobs, `process.nextTick`, `queueMicrotask`, and immediate callbacks used during framework boot and request handling. Timed callbacks are not scheduled yet. |
 | Buffers and streams | Partial | Compatibility methods required by the current Express fixture. |
 | Filesystem APIs | Partial | Initial synchronous compatibility methods. |

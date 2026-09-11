@@ -29,6 +29,29 @@ function formatValue(value) {
 
 function IncomingMessage() {}
 function ServerResponse() {}
+function Socket() {}
+
+IncomingMessage.prototype.setEncoding = function(encoding) {
+    this.__canaryoEncoding = String(encoding);
+    return this;
+};
+IncomingMessage.prototype.pause = function() { return this; };
+IncomingMessage.prototype.resume = function() { return this; };
+
+Socket.prototype.setTimeout = function(value, callback) {
+    this.timeout = Number(value);
+    if (typeof callback === "function") this.on("timeout", callback);
+    return this;
+};
+Socket.prototype.ref = function() { return this; };
+Socket.prototype.unref = function() { return this; };
+Socket.prototype.destroy = function() {
+    if (!this.destroyed) {
+        this.destroyed = true;
+        this.emit("close");
+    }
+    return this;
+};
 
 ServerResponse.prototype.setHeader = function(name, value) {
     this.__canaryoHeaders[String(name).toLowerCase()] = String(value);
@@ -70,11 +93,15 @@ ServerResponse.prototype.write = function(chunk) {
     return true;
 };
 ServerResponse.prototype.end = function(chunk) {
+    if (this.writableEnded) return this;
     if (chunk !== undefined && chunk !== null) {
         this.__canaryoBody += typeof chunk === "string" ? chunk : chunk.toString();
     }
     this.headersSent = true;
     this.writableEnded = true;
+    this.writableFinished = true;
+    this.finished = true;
+    this.emit("finish");
     return this;
 };
 
@@ -115,7 +142,8 @@ const httpModule = Object.freeze({
                         if (explicitCallback) explicitCallback();
                     },
                     IncomingMessage.prototype,
-                    ServerResponse.prototype
+                    ServerResponse.prototype,
+                    Socket.prototype
                 );
                 return this;
             },
@@ -135,6 +163,9 @@ const httpModule = Object.freeze({
             }
         };
         const EventEmitter = __canaryoBuiltins.events.EventEmitter;
+        Object.setPrototypeOf(IncomingMessage.prototype, EventEmitter.prototype);
+        Object.setPrototypeOf(ServerResponse.prototype, EventEmitter.prototype);
+        Object.setPrototypeOf(Socket.prototype, EventEmitter.prototype);
         EventEmitter.call(server);
         Object.setPrototypeOf(server, EventEmitter.prototype);
         return server;

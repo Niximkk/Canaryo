@@ -142,3 +142,32 @@ fn serves_a_native_fastify_application() {
     assert!(headers.contains("content-type: application/json; charset=utf-8"));
     assert!(response.ends_with(r#"{"runtime":"canaryo","framework":"fastify","status":"ok"}"#));
 }
+
+#[test]
+#[ignore = "requires npm ci in fixtures/fastify-basic"]
+fn supports_fastify_params_query_and_response_hooks() {
+    let (_server, mut stream) = start_fixture("fixtures/fastify-basic/server.js");
+
+    stream
+        .write_all(b"GET /users/42?active=true HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+        .unwrap();
+    let route = read_response(&mut stream);
+    assert!(route.ends_with(r#"{"id":"42","active":"true"}"#));
+
+    stream
+        .write_all(b"GET /hooks HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+        .unwrap();
+    let first_hook = read_response(&mut stream);
+    assert!(
+        first_hook
+            .to_ascii_lowercase()
+            .contains("x-canaryo-hook: on-request")
+    );
+    assert!(first_hook.ends_with(r#"{"completedResponses":0}"#));
+
+    stream
+        .write_all(b"GET /hooks HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let second_hook = read_response(&mut stream);
+    assert!(second_hook.ends_with(r#"{"completedResponses":1}"#));
+}
