@@ -282,15 +282,78 @@
     process.stdout = { isTTY: false, write(value) { __canaryoWrite(String(value)); return true; } };
     process.stderr = { isTTY: false, write(value) { __canaryoWriteError(String(value)); return true; } };
     const performance = { now: () => Date.now(), timeOrigin: Date.now() };
+    const scheduledTimers = new Map();
+    let nextTimerId = 1;
+
+    function scheduleTimer(callback, delay, repeat, args) {
+        if (typeof callback !== "function") throw new TypeError("callback must be a function");
+        const timeout = Math.max(0, Number(delay) || 0);
+        const id = nextTimerId++;
+        const timer = {
+            id,
+            callback,
+            args,
+            delay: timeout,
+            repeat,
+            due: Date.now() + timeout,
+            referenced: true
+        };
+        const handle = {
+            id,
+            ref() { timer.referenced = true; return this; },
+            unref() { timer.referenced = false; return this; },
+            hasRef() { return timer.referenced; },
+            refresh() { timer.due = Date.now() + timer.delay; scheduledTimers.set(id, timer); return this; },
+            [Symbol.toPrimitive]() { return id; }
+        };
+        timer.handle = handle;
+        scheduledTimers.set(id, timer);
+        return handle;
+    }
+
+    function clearTimer(handle) {
+        const id = handle && typeof handle === "object" ? handle.id : Number(handle);
+        scheduledTimers.delete(id);
+    }
+
+    function setTimeout(callback, delay, ...args) {
+        return scheduleTimer(callback, delay, false, args);
+    }
+    function setInterval(callback, delay, ...args) {
+        return scheduleTimer(callback, delay, true, args);
+    }
+    function setImmediate(callback, ...args) {
+        return scheduleTimer(callback, 0, false, args);
+    }
+
+    globalThis.__canaryoRunTimers = () => {
+        const now = Date.now();
+        for (const timer of [...scheduledTimers.values()]) {
+            if (timer.due > now || !scheduledTimers.has(timer.id)) continue;
+            if (timer.repeat) timer.due = now + timer.delay;
+            else scheduledTimers.delete(timer.id);
+            timer.callback(...timer.args);
+        }
+
+        let nextDelay;
+        const updatedNow = Date.now();
+        for (const timer of scheduledTimers.values()) {
+            const delay = Math.max(0, timer.due - updatedNow);
+            if (nextDelay === undefined || delay < nextDelay) nextDelay = delay;
+        }
+        return nextDelay;
+    };
 
     globalThis.Buffer = Buffer;
     globalThis.TextEncoder = TextEncoder;
     globalThis.TextDecoder = TextDecoder;
     globalThis.performance = performance;
-    globalThis.setImmediate = (callback, ...args) => Promise.resolve().then(() => callback(...args));
-    globalThis.clearImmediate = () => {};
-    globalThis.setTimeout = () => ({ ref() { return this; }, unref() { return this; } });
-    globalThis.clearTimeout = () => {};
+    globalThis.setImmediate = setImmediate;
+    globalThis.clearImmediate = clearTimer;
+    globalThis.setTimeout = setTimeout;
+    globalThis.clearTimeout = clearTimer;
+    globalThis.setInterval = setInterval;
+    globalThis.clearInterval = clearTimer;
     globalThis.queueMicrotask = callback => Promise.resolve().then(callback);
     globalThis.__canaryoBuiltins = Object.freeze({
         assert,
@@ -322,6 +385,7 @@
         querystring: { parse(value) { return Object.fromEntries(String(value).split("&").filter(Boolean).map(item => item.split("=").map(decodeURIComponent))); }, stringify(value) { return Object.entries(value).map(([key, item]) => `${encodeURIComponent(key)}=${encodeURIComponent(item)}`).join("&"); }, escape: encodeURIComponent, unescape: decodeURIComponent },
         stream: Stream,
         string_decoder: { StringDecoder },
+        timers: { setImmediate, clearImmediate: clearTimer, setTimeout, clearTimeout: clearTimer, setInterval, clearInterval: clearTimer },
         tty: { isatty: () => false, ReadStream: function () {}, WriteStream: function () {} },
         url: { parse: parseUrl, format: value => value.href || value.path || String(value), resolve: (base, target) => target.startsWith("/") ? target : path.join(path.dirname(base), target) },
         util,

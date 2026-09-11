@@ -124,8 +124,8 @@ flowchart LR
 | CommonJS | Supported | Relative modules, JSON, package `main`, scoped packages, cache, and upward `node_modules` lookup. |
 | `node:http` | Partial | Server creation, persistent HTTP/1.1 connections, pipelining, request body events and socket metadata, response lifecycle events, status, headers, `write`, and `end`. |
 | Express | Partial | Express 5.2.1 startup, basic routing, JSON request parsing, and JSON responses. |
-| Fastify | Partial | Fastify 5.12.3 startup, parameterized routes, query strings, request/response hooks, JSON request parsing, async handlers, and JSON responses. Plugin compatibility varies with the Node.js APIs each plugin uses. |
-| Promises and microtasks | Partial | Promise jobs, `AsyncResource`, `process.nextTick`, `queueMicrotask`, and immediate callbacks used during framework boot and request handling. Timed callbacks are not scheduled yet. |
+| Fastify | Partial | Fastify 5.12.3 startup, parameterized routes, query strings, request/response hooks, JSON request parsing, async handlers, timed handlers, and JSON responses. Plugin compatibility varies with the Node.js APIs each plugin uses. |
+| Promises and timers | Partial | Promise jobs, `AsyncResource`, `process.nextTick`, `queueMicrotask`, `setImmediate`, `setTimeout`, and `setInterval` in the native HTTP event loop. Standalone event-loop lifetime and timer handle behavior remain incomplete. |
 | Buffers and streams | Partial | Buffer creation, byte lengths, concatenation, UTF-8 decoding, `StringDecoder`, and request body events required by the current framework fixtures. |
 | Filesystem APIs | Partial | Initial synchronous compatibility methods. |
 | ESM | Planned | Native `import` and `export` execution is not available yet. |
@@ -172,7 +172,7 @@ cargo bench --bench runtime -- --startup-only --startup-runs 15
 
 - Connection timeouts, limits, backpressure, and graceful shutdown.
 - Streaming request and response bodies.
-- Timers and additional asynchronous I/O sources.
+- Additional asynchronous I/O sources and complete timer lifecycle behavior.
 - Wider Buffer, stream, filesystem, crypto, and networking support.
 - Native ESM execution and package `exports` resolution.
 - A larger Express, Fastify, and plugin compatibility suite.

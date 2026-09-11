@@ -2,6 +2,8 @@ use std::{
     collections::HashMap,
     io::{Read, Write},
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    thread,
+    time::{Duration, Instant},
 };
 
 use mio::{Events, Interest, Poll, Token, net::TcpStream};
@@ -9,6 +11,7 @@ use rquickjs::function::This;
 use rquickjs::{Array, Coerced, Ctx, Exception, Function, Object, Result};
 
 const MAX_REQUEST_SIZE: usize = 1024 * 1024;
+const MAX_ASYNC_RESPONSE_WAIT: Duration = Duration::from_secs(30);
 const LISTENER: Token = Token(0);
 
 struct Request {
@@ -61,10 +64,15 @@ pub fn listen<'js>(
     let mut events = Events::with_capacity(1024);
     let mut connections = HashMap::new();
     let mut next_token = 1;
+    let run_timers: Function = context.globals().get("__canaryoRunTimers")?;
     on_listening.call::<_, ()>(())?;
 
     loop {
-        poll.poll(&mut events, None)
+        while context.execute_pending_job() {}
+        let timer_delay = run_timers
+            .call::<_, Option<u64>>(())?
+            .map(Duration::from_millis);
+        poll.poll(&mut events, timer_delay)
             .map_err(|error| Exception::throw_message(&context, &error.to_string()))?;
 
         for event in &events {
@@ -95,6 +103,7 @@ pub fn listen<'js>(
                                 &request_prototype,
                                 &response_prototype,
                                 &socket_prototype,
+                                &run_timers,
                             )?;
                             if let Some(connection) = connections.get_mut(&token) {
                                 append_response(&mut connection.outgoing, &response, keep_alive);
@@ -242,6 +251,7 @@ fn handle_request<'js>(
     request_prototype: &Object<'js>,
     response_prototype: &Object<'js>,
     socket_prototype: &Object<'js>,
+    run_timers: &Function<'js>,
 ) -> Result<Response> {
     let request_object = request_to_js(context, request, request_prototype, socket_prototype)?;
     let response_object = response_to_js(context, response_prototype)?;
@@ -254,7 +264,33 @@ fn handle_request<'js>(
     handler.call::<_, ()>((request_object.clone(), response_object.clone()))?;
     let deliver_body: Function = request_object.get("__canaryoDeliverBody")?;
     deliver_body.call::<_, ()>((This(request_object),))?;
-    while context.execute_pending_job() {}
+
+    let deadline = Instant::now() + MAX_ASYNC_RESPONSE_WAIT;
+    loop {
+        while context.execute_pending_job() {}
+        if response_object.get::<_, bool>("writableEnded")? {
+            break;
+        }
+
+        let timer_delay = run_timers.call::<_, Option<u64>>(())?;
+        while context.execute_pending_job() {}
+        if response_object.get::<_, bool>("writableEnded")? {
+            continue;
+        }
+        let Some(delay) = timer_delay else {
+            break;
+        };
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(Exception::throw_message(
+                context,
+                "a resposta assíncrona excedeu o limite de 30 segundos",
+            ));
+        }
+        if delay > 0 {
+            thread::sleep(Duration::from_millis(delay).min(remaining));
+        }
+    }
 
     response_from_js(&response_object)
 }

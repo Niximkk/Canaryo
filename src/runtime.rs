@@ -530,4 +530,33 @@ mod tests {
 
         assert!(matches_node);
     }
+
+    #[test]
+    fn schedules_and_cancels_timers() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            let timer_created = context
+                .eval::<bool, _>(
+                    r#"
+                    globalThis.timerResult = 0;
+                    const cancelled = setTimeout(() => { timerResult = -1; }, 0);
+                    clearTimeout(cancelled);
+                    const handle = setTimeout((left, right) => {
+                        timerResult = left + right;
+                    }, 0, 20, 22);
+                    handle.hasRef() && Number(handle) > 0
+                    "#,
+                )
+                .unwrap();
+            assert!(timer_created);
+
+            let run_timers: Function = context.globals().get("__canaryoRunTimers").unwrap();
+            assert_eq!(run_timers.call::<_, Option<u64>>(()).unwrap(), None);
+            assert_eq!(context.globals().get::<_, i32>("timerResult").unwrap(), 42);
+        });
+    }
 }

@@ -206,3 +206,20 @@ fn parses_a_fastify_json_request_body() {
     assert!(response.starts_with("HTTP/1.1 200 OK"));
     assert!(response.ends_with(r#"{"body":{"message":"hello"},"contentType":"application/json"}"#));
 }
+
+#[test]
+#[ignore = "requires npm ci in fixtures/fastify-basic"]
+fn waits_for_a_fastify_timer_before_responding() {
+    let (_server, mut stream) = start_fixture("fixtures/fastify-basic/server.js");
+
+    stream
+        .write_all(b"GET /delayed HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let response = read_response(&mut stream);
+
+    assert!(response.starts_with("HTTP/1.1 200 OK"));
+    assert!(
+        response.ends_with(r#"{"delayed":true}"#),
+        "unexpected response: {response}"
+    );
+}
