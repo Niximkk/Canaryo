@@ -1117,6 +1117,44 @@ mod tests {
     }
 
     #[test]
+    fn exposes_main_thread_worker_shims() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            let initialized = context
+                .eval::<bool, _>(
+                    r#"
+                    const workers = __canaryoBuiltins.worker_threads;
+                    workers.setEnvironmentData("canaryo", 42);
+                    const channel = new workers.MessageChannel();
+                    globalThis.workerMessage = null;
+                    channel.port2.on("message", value => { workerMessage = value; });
+                    channel.port1.postMessage({ runtime: "canaryo" });
+                    let unsupportedWorker = false;
+                    try { new workers.Worker("worker.js"); }
+                    catch (error) { unsupportedWorker = error.code === "ERR_WORKER_UNSUPPORTED_OPERATION"; }
+                    workers.isMainThread && workers.threadId === 0 && workers.parentPort === null &&
+                        workers.getEnvironmentData("canaryo") === 42 && unsupportedWorker
+                    "#,
+                )
+                .unwrap();
+            assert!(initialized);
+
+            let run_timers: Function = context.globals().get("__canaryoRunTimers").unwrap();
+            run_timers.call::<_, Option<u64>>(()).unwrap();
+
+            assert!(
+                context
+                    .eval::<bool, _>("workerMessage.runtime === 'canaryo'")
+                    .unwrap()
+            );
+        });
+    }
+
+    #[test]
     fn supports_web_and_node_url_apis() {
         let runtime = Runtime::new().unwrap();
         let context = Context::full(&runtime).unwrap();

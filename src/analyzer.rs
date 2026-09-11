@@ -236,7 +236,7 @@ fn scan_source(source: &str, path: &Path) -> Vec<Finding> {
                 "require(\"worker_threads\")",
             ],
             compatibility: Compatibility::Limited,
-            message: "usa worker_threads, que ainda não está disponível",
+            message: "usa worker_threads; o shim da thread principal está disponível, mas workers isolados ainda não",
         },
         Rule {
             patterns: &["node:module", "require('module')", "require(\"module\")"],

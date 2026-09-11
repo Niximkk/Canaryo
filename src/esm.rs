@@ -169,6 +169,7 @@ fn is_builtin(name: &str) -> bool {
             | "tty"
             | "url"
             | "util"
+            | "worker_threads"
             | "zlib"
     )
 }
@@ -337,6 +338,27 @@ fn builtin_source(name: &str) -> Option<String> {
             "domainToASCII",
             "domainToUnicode",
             "urlToHttpOptions",
+        ],
+        "worker_threads" => &[
+            "isMainThread",
+            "threadId",
+            "threadName",
+            "workerData",
+            "parentPort",
+            "resourceLimits",
+            "SHARE_ENV",
+            "Worker",
+            "MessageChannel",
+            "MessagePort",
+            "BroadcastChannel",
+            "getEnvironmentData",
+            "setEnvironmentData",
+            "receiveMessageOnPort",
+            "markAsUntransferable",
+            "markAsUncloneable",
+            "isMarkedAsUntransferable",
+            "moveMessagePortToContext",
+            "postMessageToThread",
         ],
         "util" => &[
             "inherits",

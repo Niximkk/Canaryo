@@ -1313,11 +1313,83 @@
         };
     })();
 
+    const workerEnvironment = new Map();
+    function MessagePort() {
+        EventEmitter.call(this);
+        this._peer = null;
+        this._messageQueue = [];
+        this._closed = false;
+    }
+    util.inherits(MessagePort, EventEmitter);
+    MessagePort.prototype.postMessage = function (value) {
+        if (this._closed || !this._peer || this._peer._closed) return;
+        const peer = this._peer;
+        peer._messageQueue.push(value);
+        setImmediate(() => {
+            const index = peer._messageQueue.indexOf(value);
+            if (index !== -1) peer._messageQueue.splice(index, 1);
+            if (!peer._closed) peer.emit("message", value);
+        });
+    };
+    MessagePort.prototype.start = function () {};
+    MessagePort.prototype.close = function () {
+        if (this._closed) return;
+        this._closed = true;
+        this.emit("close");
+    };
+    MessagePort.prototype.ref = function () { return this; };
+    MessagePort.prototype.unref = function () { return this; };
+    MessagePort.prototype.hasRef = function () { return false; };
+    function MessageChannel() {
+        this.port1 = new MessagePort();
+        this.port2 = new MessagePort();
+        this.port1._peer = this.port2;
+        this.port2._peer = this.port1;
+    }
+    function Worker() {
+        const error = new Error("Canaryo does not support isolated worker threads yet");
+        error.code = "ERR_WORKER_UNSUPPORTED_OPERATION";
+        throw error;
+    }
+    util.inherits(Worker, EventEmitter);
+    const workerThreads = {
+        isMainThread: true,
+        threadId: 0,
+        threadName: "",
+        workerData: null,
+        parentPort: null,
+        resourceLimits: {},
+        SHARE_ENV: Symbol.for("nodejs.worker_threads.SHARE_ENV"),
+        Worker,
+        MessageChannel,
+        MessagePort,
+        BroadcastChannel: function BroadcastChannel() {
+            const error = new Error("Canaryo does not support BroadcastChannel yet");
+            error.code = "ERR_WORKER_UNSUPPORTED_OPERATION";
+            throw error;
+        },
+        getEnvironmentData(key) { return workerEnvironment.get(key); },
+        setEnvironmentData(key, value) { workerEnvironment.set(key, value); },
+        receiveMessageOnPort(port) {
+            if (!(port instanceof MessagePort)) throw new TypeError("port must be a MessagePort");
+            return port._messageQueue.length ? { message: port._messageQueue.shift() } : undefined;
+        },
+        markAsUntransferable() {},
+        markAsUncloneable() {},
+        isMarkedAsUntransferable: () => false,
+        moveMessagePortToContext(port) { return port; },
+        postMessageToThread() {
+            return Promise.reject(Object.assign(new Error("Canaryo does not support isolated worker threads yet"), {
+                code: "ERR_WORKER_UNSUPPORTED_OPERATION"
+            }));
+        }
+    };
+
     const builtinModules = [
         "assert", "async_hooks", "buffer", "crypto", "diagnostics_channel", "dns",
         "dns/promises", "events", "fs", "fs/promises", "http", "module", "net", "os",
         "path", "perf_hooks", "querystring", "stream", "string_decoder", "timers", "tty",
-        "url", "util", "zlib"
+        "url", "util", "worker_threads", "zlib"
     ];
     function isBuiltin(name) {
         return builtinModules.includes(String(name).replace(/^node:/, ""));
@@ -1428,6 +1500,7 @@
             }
         },
         util,
+        worker_threads: workerThreads,
         zlib: { constants: {} }
     });
 })();
