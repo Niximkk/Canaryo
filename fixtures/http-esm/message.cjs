@@ -1,1 +1,1 @@
-module.exports = { suffix: "!" };
+exports.suffix = "!";

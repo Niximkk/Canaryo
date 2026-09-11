@@ -149,7 +149,7 @@ flowchart LR
 | Promises and timers | Partial | Promise jobs, `AsyncResource`, `process.nextTick`, `queueMicrotask`, `setImmediate`, `setTimeout`, and `setInterval` in the native HTTP event loop. Standalone event-loop lifetime and timer handle behavior remain incomplete. |
 | Buffers and streams | Partial | Buffer creation, byte lengths, concatenation, UTF-8 decoding, `StringDecoder`, and request body events required by the current framework fixtures. |
 | Filesystem APIs | Partial | Buffer-aware read, write, append, stat, exists, access, mkdir, and readdir operations through synchronous, callback, and `fs/promises` APIs. Streams, watches, links, permissions, and file descriptors remain incomplete. |
-| ESM | Partial | Native `.mjs` and `type: module` execution, relative imports, package `import` conditions, JSON loading, named imports from core HTTP, Buffer, events, filesystem, path, and timer modules, plus default CommonJS interop. Full CJS named-export detection and all Node resolution rules remain incomplete. |
+| ESM | Partial | Native `.mjs` and `type: module` execution, relative imports, package `import` conditions, JSON loading, named imports from common built-ins, default CommonJS interop, and static detection of `exports.name`. Dynamic CJS exports and some Node resolution rules remain incomplete. |
 | Keep-alive | Supported | Connections persist by default on HTTP/1.1 and honor `Connection: close`. |
 | TLS | Planned | HTTPS sockets and certificates are not available yet. |
 | Native `.node` addons | Unsupported | Native Node.js ABI modules cannot be loaded. |

@@ -58,16 +58,91 @@ impl Loader for NodeLoader {
             return Module::declare(context.clone(), name, source);
         }
 
+        let commonjs_source = fs::read_to_string(path)
+            .map_err(|error| Error::new_loading_message(name, error.to_string()))?;
         let filename = serde_json::to_string(name)
             .map_err(|error| Error::new_loading_message(name, error.to_string()))?;
+        let named_exports = commonjs_named_exports(&commonjs_source)
+            .into_iter()
+            .map(|export| format!("export const {export} = value.{export};"))
+            .collect::<String>();
         Module::declare(
             context.clone(),
             name,
             format!(
-                "const value = globalThis.__canaryoLoadCommonJS({filename}); export default value;"
+                "const value = globalThis.__canaryoLoadCommonJS({filename}); export default value; {named_exports}"
             ),
         )
     }
+}
+
+fn commonjs_named_exports(source: &str) -> Vec<String> {
+    let mut exports = Vec::new();
+    for marker in ["exports.", "module.exports."] {
+        let mut remaining = source;
+        while let Some(position) = remaining.find(marker) {
+            remaining = &remaining[position + marker.len()..];
+            let name = remaining
+                .chars()
+                .take_while(|character| {
+                    character.is_ascii_alphanumeric() || matches!(character, '_' | '$')
+                })
+                .collect::<String>();
+            if is_export_identifier(&name) && !exports.contains(&name) {
+                exports.push(name);
+            }
+        }
+    }
+    exports.sort();
+    exports
+}
+
+fn is_export_identifier(name: &str) -> bool {
+    let mut characters = name.chars();
+    let Some(first) = characters.next() else {
+        return false;
+    };
+    (first.is_ascii_alphabetic() || matches!(first, '_' | '$'))
+        && characters
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '$'))
+        && !matches!(
+            name,
+            "await"
+                | "break"
+                | "case"
+                | "catch"
+                | "class"
+                | "const"
+                | "continue"
+                | "debugger"
+                | "default"
+                | "delete"
+                | "do"
+                | "else"
+                | "export"
+                | "extends"
+                | "finally"
+                | "for"
+                | "function"
+                | "if"
+                | "import"
+                | "in"
+                | "instanceof"
+                | "let"
+                | "new"
+                | "return"
+                | "super"
+                | "switch"
+                | "this"
+                | "throw"
+                | "try"
+                | "typeof"
+                | "var"
+                | "void"
+                | "while"
+                | "with"
+                | "yield"
+        )
 }
 
 fn is_builtin(name: &str) -> bool {
@@ -213,4 +288,16 @@ fn builtin_source(name: &str) -> Option<String> {
     Some(format!(
         "const value = {expression}; export default value; {exports}"
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn discovers_safe_commonjs_named_exports() {
+        let source = "exports.first = 1; module.exports.second = 2; exports.default = 3;";
+
+        assert_eq!(commonjs_named_exports(source), ["first", "second"]);
+    }
 }
