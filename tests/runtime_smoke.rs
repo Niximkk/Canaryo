@@ -114,7 +114,7 @@ fn serves_a_native_esm_http_application() {
 
     assert!(response.starts_with("HTTP/1.1 200 OK"));
     assert!(headers.contains("content-type: application/json; charset=utf-8"));
-    assert!(response.ends_with(r#"{"runtime":"canaryo","modules":"esm+cjs!"}"#));
+    assert!(response.ends_with(r#"{"runtime":"canaryo","modules":"esm+cjs!","ready":true}"#));
 }
 
 #[test]

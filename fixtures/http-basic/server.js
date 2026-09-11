@@ -1,5 +1,6 @@
 const http = require("node:http");
 const port = Number(process.argv[2] || 3000);
+let listenReturned = false;
 
 http.createServer((request, response) => {
     if (request.url === "/echo") {
@@ -28,5 +29,7 @@ http.createServer((request, response) => {
     }
 
     response.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
-    response.end("Hello from Canaryo!");
+    response.end(listenReturned ? "Hello from Canaryo!" : "listen did not return");
 }).listen(port);
+
+listenReturned = true;

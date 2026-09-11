@@ -1,6 +1,6 @@
 use std::{env, fs, path::Path};
 
-use rquickjs::{Array, CatchResultExt, Context, Function, Module, Object, Runtime};
+use rquickjs::{Array, CatchResultExt, Context, Function, Module, Object, Promise, Runtime};
 use sha1::{Digest, Sha1};
 
 use crate::{esm, http, modules};
@@ -158,12 +158,13 @@ const httpModule = Object.freeze({
                         ? callback
                         : null;
                 this.__canaryoAddress = { address: listenHost || "127.0.0.1", family: "IPv4", port: listenPort };
-                __canaryoListen(
+                const currentServer = this;
+                globalThis.__canaryoPendingServerStart = () => __canaryoListen(
                     listenPort,
                     requestListener,
                     () => {
-                        this.listening = true;
-                        this.emit("listening");
+                        currentServer.listening = true;
+                        currentServer.emit("listening");
                         if (explicitCallback) explicitCallback();
                     },
                     IncomingMessage.prototype,
@@ -284,6 +285,11 @@ function resolveModule(parentFilename, name) {
 globalThis.__canaryoHttpModule = httpModule;
 globalThis.__canaryoLoadCommonJS = filename => loadModule(filename);
 globalThis.__canaryoRunMain = filename => loadModule(filename);
+globalThis.__canaryoStartPendingServer = () => {
+    const start = globalThis.__canaryoPendingServerStart;
+    globalThis.__canaryoPendingServerStart = null;
+    if (start) start();
+};
 })();
 "#;
 
@@ -310,14 +316,13 @@ pub fn execute(path: &str, arguments: &[String]) -> Result<(), String> {
             .eval::<(), _>(POLYFILLS)
             .catch(&context)
             .map_err(|error| error.to_string())?;
-        if modules::is_esm_path(&entry) {
+        let module_evaluation: Option<Promise> = if modules::is_esm_path(&entry) {
             let source = fs::read(&entry).map_err(|error| error.to_string())?;
-            Module::evaluate(context.clone(), entry.to_string_lossy().as_bytes(), source)
-                .catch(&context)
-                .map_err(|error| error.to_string())?
-                .finish::<()>()
-                .catch(&context)
-                .map_err(|error| error.to_string())?;
+            Some(
+                Module::evaluate(context.clone(), entry.to_string_lossy().as_bytes(), source)
+                    .catch(&context)
+                    .map_err(|error| error.to_string())?,
+            )
         } else {
             let run_main: Function = context
                 .globals()
@@ -327,8 +332,24 @@ pub fn execute(path: &str, arguments: &[String]) -> Result<(), String> {
                 .call::<_, ()>((entry.to_string_lossy().as_ref(),))
                 .catch(&context)
                 .map_err(|error| error.to_string())?;
-        }
+            None
+        };
 
+        while context.execute_pending_job() {}
+        let start_server: Function = context
+            .globals()
+            .get("__canaryoStartPendingServer")
+            .map_err(|error| error.to_string())?;
+        start_server
+            .call::<_, ()>(())
+            .catch(&context)
+            .map_err(|error| error.to_string())?;
+        if let Some(module_evaluation) = module_evaluation {
+            module_evaluation
+                .finish::<()>()
+                .catch(&context)
+                .map_err(|error| error.to_string())?;
+        }
         while context.execute_pending_job() {}
         Ok(())
     })
