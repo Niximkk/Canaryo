@@ -40,9 +40,10 @@ IncomingMessage.prototype.resume = function() { return this; };
 IncomingMessage.prototype.__canaryoDeliverBody = function() {
     if (this.readableEnded) return;
     if (this.__canaryoBody.length > 0) {
+        const buffer = Buffer.from(this.__canaryoBody);
         const chunk = this.__canaryoEncoding
-            ? this.__canaryoBody
-            : Buffer.from(this.__canaryoBody);
+            ? buffer.toString(this.__canaryoEncoding)
+            : buffer;
         this.emit("data", chunk);
     }
     this.readable = false;
@@ -98,18 +99,19 @@ ServerResponse.prototype.writeHead = function(status, statusMessageOrHeaders, he
     this.headersSent = true;
     return this;
 };
+function appendResponseChunk(response, chunk) {
+    if (chunk === undefined || chunk === null) return;
+    const bytes = Buffer.from(chunk);
+    for (const byte of bytes) response.__canaryoBody.push(byte);
+}
 ServerResponse.prototype.write = function(chunk) {
-    if (chunk !== undefined && chunk !== null) {
-        this.__canaryoBody += typeof chunk === "string" ? chunk : chunk.toString();
-    }
+    appendResponseChunk(this, chunk);
     this.headersSent = true;
     return true;
 };
 ServerResponse.prototype.end = function(chunk) {
     if (this.writableEnded) return this;
-    if (chunk !== undefined && chunk !== null) {
-        this.__canaryoBody += typeof chunk === "string" ? chunk : chunk.toString();
-    }
+    appendResponseChunk(this, chunk);
     this.headersSent = true;
     this.writableEnded = true;
     this.writableFinished = true;

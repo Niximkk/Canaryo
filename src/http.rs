@@ -19,7 +19,14 @@ struct Request {
     url: String,
     version: String,
     headers: Vec<(String, String)>,
+    trailers: Vec<(String, String)>,
     body: Vec<u8>,
+}
+
+struct ChunkedBody {
+    body: Vec<u8>,
+    trailers: Vec<(String, String)>,
+    consumed: usize,
 }
 
 #[derive(Default)]
@@ -106,7 +113,12 @@ pub fn listen<'js>(
                                 &run_timers,
                             )?;
                             if let Some(connection) = connections.get_mut(&token) {
-                                append_response(&mut connection.outgoing, &response, keep_alive);
+                                append_response(
+                                    &mut connection.outgoing,
+                                    &response,
+                                    keep_alive,
+                                    request.method == "HEAD",
+                                );
                                 connection.close_after_write |= !keep_alive;
                             }
                             if !keep_alive {
@@ -304,12 +316,19 @@ fn request_to_js<'js>(
     let object = Object::new(context.clone())?;
     let headers = Object::new(context.clone())?;
     let raw_headers = Array::new(context.clone())?;
+    let trailers = Object::new(context.clone())?;
+    let raw_trailers = Array::new(context.clone())?;
     let socket = Object::new(context.clone())?;
 
     for (index, (name, value)) in request.headers.iter().enumerate() {
         headers.set(name.as_str(), value.as_str())?;
         raw_headers.set(index * 2, name.as_str())?;
         raw_headers.set(index * 2 + 1, value.as_str())?;
+    }
+    for (index, (name, value)) in request.trailers.iter().enumerate() {
+        trailers.set(name.as_str(), value.as_str())?;
+        raw_trailers.set(index * 2, name.as_str())?;
+        raw_trailers.set(index * 2 + 1, value.as_str())?;
     }
 
     let mut version_parts = request.version.split('.');
@@ -340,9 +359,15 @@ fn request_to_js<'js>(
     object.set("httpVersionMinor", version_minor)?;
     object.set("headers", headers)?;
     object.set("rawHeaders", raw_headers)?;
+    object.set("trailers", trailers)?;
+    object.set("rawTrailers", raw_trailers)?;
     let body = String::from_utf8_lossy(&request.body);
     object.set("body", body.as_ref())?;
-    object.set("__canaryoBody", body.as_ref())?;
+    let raw_body = Array::new(context.clone())?;
+    for (index, byte) in request.body.iter().enumerate() {
+        raw_body.set(index, *byte)?;
+    }
+    object.set("__canaryoBody", raw_body)?;
     object.set("aborted", false)?;
     object.set("complete", false)?;
     object.set("destroyed", false)?;
@@ -364,7 +389,7 @@ fn response_to_js<'js>(context: &Ctx<'js>, prototype: &Object<'js>) -> Result<Ob
     object.set("finished", false)?;
     object.set("destroyed", false)?;
     object.set("__canaryoHeaders", headers)?;
-    object.set("__canaryoBody", "")?;
+    object.set("__canaryoBody", Array::new(context.clone())?)?;
     object.set_prototype(Some(prototype))?;
     Ok(object)
 }
@@ -376,12 +401,16 @@ fn response_from_js(response: &Object<'_>) -> Result<Response> {
         let (name, value) = property?;
         headers.push((name, value.0));
     }
-    let body: String = response.get("__canaryoBody")?;
+    let body_array: Array = response.get("__canaryoBody")?;
+    let mut body = Vec::with_capacity(body_array.len());
+    for byte in body_array.iter::<u8>() {
+        body.push(byte?);
+    }
 
     Ok(Response {
         status: response.get("statusCode")?,
         headers,
-        body: body.into_bytes(),
+        body,
     })
 }
 
@@ -455,30 +484,128 @@ impl ConnectionReader {
                     .parse::<usize>()
                     .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
             })
-            .transpose()?
-            .unwrap_or(0);
-        let expected_size = header_end + content_length;
-
-        if expected_size > MAX_REQUEST_SIZE {
+            .transpose()?;
+        let chunked = headers.iter().any(|(name, value)| {
+            name == "transfer-encoding"
+                && value
+                    .split(',')
+                    .any(|token| token.trim().eq_ignore_ascii_case("chunked"))
+        });
+        if chunked && content_length.is_some() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                "requisição excede o limite de 1 MiB",
+                "content-length e transfer-encoding chunked não podem ser combinados",
             ));
         }
 
-        if self.buffered.len() < expected_size {
-            return Ok(None);
-        }
+        let (body, trailers, expected_size) = if chunked {
+            let Some(chunked_body) = parse_chunked_body(&self.buffered[header_end..])? else {
+                return Ok(None);
+            };
+            (
+                chunked_body.body,
+                chunked_body.trailers,
+                header_end + chunked_body.consumed,
+            )
+        } else {
+            let expected_size = header_end + content_length.unwrap_or(0);
+            if expected_size > MAX_REQUEST_SIZE {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "requisição excede o limite de 1 MiB",
+                ));
+            }
+            if self.buffered.len() < expected_size {
+                return Ok(None);
+            }
+            (
+                self.buffered[header_end..expected_size].to_vec(),
+                Vec::new(),
+                expected_size,
+            )
+        };
 
         let remaining = self.buffered.split_off(expected_size);
-        let request_data = std::mem::replace(&mut self.buffered, remaining);
+        self.buffered = remaining;
         Ok(Some(Request {
             method,
             url,
             version,
             headers,
-            body: request_data[header_end..expected_size].to_vec(),
+            trailers,
+            body,
         }))
+    }
+}
+
+fn parse_chunked_body(data: &[u8]) -> std::io::Result<Option<ChunkedBody>> {
+    let mut body = Vec::new();
+    let mut cursor = 0;
+
+    loop {
+        let Some(line_length) = find_bytes(&data[cursor..], b"\r\n") else {
+            return Ok(None);
+        };
+        let size_line = std::str::from_utf8(&data[cursor..cursor + line_length])
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+        let size = usize::from_str_radix(size_line.split(';').next().unwrap_or("").trim(), 16)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+        cursor += line_length + 2;
+
+        if size == 0 {
+            if data.len() < cursor + 2 {
+                return Ok(None);
+            }
+            if &data[cursor..cursor + 2] == b"\r\n" {
+                return Ok(Some(ChunkedBody {
+                    body,
+                    trailers: Vec::new(),
+                    consumed: cursor + 2,
+                }));
+            }
+
+            let Some(trailer_length) = find_bytes(&data[cursor..], b"\r\n\r\n") else {
+                return Ok(None);
+            };
+            let trailer_text = std::str::from_utf8(&data[cursor..cursor + trailer_length])
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+            let mut trailers = Vec::new();
+            for line in trailer_text.split("\r\n") {
+                let (name, value) = line.split_once(':').ok_or_else(|| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, "trailer HTTP inválido")
+                })?;
+                trailers.push((name.trim().to_ascii_lowercase(), value.trim().to_string()));
+            }
+            return Ok(Some(ChunkedBody {
+                body,
+                trailers,
+                consumed: cursor + trailer_length + 4,
+            }));
+        }
+
+        let chunk_end = cursor.checked_add(size).ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "chunk HTTP inválido")
+        })?;
+        let terminated_end = chunk_end.checked_add(2).ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "chunk HTTP inválido")
+        })?;
+        if data.len() < terminated_end {
+            return Ok(None);
+        }
+        if &data[chunk_end..terminated_end] != b"\r\n" {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "chunk HTTP sem terminador CRLF",
+            ));
+        }
+        body.extend_from_slice(&data[cursor..chunk_end]);
+        if body.len() > MAX_REQUEST_SIZE {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "corpo da requisição excede o limite de 1 MiB",
+            ));
+        }
+        cursor = terminated_end;
     }
 }
 
@@ -486,7 +613,12 @@ fn required_part<'a>(part: Option<&'a str>, message: &str) -> std::io::Result<&'
     part.ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, message))
 }
 
-fn append_response(buffer: &mut Vec<u8>, response: &Response, keep_alive: bool) {
+fn append_response(
+    buffer: &mut Vec<u8>,
+    response: &Response,
+    keep_alive: bool,
+    suppress_body: bool,
+) {
     let _ = write!(
         buffer,
         "HTTP/1.1 {} {}\r\n",
@@ -508,13 +640,20 @@ fn append_response(buffer: &mut Vec<u8>, response: &Response, keep_alive: bool) 
     if !has_content_type {
         buffer.extend_from_slice(b"Content-Type: text/plain; charset=utf-8\r\n");
     }
-    let _ = write!(buffer, "Content-Length: {}\r\n", response.body.len());
+    let content_length = if response.status == 204 || response.status == 304 {
+        0
+    } else {
+        response.body.len()
+    };
+    let _ = write!(buffer, "Content-Length: {content_length}\r\n");
     buffer.extend_from_slice(if keep_alive {
         b"Connection: keep-alive\r\n\r\n"
     } else {
         b"Connection: close\r\n\r\n"
     });
-    buffer.extend_from_slice(&response.body);
+    if !suppress_body && response.status != 204 && response.status != 304 {
+        buffer.extend_from_slice(&response.body);
+    }
 }
 
 fn reason_phrase(status: u16) -> &'static str {
@@ -551,6 +690,7 @@ mod tests {
             url: "/".into(),
             version: "1.1".into(),
             headers: Vec::new(),
+            trailers: Vec::new(),
             body: Vec::new(),
         };
 
@@ -574,5 +714,25 @@ mod tests {
         assert_eq!(second.url, "/second");
         assert!(!second.keep_alive());
         assert!(reader.parse().unwrap().is_none());
+    }
+
+    #[test]
+    fn parses_chunked_bodies_extensions_and_trailers() {
+        let mut reader = ConnectionReader::default();
+        reader
+            .push(
+                b"POST /echo HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nWiki\r\n5;source=test\r\npedia\r\n0\r\nX-Checksum: abc123\r\n\r\nGET /next HTTP/1.1\r\n\r\n",
+            )
+            .unwrap();
+
+        let chunked = reader.parse().unwrap().unwrap();
+        let next = reader.parse().unwrap().unwrap();
+
+        assert_eq!(chunked.body, b"Wikipedia");
+        assert_eq!(
+            chunked.trailers,
+            vec![("x-checksum".into(), "abc123".into())]
+        );
+        assert_eq!(next.url, "/next");
     }
 }

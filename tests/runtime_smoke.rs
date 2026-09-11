@@ -122,6 +122,57 @@ fn serves_multiple_requests_on_a_persistent_connection() {
 }
 
 #[test]
+fn decodes_chunked_requests_and_exposes_trailers() {
+    let (_server, mut stream) = start_fixture("fixtures/http-basic/server.js");
+
+    stream
+        .write_all(
+            b"POST /echo HTTP/1.1\r\nHost: 127.0.0.1\r\nTransfer-Encoding: chunked\r\nTrailer: X-Checksum\r\nConnection: close\r\n\r\n4\r\nWiki\r\n5;source=test\r\npedia\r\n0\r\nX-Checksum: abc123\r\n\r\n",
+        )
+        .unwrap();
+    let response = read_response(&mut stream);
+
+    assert!(response.starts_with("HTTP/1.1 200 OK"));
+    assert!(response.contains("x-request-trailer: abc123"));
+    assert!(response.ends_with("Wikipedia"));
+}
+
+#[test]
+fn preserves_binary_response_bytes() {
+    let (_server, mut stream) = start_fixture("fixtures/http-basic/server.js");
+    stream
+        .write_all(b"GET /binary HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).unwrap();
+    let body_start = response
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .unwrap()
+        + 4;
+
+    assert!(
+        response[..body_start]
+            .windows(b"Content-Length: 4".len())
+            .any(|window| window == b"Content-Length: 4")
+    );
+    assert_eq!(&response[body_start..], &[0, 255, 128, 65]);
+}
+
+#[test]
+fn omits_the_response_body_for_head_requests() {
+    let (_server, mut stream) = start_fixture("fixtures/http-basic/server.js");
+    stream
+        .write_all(b"HEAD / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+
+    assert!(response.contains("Content-Length: 19"));
+    assert!(response.ends_with("\r\n\r\n"));
+}
+
+#[test]
 #[ignore = "requires npm ci in fixtures/express-basic"]
 fn serves_a_native_express_application() {
     let response = request_fixture("fixtures/express-basic/server.js");
@@ -140,6 +191,25 @@ fn parses_an_express_json_request_body() {
     stream
         .write_all(
             b"POST /echo HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: 19\r\nConnection: close\r\n\r\n{\"message\":\"hello\"}",
+        )
+        .unwrap();
+    let response = read_response(&mut stream);
+
+    assert!(response.starts_with("HTTP/1.1 200 OK"));
+    assert!(
+        response.ends_with(r#"{"body":{"message":"hello"}}"#),
+        "unexpected response: {response}"
+    );
+}
+
+#[test]
+#[ignore = "requires npm ci in fixtures/express-basic"]
+fn parses_a_chunked_express_json_request_body() {
+    let (_server, mut stream) = start_fixture("fixtures/express-basic/server.js");
+
+    stream
+        .write_all(
+            b"POST /echo HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n5\r\n{\"mes\r\ne\r\nsage\":\"hello\"}\r\n0\r\n\r\n",
         )
         .unwrap();
     let response = read_response(&mut stream);
