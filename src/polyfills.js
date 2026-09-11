@@ -371,6 +371,118 @@
         const search = queryIndex < 0 ? null : href.slice(queryIndex);
         return { href: value, path: href, pathname, search, query: search ? search.slice(1) : null };
     }
+    class URLSearchParams {
+        constructor(value = "", onChange) {
+            this._entries = [];
+            this._onChange = onChange;
+            if (typeof value === "string") {
+                const input = value.startsWith("?") ? value.slice(1) : value;
+                for (const item of input.split("&")) {
+                    if (!item) continue;
+                    const [name, entry = ""] = item.split("=");
+                    this._entries.push([
+                        decodeURIComponent(name.replace(/\+/g, " ")),
+                        decodeURIComponent(entry.replace(/\+/g, " "))
+                    ]);
+                }
+            } else if (value && typeof value[Symbol.iterator] === "function") {
+                for (const [name, entry] of value) this._entries.push([String(name), String(entry)]);
+            } else if (value) {
+                for (const [name, entry] of Object.entries(value)) this._entries.push([name, String(entry)]);
+            }
+        }
+        append(name, value) { this._entries.push([String(name), String(value)]); this._changed(); }
+        delete(name, value) {
+            name = String(name);
+            this._entries = this._entries.filter(entry => entry[0] !== name || value !== undefined && entry[1] !== String(value));
+            this._changed();
+        }
+        get(name) { const entry = this._entries.find(entry => entry[0] === String(name)); return entry ? entry[1] : null; }
+        getAll(name) { return this._entries.filter(entry => entry[0] === String(name)).map(entry => entry[1]); }
+        has(name, value) { return this._entries.some(entry => entry[0] === String(name) && (value === undefined || entry[1] === String(value))); }
+        set(name, value) {
+            name = String(name); value = String(value);
+            const index = this._entries.findIndex(entry => entry[0] === name);
+            this._entries = this._entries.filter(entry => entry[0] !== name);
+            this._entries.splice(index < 0 ? this._entries.length : index, 0, [name, value]);
+            this._changed();
+        }
+        sort() { this._entries.sort((left, right) => left[0].localeCompare(right[0])); this._changed(); }
+        entries() { return this._entries[Symbol.iterator](); }
+        keys() { return this._entries.map(entry => entry[0])[Symbol.iterator](); }
+        values() { return this._entries.map(entry => entry[1])[Symbol.iterator](); }
+        forEach(callback, thisArg) { for (const [name, value] of this._entries) callback.call(thisArg, value, name, this); }
+        toString() { return this._entries.map(([name, value]) => `${encodeURIComponent(name).replace(/%20/g, "+")}=${encodeURIComponent(value).replace(/%20/g, "+")}`).join("&"); }
+        _changed() { if (this._onChange) this._onChange(); }
+        [Symbol.iterator]() { return this.entries(); }
+        get size() { return this._entries.length; }
+    }
+
+    function normalizeUrlPathname(value) {
+        const trailingSlash = value.endsWith("/");
+        const output = [];
+        for (const part of value.split("/")) {
+            if (!part || part === ".") continue;
+            if (part === "..") output.pop();
+            else output.push(part);
+        }
+        return `/${output.join("/")}${trailingSlash && output.length ? "/" : ""}`;
+    }
+
+    class URL {
+        constructor(input, base) {
+            input = String(input);
+            if (!/^[A-Za-z][A-Za-z\d+.-]*:/.test(input)) {
+                if (base === undefined) throw new TypeError("Invalid URL");
+                const parent = base instanceof URL ? base : new URL(base);
+                if (input.startsWith("/")) input = parent.origin + input;
+                else input = parent.origin + parent.pathname.replace(/[^/]*$/, "") + input;
+            }
+            const match = input.match(/^([A-Za-z][A-Za-z\d+.-]*:)(?:\/\/([^/?#]*))?([^?#]*)(\?[^#]*)?(#.*)?$/);
+            if (!match) throw new TypeError("Invalid URL");
+            this.protocol = match[1].toLowerCase();
+            const authority = match[2] || "";
+            const at = authority.lastIndexOf("@");
+            const credentials = at >= 0 ? authority.slice(0, at) : "";
+            const host = at >= 0 ? authority.slice(at + 1) : authority;
+            const colon = credentials.indexOf(":");
+            this.username = decodeURIComponent(colon < 0 ? credentials : credentials.slice(0, colon));
+            this.password = decodeURIComponent(colon < 0 ? "" : credentials.slice(colon + 1));
+            const portSeparator = host.startsWith("[") ? host.indexOf("]") + 1 : host.lastIndexOf(":");
+            this.hostname = portSeparator > 0 && host[portSeparator] === ":" ? host.slice(0, portSeparator) : host;
+            this.port = portSeparator > 0 && host[portSeparator] === ":" ? host.slice(portSeparator + 1) : "";
+            this.pathname = authority || this.protocol === "file:"
+                ? normalizeUrlPathname(match[3] || "/")
+                : match[3];
+            this.hash = match[5] || "";
+            this.searchParams = new URLSearchParams(match[4] || "");
+        }
+        get host() { return this.hostname + (this.port ? `:${this.port}` : ""); }
+        set host(value) { const parsed = new URL(`${this.protocol}//${value}${this.pathname}`); this.hostname = parsed.hostname; this.port = parsed.port; }
+        get origin() { return this.protocol === "file:" ? "null" : `${this.protocol}//${this.host}`; }
+        get search() { const value = this.searchParams.toString(); return value ? `?${value}` : ""; }
+        set search(value) { this.searchParams = new URLSearchParams(value); }
+        get href() {
+            const credentials = this.username ? `${encodeURIComponent(this.username)}${this.password ? `:${encodeURIComponent(this.password)}` : ""}@` : "";
+            const authority = this.host || this.protocol === "file:" ? `//${credentials}${this.host}` : "";
+            return `${this.protocol}${authority}${this.pathname}${this.search}${this.hash}`;
+        }
+        set href(value) { const parsed = new URL(value); Object.assign(this, parsed); }
+        toString() { return this.href; }
+        toJSON() { return this.href; }
+    }
+    function fileURLToPath(value) {
+        const url = value instanceof URL ? value : new URL(value);
+        if (url.protocol !== "file:") throw new TypeError("URL must use file: protocol");
+        let pathname = decodeURIComponent(url.pathname);
+        if (process.platform === "win32" && /^\/[A-Za-z]:/.test(pathname)) pathname = pathname.slice(1).replace(/\//g, "\\");
+        return pathname;
+    }
+    function pathToFileURL(value) {
+        let pathname = path.resolve(String(value)).replace(/\\/g, "/");
+        if (!pathname.startsWith("/")) pathname = `/${pathname}`;
+        return new URL(`file://${encodeURI(pathname)}`);
+    }
     function Stream() { EventEmitter.call(this); this.destroyed = false; }
     util.inherits(Stream, EventEmitter);
     Stream.prototype.pipe = function (destination) {
@@ -666,6 +778,8 @@
     globalThis.Buffer = Buffer;
     globalThis.TextEncoder = TextEncoder;
     globalThis.TextDecoder = TextDecoder;
+    globalThis.URL = URL;
+    globalThis.URLSearchParams = URLSearchParams;
     globalThis.performance = performance;
     globalThis.setImmediate = setImmediate;
     globalThis.clearImmediate = clearTimer;
@@ -792,7 +906,21 @@
         string_decoder: { StringDecoder },
         timers: { setImmediate, clearImmediate: clearTimer, setTimeout, clearTimeout: clearTimer, setInterval, clearInterval: clearTimer },
         tty: { isatty: () => false, ReadStream: function () {}, WriteStream: function () {} },
-        url: { parse: parseUrl, format: value => value.href || value.path || String(value), resolve: (base, target) => target.startsWith("/") ? target : path.join(path.dirname(base), target) },
+        url: {
+            URL,
+            URLSearchParams,
+            parse: parseUrl,
+            format: value => value.href || value.path || String(value),
+            resolve: (base, target) => target.startsWith("/") ? target : path.join(path.dirname(base), target),
+            fileURLToPath,
+            pathToFileURL,
+            domainToASCII: value => String(value),
+            domainToUnicode: value => String(value),
+            urlToHttpOptions(value) {
+                const url = value instanceof URL ? value : new URL(value);
+                return { protocol: url.protocol, hostname: url.hostname, port: url.port, path: url.pathname + url.search, href: url.href };
+            }
+        },
         util,
         zlib: { constants: {} }
     });

@@ -866,4 +866,33 @@ mod tests {
 
         assert!(streamed);
     }
+
+    #[test]
+    fn supports_web_and_node_url_apis() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        let supported = context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            context
+                .eval::<bool, _>(
+                    r#"
+                    const url = new URL("/users?id=1&id=2", "https://example.com/base");
+                    const relative = new URL("../teams", "https://example.com/api/users/");
+                    url.searchParams.append("active", "true");
+                    const nodeUrl = __canaryoBuiltins.url;
+                    url.origin === "https://example.com" &&
+                        url.pathname === "/users" &&
+                        url.searchParams.getAll("id").join(",") === "1,2" &&
+                        url.href === "https://example.com/users?id=1&id=2&active=true" &&
+                        relative.href === "https://example.com/api/teams" &&
+                        nodeUrl.fileURLToPath(nodeUrl.pathToFileURL(".")) === process.cwd()
+                    "#,
+                )
+                .unwrap()
+        });
+
+        assert!(supported);
+    }
 }
