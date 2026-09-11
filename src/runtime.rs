@@ -480,6 +480,17 @@ fn install_host_globals<'js>(
     process
         .set("env", environment)
         .map_err(|error| error.to_string())?;
+    process
+        .set("pid", std::process::id())
+        .map_err(|error| error.to_string())?;
+    process
+        .set(
+            "execPath",
+            env::current_exe()
+                .map(|path| path.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| "canaryo".into()),
+        )
+        .map_err(|error| error.to_string())?;
     globals
         .set("process", process)
         .map_err(|error| error.to_string())?;
@@ -888,6 +899,34 @@ mod tests {
                         url.href === "https://example.com/users?id=1&id=2&active=true" &&
                         relative.href === "https://example.com/api/teams" &&
                         nodeUrl.fileURLToPath(nodeUrl.pathToFileURL(".")) === process.cwd()
+                    "#,
+                )
+                .unwrap()
+        });
+
+        assert!(supported);
+    }
+
+    #[test]
+    fn exposes_common_node_process_metadata() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        let supported = context.with(|context| {
+            install_host_globals(&context, "fixture.js", &["argument".into()]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            context
+                .eval::<bool, _>(
+                    r#"
+                    let warned = false;
+                    process.once("warning", warning => { warned = warning.message === "careful"; });
+                    process.emitWarning("careful");
+                    const elapsed = process.hrtime();
+                    process.pid > 0 && process.arch === "x64" && process.platform === "win32" &&
+                        process.argv[2] === "argument" && typeof process.execPath === "string" &&
+                        process.uptime() >= 0 && elapsed.length === 2 &&
+                        typeof process.hrtime.bigint() === "bigint" && warned &&
+                        process.getBuiltinModule("node:path") === __canaryoBuiltins.path
                     "#,
                 )
                 .unwrap()

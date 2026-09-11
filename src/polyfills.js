@@ -705,11 +705,49 @@
     assert.fail = message => { throw assertionError(message); };
     assert.AssertionError = function AssertionError(options = {}) { return assertionError(options.message); };
 
+    const processStartedAt = Date.now();
+    EventEmitter.call(process);
+    Object.setPrototypeOf(process, EventEmitter.prototype);
     process.cwd = () => __canaryoCwd();
     process.platform = "win32";
+    process.arch = "x64";
     process.version = "v22.0.0-canaryo";
     process.versions = { node: "22.0.0", canaryo: "0.1.0" };
+    process.release = { name: "canaryo", sourceUrl: "", headersUrl: "" };
+    process.argv0 = "canaryo";
+    process.execArgv = [];
+    process.title = "canaryo";
+    process.config = { variables: {} };
+    process.moduleLoadList = [];
+    process.exitCode = undefined;
     process.nextTick = (callback, ...args) => Promise.resolve().then(() => callback(...args));
+    process.uptime = () => (Date.now() - processStartedAt) / 1000;
+    process.hrtime = previous => {
+        const nanoseconds = BigInt(Date.now() - processStartedAt) * 1000000n;
+        let seconds = Number(nanoseconds / 1000000000n);
+        let remainder = Number(nanoseconds % 1000000000n);
+        if (previous) {
+            seconds -= Number(previous[0]);
+            remainder -= Number(previous[1]);
+            if (remainder < 0) { seconds -= 1; remainder += 1000000000; }
+        }
+        return [seconds, remainder];
+    };
+    process.hrtime.bigint = () => BigInt(Date.now() - processStartedAt) * 1000000n;
+    process.memoryUsage = () => ({ rss: 0, heapTotal: 0, heapUsed: 0, external: 0, arrayBuffers: 0 });
+    process.memoryUsage.rss = () => 0;
+    process.cpuUsage = () => ({ user: 0, system: 0 });
+    process.resourceUsage = () => ({ userCPUTime: 0, systemCPUTime: 0, maxRSS: 0 });
+    process.emitWarning = (warning, options) => {
+        const value = warning instanceof Error ? warning : new Error(String(warning));
+        value.name = typeof options === "string" ? options : options && options.type || "Warning";
+        if (!process.emit("warning", value)) console.error(`${value.name}: ${value.message}`);
+    };
+    process.getBuiltinModule = name => {
+        const normalized = String(name).replace(/^node:/, "");
+        if (normalized === "http") return globalThis.__canaryoHttpModule;
+        return globalThis.__canaryoBuiltins[normalized];
+    };
     process.stdout = { isTTY: false, write(value) { __canaryoWrite(String(value)); return true; } };
     process.stderr = { isTTY: false, write(value) { __canaryoWriteError(String(value)); return true; } };
     const performance = { now: () => Date.now(), timeOrigin: Date.now() };
