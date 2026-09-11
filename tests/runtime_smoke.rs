@@ -3,9 +3,12 @@ use std::{
     net::{TcpListener, TcpStream},
     path::Path,
     process::{Child, Command, Stdio},
+    sync::Mutex,
     thread,
     time::{Duration, Instant},
 };
+
+static SERVER_START: Mutex<()> = Mutex::new(());
 
 struct Server(Child);
 
@@ -25,6 +28,7 @@ fn free_port() -> u16 {
 }
 
 fn start_fixture(fixture: &str) -> (Server, TcpStream) {
+    let start_guard = SERVER_START.lock().unwrap();
     let port = free_port();
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut server = Server(
@@ -55,6 +59,7 @@ fn start_fixture(fixture: &str) -> (Server, TcpStream) {
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .unwrap();
+    drop(start_guard);
     (server, stream)
 }
 
