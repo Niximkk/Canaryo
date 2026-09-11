@@ -178,6 +178,20 @@ fn omits_the_response_body_for_head_requests() {
 }
 
 #[test]
+fn supports_response_header_introspection_and_custom_status_messages() {
+    let (_server, mut stream) = start_fixture("fixtures/http-basic/server.js");
+    stream
+        .write_all(b"GET /headers HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let response = read_response(&mut stream);
+
+    assert!(response.starts_with("HTTP/1.1 201 Canaryo Created"));
+    assert!(response.contains("x-present: yes"));
+    assert!(!response.contains("x-removed"));
+    assert!(response.ends_with("true"));
+}
+
+#[test]
 #[ignore = "requires npm ci in fixtures/express-basic"]
 fn serves_a_native_express_application() {
     let response = request_fixture("fixtures/express-basic/server.js");

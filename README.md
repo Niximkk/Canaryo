@@ -122,7 +122,7 @@ flowchart LR
 | Area | Status | Current scope |
 |---|---|---|
 | CommonJS | Supported | Relative modules, JSON, package `main` and `exports`, conditional and wildcard exports, scoped packages, cache, and upward `node_modules` lookup. |
-| `node:http` | Partial | Server creation, persistent HTTP/1.1 connections, pipelining, content-length and chunked request bodies, trailers, binary payloads, `HEAD`, socket metadata, response lifecycle events, status, headers, `write`, and `end`. |
+| `node:http` | Partial | Server creation, persistent HTTP/1.1 connections, pipelining, content-length and chunked request bodies, trailers, binary payloads, `HEAD`, socket metadata, response lifecycle events, custom status messages, header introspection, `write`, and `end`. |
 | Express | Partial | Express 5.2.1 startup, basic routing, JSON request parsing, and JSON responses. |
 | Fastify | Partial | Fastify 5.12.3 startup, parameterized routes, query strings, request/response hooks, JSON request parsing, async handlers, timed handlers, and JSON responses. Plugin compatibility varies with the Node.js APIs each plugin uses. |
 | Promises and timers | Partial | Promise jobs, `AsyncResource`, `process.nextTick`, `queueMicrotask`, `setImmediate`, `setTimeout`, and `setInterval` in the native HTTP event loop. Standalone event-loop lifetime and timer handle behavior remain incomplete. |

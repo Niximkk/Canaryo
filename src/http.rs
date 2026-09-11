@@ -32,6 +32,7 @@ struct ChunkedBody {
 #[derive(Default)]
 struct Response {
     status: u16,
+    status_message: String,
     headers: Vec<(String, String)>,
     body: Vec<u8>,
 }
@@ -383,6 +384,7 @@ fn response_to_js<'js>(context: &Ctx<'js>, prototype: &Object<'js>) -> Result<Ob
     let object = Object::new(context.clone())?;
     let headers = Object::new(context.clone())?;
     object.set("statusCode", 200)?;
+    object.set("statusMessage", "")?;
     object.set("headersSent", false)?;
     object.set("writableEnded", false)?;
     object.set("writableFinished", false)?;
@@ -409,6 +411,7 @@ fn response_from_js(response: &Object<'_>) -> Result<Response> {
 
     Ok(Response {
         status: response.get("statusCode")?,
+        status_message: response.get("statusMessage")?,
         headers,
         body,
     })
@@ -623,7 +626,11 @@ fn append_response(
         buffer,
         "HTTP/1.1 {} {}\r\n",
         response.status,
-        reason_phrase(response.status)
+        if response.status_message.is_empty() {
+            reason_phrase(response.status)
+        } else {
+            &response.status_message
+        }
     );
     let has_content_type = response
         .headers

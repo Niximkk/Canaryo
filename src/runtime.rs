@@ -86,8 +86,18 @@ ServerResponse.prototype.removeHeader = function(name) {
 ServerResponse.prototype.getHeaders = function() {
     return Object.assign(Object.create(null), this.__canaryoHeaders);
 };
+ServerResponse.prototype.getHeaderNames = function() {
+    return Object.keys(this.__canaryoHeaders);
+};
+ServerResponse.prototype.getRawHeaderNames = ServerResponse.prototype.getHeaderNames;
+ServerResponse.prototype.flushHeaders = function() {
+    this.headersSent = true;
+};
 ServerResponse.prototype.writeHead = function(status, statusMessageOrHeaders, headers) {
     this.statusCode = Number(status);
+    if (typeof statusMessageOrHeaders === "string") {
+        this.statusMessage = statusMessageOrHeaders;
+    }
     const values = typeof statusMessageOrHeaders === "object"
         ? statusMessageOrHeaders
         : headers;

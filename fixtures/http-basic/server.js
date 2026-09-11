@@ -16,6 +16,16 @@ http.createServer((request, response) => {
         response.end(Buffer.from([0, 255, 128, 65]));
         return;
     }
+    if (request.url === "/headers") {
+        response.statusCode = 201;
+        response.statusMessage = "Canaryo Created";
+        response.setHeader("X-Removed", "yes");
+        response.removeHeader("X-Removed");
+        response.setHeader("X-Present", "yes");
+        response.flushHeaders();
+        response.end(String(response.getHeaderNames().includes("x-present")));
+        return;
+    }
 
     response.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
     response.end("Hello from Canaryo!");
