@@ -307,6 +307,11 @@ fn install_host_globals<'js>(
     globals
         .set("__canaryoHash", hash)
         .map_err(|error| error.to_string())?;
+    let byte_length =
+        Function::new(context.clone(), byte_length).map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoByteLength", byte_length)
+        .map_err(|error| error.to_string())?;
     let listen = Function::new(context.clone(), http::listen).map_err(|error| error.to_string())?;
     globals
         .set("__canaryoListen", listen)
@@ -387,6 +392,10 @@ fn dirname(path: String) -> String {
         .unwrap_or_else(|| ".".into())
 }
 
+fn byte_length(value: rquickjs::String<'_>) -> rquickjs::Result<usize> {
+    Ok(value.to_cstring()?.len())
+}
+
 fn cwd() -> String {
     env::current_dir()
         .map(|path| path.to_string_lossy().into_owned())
@@ -448,5 +457,30 @@ mod tests {
         });
 
         assert!(error.contains("boom"));
+    }
+
+    #[test]
+    fn buffer_byte_length_counts_utf8_without_allocating_a_buffer() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        let matches_node = context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            context
+                .eval::<bool, _>(
+                    r#"
+                    Buffer.byteLength("Canaryo") === 7 &&
+                    Buffer.byteLength("can\u00e1rio \ud83d\udc24") === 13 &&
+                    Buffer.byteLength("\ud800") === 3 &&
+                    Buffer.byteLength(new Uint8Array([1, 2, 3])) === 3 &&
+                    Buffer.byteLength(new Uint8Array([1, 2, 3]).subarray(1)) === 2 &&
+                    Buffer.byteLength(new ArrayBuffer(4)) === 4
+                    "#,
+                )
+                .unwrap()
+        });
+
+        assert!(matches_node);
     }
 }

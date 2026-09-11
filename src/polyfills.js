@@ -71,7 +71,12 @@
         static alloc(size, fill = 0) { const buffer = new Buffer(size); buffer.fill(fill); return buffer; }
         static allocUnsafe(size) { return new Buffer(size); }
         static isBuffer(value) { return value instanceof Buffer; }
-        static byteLength(value) { return Buffer.from(value).length; }
+        static byteLength(value) {
+            if (typeof value === "string") return __canaryoByteLength(value);
+            if (ArrayBuffer.isView(value)) return value.byteLength;
+            if (value instanceof ArrayBuffer) return value.byteLength;
+            return Buffer.from(value).length;
+        }
         static concat(list, totalLength) {
             const length = totalLength ?? list.reduce((sum, item) => sum + item.length, 0);
             const result = new Buffer(length);
