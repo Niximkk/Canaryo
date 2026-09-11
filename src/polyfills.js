@@ -911,6 +911,63 @@
         createReadStream() { throw new Error("fs.createReadStream ainda não implementado"); }
     };
 
+    const dnsModule = (() => {
+        let defaultResultOrder = "verbatim";
+        function lookup(hostname, options, callback) {
+            if (typeof options === "function") { callback = options; options = {}; }
+            if (typeof options === "number") options = { family: options };
+            options ||= {};
+            if (typeof callback !== "function") throw new TypeError("callback must be a function");
+            const family = options.family === "IPv4" ? 4 : options.family === "IPv6" ? 6 : Number(options.family) || 0;
+            process.nextTick(() => {
+                try {
+                    let addresses = __canaryoDnsLookup(String(hostname), family);
+                    if (options.order === "ipv4first" || (!options.order && defaultResultOrder === "ipv4first")) {
+                        addresses = addresses.slice().sort((left, right) => left.family - right.family);
+                    } else if (options.order === "ipv6first" || (!options.order && defaultResultOrder === "ipv6first")) {
+                        addresses = addresses.slice().sort((left, right) => right.family - left.family);
+                    }
+                    if (options.all) callback(null, addresses);
+                    else callback(null, addresses[0].address, addresses[0].family);
+                } catch (error) {
+                    error.code ||= "ENOTFOUND";
+                    error.hostname ||= String(hostname);
+                    callback(error);
+                }
+            });
+        }
+        function resolve(hostname, recordType, callback) {
+            if (typeof recordType === "function") { callback = recordType; recordType = "A"; }
+            const family = String(recordType || "A").toUpperCase() === "AAAA" ? 6 : 4;
+            lookup(hostname, { family, all: true }, (error, addresses) => {
+                callback(error, error ? undefined : addresses.map(item => item.address));
+            });
+        }
+        const promises = {
+            lookup(hostname, options) {
+                return new Promise((resolvePromise, reject) => lookup(hostname, options || {}, (error, address, family) => {
+                    if (error) reject(error);
+                    else resolvePromise(options && options.all ? address : { address, family });
+                }));
+            },
+            resolve(hostname, recordType) {
+                return new Promise((resolvePromise, reject) => resolve(hostname, recordType || "A", (error, addresses) => error ? reject(error) : resolvePromise(addresses)));
+            }
+        };
+        return {
+            lookup,
+            resolve,
+            resolve4: (hostname, callback) => resolve(hostname, "A", callback),
+            resolve6: (hostname, callback) => resolve(hostname, "AAAA", callback),
+            promises,
+            getDefaultResultOrder: () => defaultResultOrder,
+            setDefaultResultOrder(value) {
+                if (!["verbatim", "ipv4first", "ipv6first"].includes(value)) throw new TypeError("invalid DNS result order");
+                defaultResultOrder = value;
+            }
+        };
+    })();
+
     globalThis.__canaryoBuiltins = Object.freeze({
         assert,
         async_hooks: { AsyncLocalStorage, AsyncResource, executionAsyncId: () => 0, triggerAsyncId: () => 0 },
@@ -926,16 +983,16 @@
         },
         depd,
         diagnostics_channel: diagnosticsChannel,
-        dns: {
-            lookup(hostname, options, callback) {
-                if (typeof options === "function") callback = options;
-                callback(null, [{ address: hostname === "localhost" ? "127.0.0.1" : hostname, family: 4 }]);
-            }
-        },
+        dns: dnsModule,
+        "dns/promises": dnsModule.promises,
         events: Object.assign(EventEmitter, { EventEmitter }),
         fs: fsModule,
         "fs/promises": fsPromises,
-        net: { isIP: () => 0, isIPv4: () => false, isIPv6: () => false },
+        net: {
+            isIP: value => __canaryoIsIp(String(value)),
+            isIPv4: value => __canaryoIsIp(String(value)) === 4,
+            isIPv6: value => __canaryoIsIp(String(value)) === 6
+        },
         os: { networkInterfaces: () => ({}) },
         path,
         perf_hooks: { performance },

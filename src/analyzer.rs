@@ -15,6 +15,7 @@ const NODE_BUILTINS: &[&str] = &[
     "crypto",
     "diagnostics_channel",
     "dns",
+    "dns/promises",
     "events",
     "fs",
     "fs/promises",

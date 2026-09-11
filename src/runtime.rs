@@ -1,4 +1,8 @@
-use std::{env, fs, path::Path};
+use std::{
+    env, fs,
+    net::{IpAddr, ToSocketAddrs},
+    path::Path,
+};
 
 use rquickjs::{Array, CatchResultExt, Context, Function, Module, Object, Promise, Runtime};
 use sha1::{Digest, Sha1};
@@ -416,6 +420,15 @@ fn install_host_globals<'js>(
     globals
         .set("__canaryoByteLength", byte_length)
         .map_err(|error| error.to_string())?;
+    let is_ip = Function::new(context.clone(), is_ip).map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoIsIp", is_ip)
+        .map_err(|error| error.to_string())?;
+    let dns_lookup =
+        Function::new(context.clone(), dns_lookup).map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoDnsLookup", dns_lookup)
+        .map_err(|error| error.to_string())?;
     let listen = Function::new(context.clone(), http::listen).map_err(|error| error.to_string())?;
     globals
         .set("__canaryoListen", listen)
@@ -513,6 +526,61 @@ fn install_host_globals<'js>(
 fn read_file<'js>(context: rquickjs::Ctx<'js>, path: String) -> rquickjs::Result<String> {
     fs::read_to_string(path)
         .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))
+}
+
+fn is_ip(value: String) -> u8 {
+    match value.parse::<IpAddr>() {
+        Ok(IpAddr::V4(_)) => 4,
+        Ok(IpAddr::V6(_)) => 6,
+        Err(_) => 0,
+    }
+}
+
+fn dns_lookup<'js>(
+    context: rquickjs::Ctx<'js>,
+    hostname: String,
+    family: u8,
+) -> rquickjs::Result<Array<'js>> {
+    if !matches!(family, 0 | 4 | 6) {
+        return Err(rquickjs::Exception::throw_message(
+            &context,
+            "family must be 0, 4, or 6",
+        ));
+    }
+
+    let addresses = (hostname.as_str(), 0)
+        .to_socket_addrs()
+        .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))?;
+    let result = Array::new(context.clone())?;
+    let mut unique = Vec::new();
+
+    for address in addresses {
+        let address = address.ip();
+        let address_family = match address {
+            IpAddr::V4(_) => 4,
+            IpAddr::V6(_) => 6,
+        };
+        if family != 0 && family != address_family {
+            continue;
+        }
+        let value = address.to_string();
+        if unique.contains(&value) {
+            continue;
+        }
+        unique.push(value.clone());
+        let entry = Object::new(context.clone())?;
+        entry.set("address", value)?;
+        entry.set("family", address_family)?;
+        result.set(result.len(), entry)?;
+    }
+
+    if result.is_empty() {
+        return Err(rquickjs::Exception::throw_message(
+            &context,
+            "no addresses matched the requested family",
+        ));
+    }
+    Ok(result)
 }
 
 fn fs_read<'js>(context: rquickjs::Ctx<'js>, path: String) -> rquickjs::Result<Array<'js>> {
@@ -927,6 +995,51 @@ mod tests {
                         process.uptime() >= 0 && elapsed.length === 2 &&
                         typeof process.hrtime.bigint() === "bigint" && warned &&
                         process.getBuiltinModule("node:path") === __canaryoBuiltins.path
+                    "#,
+                )
+                .unwrap()
+        });
+
+        assert!(supported);
+    }
+
+    #[test]
+    fn resolves_dns_and_identifies_ip_addresses() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        let supported = context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            context
+                .eval::<(), _>(
+                    r#"
+                    globalThis.callbackLookup = false;
+                    globalThis.allLookup = false;
+                    globalThis.promiseLookup = false;
+                    const dns = __canaryoBuiltins.dns;
+                    dns.lookup("127.0.0.1", (error, address, family) => {
+                        callbackLookup = !error && address === "127.0.0.1" && family === 4;
+                    });
+                    dns.lookup("::1", { family: 6, all: true }, (error, addresses) => {
+                        allLookup = !error && addresses.length === 1 &&
+                            addresses[0].address === "::1" && addresses[0].family === 6;
+                    });
+                    __canaryoBuiltins["dns/promises"].lookup("127.0.0.1").then(result => {
+                        promiseLookup = result.address === "127.0.0.1" && result.family === 4;
+                    });
+                    "#,
+                )
+                .unwrap();
+            while context.execute_pending_job() {}
+            context
+                .eval::<bool, _>(
+                    r#"
+                    callbackLookup && allLookup && promiseLookup &&
+                        __canaryoBuiltins.net.isIP("127.0.0.1") === 4 &&
+                        __canaryoBuiltins.net.isIPv4("127.0.0.1") &&
+                        __canaryoBuiltins.net.isIPv6("2001:db8::1") &&
+                        __canaryoBuiltins.net.isIP("not-an-address") === 0
                     "#,
                 )
                 .unwrap()

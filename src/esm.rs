@@ -209,7 +209,16 @@ fn builtin_source(name: &str) -> Option<String> {
             "unsubscribe",
             "tracingChannel",
         ],
-        "dns" => &["lookup"],
+        "dns" => &[
+            "lookup",
+            "resolve",
+            "resolve4",
+            "resolve6",
+            "promises",
+            "getDefaultResultOrder",
+            "setDefaultResultOrder",
+        ],
+        "dns/promises" => &["lookup", "resolve"],
         "events" => &[
             "EventEmitter",
             "once",
