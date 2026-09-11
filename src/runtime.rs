@@ -1052,6 +1052,71 @@ mod tests {
     }
 
     #[test]
+    fn applies_backpressure_to_piped_streams() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            let paused = context
+                .eval::<bool, _>(
+                    r#"
+                    const { Readable, Writable, pipeline } = __canaryoBuiltins.stream;
+                    const source = new Readable({ highWaterMark: 2 });
+                    const writes = [];
+                    let drains = 0;
+                    let backpressureCompleted = false;
+                    const destination = new Writable({
+                        highWaterMark: 3,
+                        write(chunk, _encoding, callback) {
+                            writes.push(Buffer.from(chunk).toString());
+                            setImmediate(callback);
+                        }
+                    });
+                    destination.on("drain", () => drains++);
+                    pipeline(source, destination, error => {
+                        if (error) throw error;
+                        backpressureCompleted = true;
+                    });
+                    source.push("ab");
+                    source.push("cd");
+                    source.push("ef");
+                    source.push(null);
+                    globalThis.backpressureState = () => ({
+                        writes: writes.join(""),
+                        drains,
+                        completed: backpressureCompleted,
+                        finished: destination.writableFinished,
+                        length: destination.writableLength
+                    });
+                    source._paused && destination.writableNeedDrain && writes.join("") === "ab"
+                    "#,
+                )
+                .unwrap();
+            assert!(paused);
+
+            let run_timers: Function = context.globals().get("__canaryoRunTimers").unwrap();
+            for _ in 0..6 {
+                run_timers.call::<_, Option<u64>>(()).unwrap();
+                while context.execute_pending_job() {}
+            }
+
+            assert!(
+                context
+                    .eval::<bool, _>(
+                        r#"
+                        const state = backpressureState();
+                        state.writes === "abcdef" && state.drains >= 1 &&
+                            state.completed && state.finished && state.length === 0
+                        "#,
+                    )
+                    .unwrap()
+            );
+        });
+    }
+
+    #[test]
     fn supports_web_and_node_url_apis() {
         let runtime = Runtime::new().unwrap();
         let context = Context::full(&runtime).unwrap();

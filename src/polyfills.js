@@ -589,13 +589,30 @@
     }
     function Stream() { EventEmitter.call(this); this.destroyed = false; }
     util.inherits(Stream, EventEmitter);
-    Stream.prototype.pipe = function (destination) {
-        this.on("data", chunk => destination.write(chunk));
-        this.on("end", () => destination.end());
+    Stream.prototype.pipe = function (destination, options = {}) {
+        const source = this;
+        const onData = chunk => {
+            if (destination.write(chunk) === false && typeof source.pause === "function") source.pause();
+        };
+        const onDrain = () => {
+            if (typeof source.resume === "function") source.resume();
+        };
+        const onEnd = () => {
+            if (options.end !== false) destination.end();
+        };
+        this.on("data", onData);
+        this.on("end", onEnd);
+        destination.on("drain", onDrain);
         this.on("error", error => {
             if (typeof destination.destroy === "function") destination.destroy(error);
         });
+        destination.once("close", () => {
+            source.removeListener("data", onData);
+            source.removeListener("end", onEnd);
+            destination.removeListener("drain", onDrain);
+        });
         destination.emit("pipe", this);
+        if (typeof this.resume === "function") this.resume();
         return destination;
     };
     Stream.prototype.destroy = function (error) {
@@ -611,27 +628,73 @@
         this.readable = true;
         this.readableEnded = false;
         this._readableQueue = [];
+        this.readableLength = 0;
+        this.readableHighWaterMark = Math.max(1, Number(options.highWaterMark) || (options.objectMode ? 16 : 16 * 1024));
+        this._readableObjectMode = Boolean(options.objectMode);
+        this._paused = true;
+        this._flowing = false;
+        this._readableEndPending = false;
         if (typeof options.read === "function") this._read = options.read;
     }
     util.inherits(Readable, Stream);
     Readable.prototype._read = function () {};
+    Readable.prototype._chunkLength = function (chunk) {
+        if (this._readableObjectMode) return 1;
+        if (typeof chunk === "string") return Buffer.byteLength(chunk, this._readableEncoding || "utf8");
+        return chunk && typeof chunk.length === "number" ? chunk.length : 0;
+    };
+    Readable.prototype._finishReadable = function () {
+        if (!this._readableEndPending || this._readableQueue.length || this.readableEnded) return;
+        this._readableEndPending = false;
+        this.readable = false;
+        this.readableEnded = true;
+        this.emit("end");
+    };
+    Readable.prototype._flow = function () {
+        while (this._flowing && !this._paused && this._readableQueue.length) {
+            const value = this._readableQueue.shift();
+            this.readableLength -= this._chunkLength(value);
+            this.emit("data", value);
+        }
+        this._finishReadable();
+    };
     Readable.prototype.push = function (chunk) {
         if (chunk === null) {
-            this.readable = false;
-            this.readableEnded = true;
-            this.emit("end");
+            this._readableEndPending = true;
+            this._finishReadable();
             return false;
         }
         const value = typeof chunk === "string" && !this._readableEncoding ? Buffer.from(chunk) : chunk;
         this._readableQueue.push(value);
-        this.emit("data", value);
+        this.readableLength += this._chunkLength(value);
         this.emit("readable");
-        return true;
+        this._flow();
+        return this.readableLength < this.readableHighWaterMark;
     };
-    Readable.prototype.read = function () { return this._readableQueue.shift() ?? null; };
-    Readable.prototype.pause = function () { this._paused = true; return this; };
-    Readable.prototype.resume = function () { this._paused = false; return this; };
-    Readable.prototype.setEncoding = function (encoding) { this._readableEncoding = encoding; return this; };
+    Readable.prototype.read = function () {
+        const value = this._readableQueue.shift() ?? null;
+        if (value !== null) this.readableLength -= this._chunkLength(value);
+        this._finishReadable();
+        return value;
+    };
+    Readable.prototype.pause = function () { this._paused = true; this._flowing = false; return this; };
+    Readable.prototype.isPaused = function () { return this._paused; };
+    Readable.prototype.resume = function () {
+        this._paused = false;
+        this._flowing = true;
+        this._flow();
+        return this;
+    };
+    Readable.prototype.setEncoding = function (encoding) {
+        this._readableEncoding = encoding;
+        this._readableQueue = this._readableQueue.map(chunk => Buffer.isBuffer(chunk) ? chunk.toString(encoding) : chunk);
+        return this;
+    };
+    Readable.prototype.on = Readable.prototype.addListener = function (name, listener) {
+        EventEmitter.prototype.on.call(this, name, listener);
+        if (name === "data") this.resume();
+        return this;
+    };
     Readable.from = function (iterable) {
         const readable = new Readable();
         setImmediate(() => {
@@ -641,51 +704,105 @@
         return readable;
     };
 
+    function initializeWritable(stream, options) {
+        stream.writable = true;
+        stream.writableEnded = false;
+        stream.writableFinished = false;
+        stream.writableLength = 0;
+        stream.writableHighWaterMark = Math.max(1, Number(options.highWaterMark) || (options.objectMode ? 16 : 16 * 1024));
+        stream.writableNeedDrain = false;
+        stream._writableObjectMode = Boolean(options.objectMode);
+        stream._writableQueue = [];
+        stream._writing = false;
+        stream._ending = false;
+        stream._finalizing = false;
+        stream._corked = 0;
+        if (typeof options.write === "function") stream._write = options.write;
+        if (typeof options.final === "function") stream._final = options.final;
+    }
     function Writable(options = {}) {
         Stream.call(this);
-        this.writable = true;
-        this.writableEnded = false;
-        this.writableFinished = false;
-        if (typeof options.write === "function") this._write = options.write;
-        if (typeof options.final === "function") this._final = options.final;
+        initializeWritable(this, options);
     }
     util.inherits(Writable, Stream);
     Writable.prototype._write = function (_chunk, _encoding, callback) { callback(); };
+    Writable.prototype._chunkLength = function (chunk, encoding) {
+        if (this._writableObjectMode) return 1;
+        if (typeof chunk === "string") return Buffer.byteLength(chunk, encoding);
+        return chunk && typeof chunk.length === "number" ? chunk.length : 0;
+    };
+    Writable.prototype._finishWritable = function () {
+        if (!this._ending || this._writing || this._writableQueue.length || this._finalizing || this.writableFinished) return;
+        this._finalizing = true;
+        const finish = error => {
+            this._finalizing = false;
+            if (error) { this.emit("error", error); return; }
+            this.writable = false;
+            this.writableFinished = true;
+            this.emit("finish");
+        };
+        if (this._final) this._final(finish); else finish();
+    };
+    Writable.prototype._processWritable = function () {
+        if (this._writing || this._corked || !this._writableQueue.length) {
+            this._finishWritable();
+            return;
+        }
+        const entry = this._writableQueue.shift();
+        this._writing = true;
+        let called = false;
+        const done = error => {
+            if (called) return;
+            called = true;
+            this._writing = false;
+            this.writableLength -= entry.length;
+            if (error) this.emit("error", error);
+            if (entry.callback) entry.callback(error);
+            if (this.writableNeedDrain && this.writableLength < this.writableHighWaterMark) {
+                this.writableNeedDrain = false;
+                this.emit("drain");
+            }
+            if (!error) this._processWritable();
+        };
+        try { this._write(entry.chunk, entry.encoding, done); }
+        catch (error) { done(error); }
+    };
     Writable.prototype.write = function (chunk, encoding, callback) {
         if (typeof encoding === "function") { callback = encoding; encoding = undefined; }
-        const done = error => {
-            if (error) this.emit("error", error);
-            if (callback) callback(error);
-        };
-        this._write(chunk, encoding || "utf8", done);
-        return true;
+        if (this._ending) throw new Error("write after end");
+        const normalizedEncoding = encoding || "utf8";
+        const length = this._chunkLength(chunk, normalizedEncoding);
+        this.writableLength += length;
+        this._writableQueue.push({ chunk, encoding: normalizedEncoding, callback, length });
+        const belowHighWaterMark = this.writableLength < this.writableHighWaterMark;
+        if (!belowHighWaterMark) this.writableNeedDrain = true;
+        this._processWritable();
+        return belowHighWaterMark;
     };
     Writable.prototype.end = function (chunk, encoding, callback) {
         if (typeof chunk === "function") { callback = chunk; chunk = undefined; }
         else if (typeof encoding === "function") { callback = encoding; encoding = undefined; }
         if (chunk !== undefined) this.write(chunk, encoding);
-        const finish = error => {
-            if (error) { this.emit("error", error); if (callback) callback(error); return; }
-            this.writable = false;
-            this.writableEnded = true;
-            this.writableFinished = true;
-            this.emit("finish");
-            if (callback) callback();
-        };
-        if (this._final) this._final(finish); else finish();
+        if (callback) this.once("finish", callback);
+        this._ending = true;
+        this.writableEnded = true;
+        this._processWritable();
         return this;
+    };
+    Writable.prototype.cork = function () { this._corked++; };
+    Writable.prototype.uncork = function () {
+        if (this._corked) this._corked--;
+        this._processWritable();
     };
 
     function Duplex(options = {}) {
         Readable.call(this, options);
-        this.writable = true;
-        this.writableEnded = false;
-        this.writableFinished = false;
-        if (typeof options.write === "function") this._write = options.write;
-        if (typeof options.final === "function") this._final = options.final;
+        initializeWritable(this, options);
     }
     util.inherits(Duplex, Readable);
-    for (const name of ["_write", "write", "end"]) Duplex.prototype[name] = Writable.prototype[name];
+    for (const name of ["_write", "_chunkLength", "_finishWritable", "_processWritable", "write", "end", "cork", "uncork"]) {
+        Duplex.prototype[name] = Writable.prototype[name];
+    }
 
     function Transform(options = {}) {
         Duplex.call(this, options);
