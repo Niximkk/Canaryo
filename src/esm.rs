@@ -292,7 +292,16 @@ fn builtin_source(name: &str) -> Option<String> {
             "createRequire",
             "syncBuiltinESMExports",
         ],
-        "net" => &["isIP", "isIPv4", "isIPv6"],
+        "net" => &[
+            "Socket",
+            "Stream",
+            "connect",
+            "createConnection",
+            "createServer",
+            "isIP",
+            "isIPv4",
+            "isIPv6",
+        ],
         "os" => &[
             "EOL",
             "constants",

@@ -1,13 +1,13 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     env, fs,
-    io::{self, Read},
-    net::{IpAddr, ToSocketAddrs},
+    io::{self, Read, Write},
+    net::{IpAddr, Shutdown, TcpStream, ToSocketAddrs},
     path::Path,
     sync::{
         Arc, Condvar, Mutex,
         atomic::{AtomicU64, Ordering},
-        mpsc::{Receiver, SyncSender, sync_channel},
+        mpsc::{Receiver, SyncSender, TryRecvError, sync_channel},
     },
     thread,
     time::Duration,
@@ -430,7 +430,10 @@ globalThis.__canaryoPollHttpRequests = function() {
             finishClientRequest(request);
         }
     }
-    return pendingClientRequests.size;
+    const pendingNetSockets = typeof globalThis.__canaryoPollNetSockets === "function"
+        ? globalThis.__canaryoPollNetSockets()
+        : 0;
+    return pendingClientRequests.size + pendingNetSockets;
 };
 globalThis.__canaryoPendingHttpRequests = () => pendingClientRequests.size;
 
@@ -697,24 +700,32 @@ pub fn execute(path: &str, arguments: &[String]) -> Result<(), String> {
 }
 
 fn drain_outbound_http_requests(context: &rquickjs::Ctx<'_>) -> Result<(), String> {
-    let poll: Function = context
+    let poll_http: Function = context
         .globals()
         .get("__canaryoPollHttpRequests")
         .map_err(|error| error.to_string())?;
+    let run_timers: Function = context
+        .globals()
+        .get("__canaryoRunTimers")
+        .map_err(|error| error.to_string())?;
     let deadline = std::time::Instant::now() + Duration::from_secs(31);
     loop {
-        let pending = poll
+        let pending_http = poll_http
             .call::<_, usize>(())
             .catch(context)
             .map_err(|error| error.to_string())?;
+        let timer_delay = run_timers
+            .call::<_, Option<u64>>(())
+            .catch(context)
+            .map_err(|error| error.to_string())?;
         while context.execute_pending_job() {}
-        if pending == 0 {
+        if pending_http == 0 && timer_delay.is_none() {
             return Ok(());
         }
         if std::time::Instant::now() >= deadline {
             return Err("outbound HTTP requests did not finish within 31 seconds".into());
         }
-        thread::sleep(Duration::from_millis(2));
+        thread::sleep(Duration::from_millis(timer_delay.unwrap_or(2).min(2)));
     }
 }
 
@@ -862,6 +873,71 @@ fn install_host_globals<'js>(
     globals
         .set("__canaryoHttpRequestPoll", poll_http_request)
         .map_err(|error| error.to_string())?;
+    let (net_sender, net_receiver) = sync_channel(64);
+    let net_runtime = Arc::new(NetClientRuntime {
+        sender: net_sender,
+        next_id: AtomicU64::new(1),
+        commands: Arc::new(Mutex::new(HashMap::new())),
+    });
+    let net_connect = {
+        let runtime = Arc::clone(&net_runtime);
+        Function::new(context.clone(), move |context, host, port| {
+            start_net_client(context, host, port, &runtime)
+        })
+        .map_err(|error| error.to_string())?
+    };
+    globals
+        .set("__canaryoNetConnect", net_connect)
+        .map_err(|error| error.to_string())?;
+    let net_write = {
+        let runtime = Arc::clone(&net_runtime);
+        Function::new(context.clone(), move |context, id, body| {
+            send_net_client_data(context, id, body, &runtime)
+        })
+        .map_err(|error| error.to_string())?
+    };
+    globals
+        .set("__canaryoNetWrite", net_write)
+        .map_err(|error| error.to_string())?;
+    let net_end = {
+        let runtime = Arc::clone(&net_runtime);
+        Function::new(
+            context.clone(),
+            move |context: rquickjs::Ctx<'_>, id: u64| {
+                send_net_client_command(&context, id, NetClientCommand::End, &runtime)
+            },
+        )
+        .map_err(|error| error.to_string())?
+    };
+    globals
+        .set("__canaryoNetEnd", net_end)
+        .map_err(|error| error.to_string())?;
+    let net_destroy = {
+        let runtime = Arc::clone(&net_runtime);
+        Function::new(context.clone(), move |id| {
+            if let Ok(commands) = runtime.commands.lock()
+                && let Some(sender) = commands.get(&id)
+            {
+                let _ = sender.send(NetClientCommand::Destroy);
+            }
+        })
+        .map_err(|error| error.to_string())?
+    };
+    globals
+        .set("__canaryoNetDestroy", net_destroy)
+        .map_err(|error| error.to_string())?;
+    let net_receiver = Arc::new(Mutex::new(net_receiver));
+    let net_poll = Function::new(context.clone(), move || {
+        net_receiver
+            .lock()
+            .ok()
+            .and_then(|receiver| receiver.try_recv().ok())
+            .map(|event| event.to_json())
+    })
+    .map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoNetPoll", net_poll)
+        .map_err(|error| error.to_string())?;
     let os_info = Object::new(context.clone()).map_err(|error| error.to_string())?;
     os_info
         .set("platform", node_platform())
@@ -1006,6 +1082,263 @@ fn is_ip(value: String) -> u8 {
         Ok(IpAddr::V4(_)) => 4,
         Ok(IpAddr::V6(_)) => 6,
         Err(_) => 0,
+    }
+}
+
+enum NetClientCommand {
+    Data(Vec<u8>),
+    End,
+    Destroy,
+}
+
+enum NetClientEvent {
+    Connected {
+        id: u64,
+        local_address: String,
+        local_port: u16,
+        remote_address: String,
+        remote_port: u16,
+        family: &'static str,
+    },
+    Data {
+        id: u64,
+        body: String,
+    },
+    End {
+        id: u64,
+    },
+    Error {
+        id: u64,
+        message: String,
+    },
+    Close {
+        id: u64,
+    },
+}
+
+impl NetClientEvent {
+    fn to_json(&self) -> String {
+        let value = match self {
+            Self::Connected {
+                id,
+                local_address,
+                local_port,
+                remote_address,
+                remote_port,
+                family,
+            } => serde_json::json!({
+                "type": "connected",
+                "id": id,
+                "localAddress": local_address,
+                "localPort": local_port,
+                "remoteAddress": remote_address,
+                "remotePort": remote_port,
+                "family": family,
+            }),
+            Self::Data { id, body } => {
+                serde_json::json!({ "type": "data", "id": id, "body": body })
+            }
+            Self::End { id } => serde_json::json!({ "type": "end", "id": id }),
+            Self::Error { id, message } => {
+                serde_json::json!({ "type": "error", "id": id, "message": message })
+            }
+            Self::Close { id } => serde_json::json!({ "type": "close", "id": id }),
+        };
+        value.to_string()
+    }
+}
+
+struct NetClientRuntime {
+    sender: SyncSender<NetClientEvent>,
+    next_id: AtomicU64,
+    commands: Arc<Mutex<HashMap<u64, SyncSender<NetClientCommand>>>>,
+}
+
+fn start_net_client<'js>(
+    context: rquickjs::Ctx<'js>,
+    host: String,
+    port: u16,
+    runtime: &NetClientRuntime,
+) -> rquickjs::Result<u64> {
+    if host.is_empty() || port == 0 {
+        return Err(rquickjs::Exception::throw_message(
+            &context,
+            "TCP host and port are required",
+        ));
+    }
+    let id = runtime.next_id.fetch_add(1, Ordering::Relaxed);
+    let (command_sender, command_receiver) = sync_channel(64);
+    runtime
+        .commands
+        .lock()
+        .map_err(|_| rquickjs::Exception::throw_message(&context, "TCP client lock poisoned"))?
+        .insert(id, command_sender);
+    let sender = runtime.sender.clone();
+    let commands = Arc::clone(&runtime.commands);
+    thread::spawn(move || {
+        perform_net_client(id, &host, port, command_receiver, &sender);
+        if let Ok(mut commands) = commands.lock() {
+            commands.remove(&id);
+        }
+    });
+    Ok(id)
+}
+
+fn send_net_client_data<'js>(
+    context: rquickjs::Ctx<'js>,
+    id: u64,
+    body_base64: String,
+    runtime: &NetClientRuntime,
+) -> rquickjs::Result<()> {
+    use base64::Engine;
+
+    let body = base64::engine::general_purpose::STANDARD
+        .decode(body_base64)
+        .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))?;
+    send_net_client_command(&context, id, NetClientCommand::Data(body), runtime)
+}
+
+fn send_net_client_command<'js>(
+    context: &rquickjs::Ctx<'js>,
+    id: u64,
+    command: NetClientCommand,
+    runtime: &NetClientRuntime,
+) -> rquickjs::Result<()> {
+    let commands = runtime
+        .commands
+        .lock()
+        .map_err(|_| rquickjs::Exception::throw_message(context, "TCP client lock poisoned"))?;
+    let sender = commands
+        .get(&id)
+        .ok_or_else(|| rquickjs::Exception::throw_message(context, "TCP socket is not active"))?;
+    sender
+        .send(command)
+        .map_err(|_| rquickjs::Exception::throw_message(context, "TCP socket is closed"))
+}
+
+fn perform_net_client(
+    id: u64,
+    host: &str,
+    port: u16,
+    commands: Receiver<NetClientCommand>,
+    events: &SyncSender<NetClientEvent>,
+) {
+    use base64::Engine;
+
+    let mut stream = match TcpStream::connect((host, port)) {
+        Ok(stream) => stream,
+        Err(error) => {
+            let _ = events.send(NetClientEvent::Error {
+                id,
+                message: error.to_string(),
+            });
+            let _ = events.send(NetClientEvent::Close { id });
+            return;
+        }
+    };
+    let _ = stream.set_nonblocking(true);
+    let _ = stream.set_nodelay(true);
+    let local = stream.local_addr().ok();
+    let remote = stream.peer_addr().ok();
+    if events
+        .send(NetClientEvent::Connected {
+            id,
+            local_address: local
+                .map(|address| address.ip().to_string())
+                .unwrap_or_default(),
+            local_port: local.map_or(0, |address| address.port()),
+            remote_address: remote
+                .map(|address| address.ip().to_string())
+                .unwrap_or_else(|| host.to_string()),
+            remote_port: remote.map_or(port, |address| address.port()),
+            family: if remote.is_some_and(|address| address.is_ipv6()) {
+                "IPv6"
+            } else {
+                "IPv4"
+            },
+        })
+        .is_err()
+    {
+        return;
+    }
+
+    let mut outgoing = VecDeque::<Vec<u8>>::new();
+    let mut written = 0;
+    let mut end_requested = false;
+    let mut write_closed = false;
+    let mut input = [0_u8; 16 * 1024];
+    loop {
+        loop {
+            match commands.try_recv() {
+                Ok(NetClientCommand::Data(body)) => outgoing.push_back(body),
+                Ok(NetClientCommand::End) => end_requested = true,
+                Ok(NetClientCommand::Destroy) => {
+                    let _ = stream.shutdown(Shutdown::Both);
+                    let _ = events.send(NetClientEvent::Close { id });
+                    return;
+                }
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    let _ = stream.shutdown(Shutdown::Both);
+                    return;
+                }
+            }
+        }
+
+        while let Some(chunk) = outgoing.front() {
+            match stream.write(&chunk[written..]) {
+                Ok(0) => break,
+                Ok(length) => {
+                    written += length;
+                    if written == chunk.len() {
+                        outgoing.pop_front();
+                        written = 0;
+                    }
+                }
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
+                Err(error) => {
+                    let _ = events.send(NetClientEvent::Error {
+                        id,
+                        message: error.to_string(),
+                    });
+                    let _ = events.send(NetClientEvent::Close { id });
+                    return;
+                }
+            }
+        }
+        if end_requested && outgoing.is_empty() && !write_closed {
+            let _ = stream.shutdown(Shutdown::Write);
+            write_closed = true;
+        }
+
+        match stream.read(&mut input) {
+            Ok(0) => {
+                let _ = events.send(NetClientEvent::End { id });
+                let _ = events.send(NetClientEvent::Close { id });
+                return;
+            }
+            Ok(length) => {
+                if events
+                    .send(NetClientEvent::Data {
+                        id,
+                        body: base64::engine::general_purpose::STANDARD.encode(&input[..length]),
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+            Err(error) => {
+                let _ = events.send(NetClientEvent::Error {
+                    id,
+                    message: error.to_string(),
+                });
+                let _ = events.send(NetClientEvent::Close { id });
+                return;
+            }
+        }
+        thread::sleep(Duration::from_millis(1));
     }
 }
 

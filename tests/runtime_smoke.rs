@@ -358,6 +358,90 @@ fn returns_redirect_responses_without_following_them() {
 }
 
 #[test]
+fn connects_to_tcp_services_from_an_http_handler() {
+    let upstream = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let upstream_port = upstream.local_addr().unwrap().port();
+    let upstream_thread = thread::spawn(move || {
+        let (mut stream, _) = upstream.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut request = String::new();
+        stream.read_to_string(&mut request).unwrap();
+        stream.write_all(b"pong").unwrap();
+        request
+    });
+    let (_server, mut stream) = start_fixture_with_args(
+        "fixtures/net-client/server.js",
+        &[upstream_port.to_string()],
+        Stdio::null(),
+    );
+
+    stream
+        .write_all(b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+
+    assert_eq!(upstream_thread.join().unwrap(), "ping");
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+    assert!(response.contains("\"body\":\"pong\""), "{response}");
+    assert!(response.contains("\"socket\":true"), "{response}");
+    assert!(
+        response.contains(&format!("\"remotePort\":{upstream_port}")),
+        "{response}"
+    );
+    assert!(response.contains("\"bytesRead\":4"), "{response}");
+    assert!(response.contains("\"bytesWritten\":4"), "{response}");
+}
+
+#[test]
+fn keeps_the_standalone_event_loop_alive_for_tcp_clients() {
+    let upstream = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let upstream_port = upstream.local_addr().unwrap().port();
+    let upstream_thread = thread::spawn(move || {
+        let (mut stream, _) = upstream.accept().unwrap();
+        let mut request = String::new();
+        stream.read_to_string(&mut request).unwrap();
+        stream.write_all(b"complete").unwrap();
+        request
+    });
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut child = Command::new(env!("CARGO_BIN_EXE_canaryo"))
+        .current_dir(root)
+        .arg("fixtures/net-client/client.js")
+        .arg(upstream_port.to_string())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("standalone TCP client did not finish");
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+    let mut stdout = String::new();
+    child
+        .stdout
+        .take()
+        .unwrap()
+        .read_to_string(&mut stdout)
+        .unwrap();
+
+    assert!(status.success());
+    assert_eq!(upstream_thread.join().unwrap(), "standalone");
+    assert_eq!(stdout, "complete");
+}
+
+#[test]
 fn queues_requests_at_the_custom_agent_socket_limit() {
     fn read_headers(stream: &mut TcpStream) -> String {
         let mut request = Vec::new();

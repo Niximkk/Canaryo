@@ -1385,6 +1385,146 @@
         }
     };
 
+    const netSockets = new Map();
+    function normalizeNetConnect(argumentsList) {
+        const values = Array.from(argumentsList);
+        const callback = typeof values[values.length - 1] === "function" ? values.pop() : null;
+        let options;
+        if (values[0] && typeof values[0] === "object") options = Object.assign({}, values[0]);
+        else options = { port: Number(values[0]), host: typeof values[1] === "string" ? values[1] : "localhost" };
+        if (!options.port) throw new TypeError("TCP port is required");
+        options.host ||= "localhost";
+        return { options, callback };
+    }
+    function NetSocket(options = {}) {
+        Duplex.call(this, options);
+        this.allowHalfOpen = Boolean(options.allowHalfOpen);
+        this.connecting = false;
+        this.pending = false;
+        this.bytesRead = 0;
+        this.bytesWritten = 0;
+        this.remoteAddress = undefined;
+        this.remoteFamily = undefined;
+        this.remotePort = undefined;
+        this.localAddress = undefined;
+        this.localPort = undefined;
+        this.readyState = "closed";
+        this._timeout = 0;
+    }
+    util.inherits(NetSocket, Duplex);
+    NetSocket.prototype.connect = function (...args) {
+        const { options, callback } = normalizeNetConnect(args);
+        if (callback) this.once("connect", callback);
+        this.connecting = true;
+        this.pending = true;
+        this.destroyed = false;
+        this.readyState = "opening";
+        this._canaryoNetId = __canaryoNetConnect(String(options.host), Number(options.port));
+        netSockets.set(this._canaryoNetId, this);
+        return this;
+    };
+    NetSocket.prototype._resetTimeout = function () {
+        if (this._timeoutHandle) clearTimeout(this._timeoutHandle);
+        if (this._timeout > 0 && !this.destroyed) {
+            this._timeoutHandle = setTimeout(() => this.emit("timeout"), this._timeout);
+        }
+    };
+    NetSocket.prototype._write = function (chunk, encoding, callback) {
+        try {
+            const body = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding);
+            __canaryoNetWrite(this._canaryoNetId, body.toString("base64"));
+            this.bytesWritten += body.length;
+            this._resetTimeout();
+            callback();
+        } catch (error) { callback(error); }
+    };
+    NetSocket.prototype._final = function (callback) {
+        try { __canaryoNetEnd(this._canaryoNetId); callback(); }
+        catch (error) { callback(error); }
+    };
+    NetSocket.prototype.destroy = function (error) {
+        if (this.destroyed) return this;
+        this.destroyed = true;
+        this.readyState = "closed";
+        if (this._timeoutHandle) clearTimeout(this._timeoutHandle);
+        if (this._canaryoNetId !== undefined) __canaryoNetDestroy(this._canaryoNetId);
+        if (error) process.nextTick(() => this.emit("error", error));
+        return this;
+    };
+    NetSocket.prototype.setTimeout = function (timeout, callback) {
+        this._timeout = Number(timeout) || 0;
+        if (typeof callback === "function") this.once("timeout", callback);
+        this._resetTimeout();
+        return this;
+    };
+    NetSocket.prototype.setNoDelay = function (value = true) { this.noDelay = Boolean(value); return this; };
+    NetSocket.prototype.setKeepAlive = function (value = false, delay = 0) {
+        this.keepAlive = Boolean(value);
+        this.keepAliveInitialDelay = Number(delay) || 0;
+        return this;
+    };
+    NetSocket.prototype.address = function () {
+        return this.localAddress
+            ? { address: this.localAddress, family: this.localFamily, port: this.localPort }
+            : {};
+    };
+    NetSocket.prototype.ref = function () { return this; };
+    NetSocket.prototype.unref = function () { return this; };
+    function connect(...args) { return new NetSocket().connect(...args); }
+    globalThis.__canaryoPollNetSockets = function () {
+        if (netSockets.size === 0) return 0;
+        for (let count = 0; count < 64; count++) {
+            const raw = __canaryoNetPoll();
+            if (raw === undefined || raw === null) break;
+            const event = JSON.parse(raw);
+            const socket = netSockets.get(event.id);
+            if (!socket) continue;
+            if (event.type === "connected") {
+                socket.connecting = false;
+                socket.pending = false;
+                socket.readyState = "open";
+                socket.localAddress = event.localAddress;
+                socket.localFamily = event.family;
+                socket.localPort = event.localPort;
+                socket.remoteAddress = event.remoteAddress;
+                socket.remoteFamily = event.family;
+                socket.remotePort = event.remotePort;
+                socket._resetTimeout();
+                socket.emit("connect");
+                socket.emit("ready");
+            } else if (event.type === "data") {
+                const body = Buffer.from(event.body, "base64");
+                socket.bytesRead += body.length;
+                socket._resetTimeout();
+                socket.push(body);
+            } else if (event.type === "end") {
+                socket.push(null);
+                if (!socket.allowHalfOpen && !socket.writableEnded) socket.end();
+            } else if (event.type === "error") {
+                socket.emit("error", Object.assign(new Error(event.message), { syscall: "connect" }));
+            } else if (event.type === "close") {
+                netSockets.delete(event.id);
+                socket.destroyed = true;
+                socket.connecting = false;
+                socket.pending = false;
+                socket.readyState = "closed";
+                if (socket._timeoutHandle) clearTimeout(socket._timeoutHandle);
+                socket.emit("close", false);
+            }
+        }
+        return netSockets.size;
+    };
+    const netModule = {
+        Socket: NetSocket,
+        Stream: NetSocket,
+        connect,
+        createConnection: connect,
+        isIP: value => __canaryoIsIp(String(value)),
+        isIPv4: value => __canaryoIsIp(String(value)) === 4,
+        isIPv6: value => __canaryoIsIp(String(value)) === 6,
+        createServer() { throw new Error("Canaryo does not support TCP servers yet"); }
+    };
+
     const builtinModules = [
         "assert", "async_hooks", "buffer", "crypto", "diagnostics_channel", "dns",
         "dns/promises", "events", "fs", "fs/promises", "http", "https", "module", "net", "os",
@@ -1450,11 +1590,7 @@
         "fs/promises": fsPromises,
         https: globalThis.__canaryoHttpsModule,
         module: moduleModule,
-        net: {
-            isIP: value => __canaryoIsIp(String(value)),
-            isIPv4: value => __canaryoIsIp(String(value)) === 4,
-            isIPv6: value => __canaryoIsIp(String(value)) === 6
-        },
+        net: netModule,
         os: {
             EOL: process.platform === "win32" ? "\r\n" : "\n",
             constants: { signals: {}, errno: {}, priority: {}, dlopen: {} },
