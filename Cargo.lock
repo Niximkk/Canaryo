@@ -30,6 +30,7 @@ dependencies = [
  "base64",
  "mio",
  "rquickjs",
+ "rustls",
  "serde_json",
  "sha1",
  "ureq",

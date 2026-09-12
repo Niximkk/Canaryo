@@ -2,9 +2,11 @@ use std::{
     collections::{HashMap, VecDeque},
     io::{Read, Write},
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
+use base64::Engine;
 use mio::{Events, Interest, Poll, Token, net::TcpStream};
 use rquickjs::function::This;
 use rquickjs::{Array, Coerced, Ctx, Exception, Function, Object, Result};
@@ -62,7 +64,7 @@ impl Default for ConnectionReader {
 }
 
 struct Connection<'js> {
-    stream: TcpStream,
+    stream: HttpStream,
     socket: Object<'js>,
     incoming_request: Option<Object<'js>>,
     pending_responses: VecDeque<PendingResponse<'js>>,
@@ -72,6 +74,88 @@ struct Connection<'js> {
     writable_interest: bool,
     close_after_write: bool,
     read_closed: bool,
+    tls_shutdown_started: bool,
+}
+
+enum HttpStream {
+    Plain(TcpStream),
+    Tls(Box<rustls::StreamOwned<rustls::ServerConnection, TcpStream>>),
+}
+
+impl HttpStream {
+    fn raw_mut(&mut self) -> &mut TcpStream {
+        match self {
+            Self::Plain(stream) => stream,
+            Self::Tls(stream) => &mut stream.sock,
+        }
+    }
+
+    fn wants_write(&self) -> bool {
+        match self {
+            Self::Plain(_) => false,
+            Self::Tls(stream) => stream.conn.wants_write(),
+        }
+    }
+
+    fn flush_tls(&mut self) -> std::io::Result<()> {
+        let Self::Tls(stream) = self else {
+            return Ok(());
+        };
+        while stream.conn.wants_write() {
+            match stream.conn.write_tls(&mut stream.sock) {
+                Ok(0) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::WriteZero,
+                        "TLS connection stopped accepting encrypted output",
+                    ));
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(()),
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Read for HttpStream {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            Self::Plain(stream) => stream.read(buffer),
+            Self::Tls(stream) => loop {
+                match stream.conn.reader().read(buffer) {
+                    Ok(decrypted) => return Ok(decrypted),
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                    Err(error) => return Err(error),
+                }
+
+                let encrypted = stream.conn.read_tls(&mut stream.sock)?;
+                if encrypted == 0 {
+                    return Ok(0);
+                }
+                stream
+                    .conn
+                    .process_new_packets()
+                    .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+            },
+        }
+    }
+}
+
+impl Write for HttpStream {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        match self {
+            Self::Plain(stream) => stream.write(buffer),
+            Self::Tls(stream) => stream.conn.writer().write(buffer),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            Self::Plain(stream) => stream.flush(),
+            Self::Tls(_) => self.flush_tls(),
+        }
+    }
 }
 
 struct PendingResponse<'js> {
@@ -79,6 +163,14 @@ struct PendingResponse<'js> {
     keep_alive: bool,
     suppress_body: bool,
     deadline: Instant,
+}
+
+struct ServerBindings<'js> {
+    handler: Function<'js>,
+    on_listening: Function<'js>,
+    request_prototype: Object<'js>,
+    response_prototype: Object<'js>,
+    socket_prototype: Object<'js>,
 }
 
 pub fn listen<'js>(
@@ -89,6 +181,109 @@ pub fn listen<'js>(
     request_prototype: Object<'js>,
     response_prototype: Object<'js>,
     socket_prototype: Object<'js>,
+) -> Result<()> {
+    let tls_json: Option<String> = context.globals().get("__canaryoServerTlsOptions")?;
+    let tls_config = tls_json
+        .as_deref()
+        .map(|options| tls_server_config(&context, options))
+        .transpose()?;
+    listen_with_config(
+        context,
+        port,
+        ServerBindings {
+            handler,
+            on_listening,
+            request_prototype,
+            response_prototype,
+            socket_prototype,
+        },
+        tls_config,
+    )
+}
+
+fn tls_server_config<'js>(context: &Ctx<'js>, tls_json: &str) -> Result<Arc<rustls::ServerConfig>> {
+    let options: serde_json::Value = serde_json::from_str(tls_json).map_err(|error| {
+        Exception::throw_message(context, &format!("invalid HTTPS options: {error}"))
+    })?;
+    let cert_pem = options
+        .get("cert")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| Exception::throw_message(context, "https.createServer requires cert"))?;
+    let key_pem = options
+        .get("key")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| Exception::throw_message(context, "https.createServer requires key"))?;
+
+    let certificates = pem_blocks(cert_pem, "CERTIFICATE")
+        .map_err(|message| Exception::throw_message(context, &message))?
+        .into_iter()
+        .map(rustls::pki_types::CertificateDer::from)
+        .collect::<Vec<_>>();
+    if certificates.is_empty() {
+        return Err(Exception::throw_message(
+            context,
+            "HTTPS certificate PEM contains no CERTIFICATE block",
+        ));
+    }
+
+    let read_key = |label| {
+        first_pem_block(key_pem, label)
+            .map_err(|message| Exception::throw_message(context, &message))
+    };
+    let private_key = if let Some(key) = read_key("PRIVATE KEY")? {
+        rustls::pki_types::PrivateKeyDer::Pkcs8(rustls::pki_types::PrivatePkcs8KeyDer::from(key))
+    } else if let Some(key) = read_key("RSA PRIVATE KEY")? {
+        rustls::pki_types::PrivateKeyDer::Pkcs1(rustls::pki_types::PrivatePkcs1KeyDer::from(key))
+    } else if let Some(key) = read_key("EC PRIVATE KEY")? {
+        rustls::pki_types::PrivateKeyDer::Sec1(rustls::pki_types::PrivateSec1KeyDer::from(key))
+    } else {
+        return Err(Exception::throw_message(
+            context,
+            "HTTPS private key PEM uses an unsupported format",
+        ));
+    };
+
+    let config = rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certificates, private_key)
+        .map_err(|error| Exception::throw_message(context, &error.to_string()))?;
+    Ok(Arc::new(config))
+}
+
+fn first_pem_block(pem: &str, label: &str) -> std::result::Result<Option<Vec<u8>>, String> {
+    pem_blocks(pem, label).map(|mut blocks| blocks.drain(..).next())
+}
+
+fn pem_blocks(pem: &str, label: &str) -> std::result::Result<Vec<Vec<u8>>, String> {
+    let begin = format!("-----BEGIN {label}-----");
+    let end = format!("-----END {label}-----");
+    let mut remaining = pem;
+    let mut blocks = Vec::new();
+
+    while let Some(begin_index) = remaining.find(&begin) {
+        remaining = &remaining[begin_index + begin.len()..];
+        let end_index = remaining
+            .find(&end)
+            .ok_or_else(|| format!("unterminated {label} PEM block"))?;
+        let encoded = remaining[..end_index]
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>();
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .map_err(|error| format!("invalid {label} PEM data: {error}"))?;
+        blocks.push(decoded);
+        remaining = &remaining[end_index + end.len()..];
+    }
+
+    Ok(blocks)
+}
+
+fn listen_with_config<'js>(
+    context: Ctx<'js>,
+    port: u16,
+    bindings: ServerBindings<'js>,
+    tls_config: Option<Arc<rustls::ServerConfig>>,
 ) -> Result<()> {
     let address = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port));
     let mut listener = mio::net::TcpListener::bind(address)
@@ -104,7 +299,7 @@ pub fn listen<'js>(
     let run_timers: Function = context.globals().get("__canaryoRunTimers")?;
     let poll_http_requests: Function = context.globals().get("__canaryoPollHttpRequests")?;
     let should_close: Function = context.globals().get("__canaryoServerShouldClose")?;
-    on_listening.call::<_, ()>(())?;
+    bindings.on_listening.call::<_, ()>(())?;
 
     loop {
         while context.execute_pending_job() {}
@@ -140,11 +335,12 @@ pub fn listen<'js>(
             if event.token() == LISTENER {
                 accept_connections(
                     &context,
-                    &socket_prototype,
+                    &bindings.socket_prototype,
                     &mut listener,
                     poll.registry(),
                     &mut connections,
                     &mut next_token,
+                    tls_config.as_ref(),
                 )?;
                 continue;
             }
@@ -157,9 +353,9 @@ pub fn listen<'js>(
             {
                 let read_closed = read_and_dispatch_requests(
                     &context,
-                    &handler,
-                    &request_prototype,
-                    &response_prototype,
+                    &bindings.handler,
+                    &bindings.request_prototype,
+                    &bindings.response_prototype,
                     connection,
                 )?;
                 connection.read_closed |= read_closed || event.is_read_closed();
@@ -182,9 +378,10 @@ pub fn listen<'js>(
                     && connection.pending_responses.is_empty()
                     && (connection.close_after_write || connection.read_closed)
                 {
-                    remove = true;
+                    remove = connection.begin_shutdown().unwrap_or(true);
                 } else if !remove {
-                    let wants_write = !connection.outgoing.is_empty();
+                    let wants_write =
+                        !connection.outgoing.is_empty() || connection.stream.wants_write();
                     if wants_write != connection.writable_interest {
                         let interest = if wants_write {
                             Interest::READABLE | Interest::WRITABLE
@@ -193,7 +390,7 @@ pub fn listen<'js>(
                         };
                         if poll
                             .registry()
-                            .reregister(&mut connection.stream, token, interest)
+                            .reregister(connection.stream.raw_mut(), token, interest)
                             .is_err()
                         {
                             remove = true;
@@ -220,22 +417,33 @@ fn accept_connections<'js>(
     registry: &mio::Registry,
     connections: &mut HashMap<Token, Connection<'js>>,
     next_token: &mut usize,
+    tls_config: Option<&Arc<rustls::ServerConfig>>,
 ) -> Result<()> {
     loop {
         match listener.accept() {
-            Ok((mut stream, _)) => {
+            Ok((mut socket, _)) => {
                 let token = Token(*next_token);
                 *next_token = next_token.wrapping_add(1).max(1);
-                let _ = stream.set_nodelay(true);
+                let _ = socket.set_nodelay(true);
                 if registry
-                    .register(&mut stream, token, Interest::READABLE)
+                    .register(&mut socket, token, Interest::READABLE)
                     .is_ok()
                 {
+                    let stream = match tls_config {
+                        Some(config) => {
+                            let connection = rustls::ServerConnection::new(Arc::clone(config))
+                                .map_err(|error| {
+                                    Exception::throw_message(context, &error.to_string())
+                                })?;
+                            HttpStream::Tls(Box::new(rustls::StreamOwned::new(connection, socket)))
+                        }
+                        None => HttpStream::Plain(socket),
+                    };
                     connections.insert(
                         token,
                         Connection {
                             stream,
-                            socket: socket_to_js(context, socket_prototype)?,
+                            socket: socket_to_js(context, socket_prototype, tls_config.is_some())?,
                             incoming_request: None,
                             pending_responses: VecDeque::new(),
                             reader: ConnectionReader::default(),
@@ -244,6 +452,7 @@ fn accept_connections<'js>(
                             writable_interest: false,
                             close_after_write: false,
                             read_closed: false,
+                            tls_shutdown_started: false,
                         },
                     );
                 }
@@ -297,7 +506,18 @@ impl Connection<'_> {
 
         self.outgoing.clear();
         self.written = 0;
-        Ok(())
+        self.stream.flush_tls()
+    }
+
+    fn begin_shutdown(&mut self) -> std::io::Result<bool> {
+        if let HttpStream::Tls(stream) = &mut self.stream
+            && !self.tls_shutdown_started
+        {
+            stream.conn.send_close_notify();
+            self.tls_shutdown_started = true;
+        }
+        self.stream.flush_tls()?;
+        Ok(!self.stream.wants_write())
     }
 }
 
@@ -439,13 +659,15 @@ fn progress_connections<'js>(
             collect_completed_responses(connection)?;
 
             let flush_failed = connection.flush().is_err();
-            let closed = connection.outgoing.is_empty()
+            let should_close = connection.outgoing.is_empty()
                 && connection.pending_responses.is_empty()
                 && (connection.close_after_write || connection.read_closed);
+            let closed = should_close && connection.begin_shutdown().unwrap_or(true);
             if flush_failed || closed {
                 remove = true;
             } else {
-                let wants_write = !connection.outgoing.is_empty();
+                let wants_write =
+                    !connection.outgoing.is_empty() || connection.stream.wants_write();
                 if wants_write != connection.writable_interest {
                     let interest = if wants_write {
                         Interest::READABLE | Interest::WRITABLE
@@ -453,7 +675,7 @@ fn progress_connections<'js>(
                         Interest::READABLE
                     };
                     if registry
-                        .reregister(&mut connection.stream, token, interest)
+                        .reregister(connection.stream.raw_mut(), token, interest)
                         .is_err()
                     {
                         remove = true;
@@ -605,12 +827,16 @@ fn finish_request_body<'js>(
     finish.call::<_, ()>((This(request),))
 }
 
-fn socket_to_js<'js>(context: &Ctx<'js>, prototype: &Object<'js>) -> Result<Object<'js>> {
+fn socket_to_js<'js>(
+    context: &Ctx<'js>,
+    prototype: &Object<'js>,
+    encrypted: bool,
+) -> Result<Object<'js>> {
     let socket = Object::new(context.clone())?;
     socket.set("remoteAddress", "127.0.0.1")?;
     socket.set("remoteFamily", "IPv4")?;
     socket.set("localAddress", "127.0.0.1")?;
-    socket.set("encrypted", false)?;
+    socket.set("encrypted", encrypted)?;
     socket.set("destroyed", false)?;
     socket.set("connecting", false)?;
     socket.set("readable", true)?;

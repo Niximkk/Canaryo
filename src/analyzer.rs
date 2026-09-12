@@ -201,7 +201,7 @@ fn scan_source(source: &str, path: &Path) -> Vec<Finding> {
         Rule {
             patterns: &["node:https", "require('https')", "require(\"https\")"],
             compatibility: Compatibility::Limited,
-            message: "usa https; o cliente TLS está disponível, mas servidores HTTPS ainda não",
+            message: "usa https; clientes e servidores TLS básicos estão disponíveis, mas opções avançadas ainda não",
         },
         Rule {
             patterns: &["node:fs", "require('fs')", "require(\"fs\")"],

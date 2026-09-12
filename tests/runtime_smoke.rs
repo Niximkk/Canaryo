@@ -3,10 +3,12 @@ use std::{
     net::{TcpListener, TcpStream},
     path::Path,
     process::{Child, Command, Stdio},
-    sync::Mutex,
+    sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant},
 };
+
+use base64::Engine;
 
 static SERVER_START: Mutex<()> = Mutex::new(());
 
@@ -122,7 +124,7 @@ fn closes_the_native_http_server_and_exits() {
     }
 }
 
-fn read_response(stream: &mut TcpStream) -> String {
+fn read_response(stream: &mut impl Read) -> String {
     let mut response = Vec::new();
 
     while !response.ends_with(b"\r\n\r\n") {
@@ -164,6 +166,67 @@ fn serves_a_native_esm_http_application() {
     assert!(response.starts_with("HTTP/1.1 200 OK"));
     assert!(headers.contains("content-type: application/json; charset=utf-8"));
     assert!(response.ends_with(r#"{"runtime":"canaryo","modules":"esm+cjs!","ready":true}"#));
+}
+
+#[test]
+fn serves_a_native_node_https_application() {
+    let (_server, probe) = start_fixture("fixtures/https-basic/server.js");
+    let address = probe.peer_addr().unwrap();
+    drop(probe);
+
+    let certificate_pem = std::fs::read_to_string("fixtures/https-basic/cert.pem").unwrap();
+    let certificate_base64 = certificate_pem
+        .lines()
+        .filter(|line| !line.starts_with("-----"))
+        .collect::<String>();
+    let certificate = base64::engine::general_purpose::STANDARD
+        .decode(certificate_base64)
+        .unwrap();
+    let mut roots = rustls::RootCertStore::empty();
+    roots
+        .add(rustls::pki_types::CertificateDer::from(certificate))
+        .unwrap();
+    let config = rustls::ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    let connection = rustls::ClientConnection::new(
+        Arc::new(config),
+        rustls::pki_types::ServerName::try_from("localhost")
+            .unwrap()
+            .to_owned(),
+    )
+    .unwrap();
+    let socket = TcpStream::connect(address).unwrap();
+    socket
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let mut stream = rustls::StreamOwned::new(connection, socket);
+
+    stream
+        .write_all(b"GET /secure HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        .unwrap();
+    let first = read_response(&mut stream);
+    stream
+        .write_all(b"GET /again HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let mut second = String::new();
+    stream.read_to_string(&mut second).unwrap();
+
+    assert!(first.starts_with("HTTP/1.1 200 OK"), "{first}");
+    assert!(first.contains("Connection: keep-alive"), "{first}");
+    assert!(
+        first.ends_with(r#"{"secure":true,"method":"GET","url":"/secure"}"#),
+        "{first}"
+    );
+    assert!(second.starts_with("HTTP/1.1 200 OK"), "{second}");
+    assert!(
+        second.contains("content-type: application/json"),
+        "{second}"
+    );
+    assert!(
+        second.ends_with(r#"{"secure":true,"method":"GET","url":"/again"}"#),
+        "{second}"
+    );
 }
 
 #[test]

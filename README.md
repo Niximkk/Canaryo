@@ -160,7 +160,7 @@ flowchart LR
 | Filesystem APIs | Partial | Buffer-aware read, write, append, stat, exists, access, mkdir, readdir, and file streams through synchronous, callback, and `fs/promises` APIs. Watches, links, permissions, real file descriptors, and positional writes remain incomplete. |
 | ESM | Partial | Native `.mjs` and `type: module` execution, relative imports, package `import` conditions, JSON loading, named imports from common built-ins, default CommonJS interop, and static detection of `exports.name`. Dynamic CJS exports and some Node resolution rules remain incomplete. |
 | Keep-alive | Supported | Connections persist by default on HTTP/1.1 and honor `Connection: close`. |
-| TLS | Partial | Asynchronous outbound `node:https` `request` and `get` validate public certificates through rustls and WebPKI roots, stream request and response bodies, and support independent HTTPS agents. Inbound HTTPS servers, custom trust stores and client certificates remain incomplete. |
+| TLS | Partial | Asynchronous outbound `node:https` clients validate public certificates through rustls and WebPKI roots, stream request and response bodies, and support independent agents. Inbound `https.createServer` accepts PEM certificates and PKCS#1, PKCS#8, or SEC1 private keys, uses non-blocking TLS, and shuts sessions down cleanly. Certificate arrays, passphrases, SNI certificate selection, custom trust stores, and client certificates remain incomplete. |
 | Native `.node` addons | Unsupported | Native Node.js ABI modules cannot be loaded. |
 
 `canaryo check` reports one of three project-level outcomes:
@@ -206,7 +206,7 @@ cargo bench --bench runtime -- --startup-only --startup-runs 15
 - Wider Buffer, stream, filesystem, crypto, and networking support.
 - Complete ESM/CommonJS interop and the remaining Node package-resolution rules.
 - A larger Express, Fastify, and plugin compatibility suite.
-- Inbound TLS, isolated workers, diagnostics, and production observability.
+- Advanced TLS options, isolated workers, diagnostics, and production observability.
 
 ## License
 

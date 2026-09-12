@@ -451,7 +451,7 @@ const httpModule = Object.freeze({
         request.end();
         return request;
     },
-    createServer(optionsOrListener, listener) {
+    createServer(optionsOrListener, listener, tlsOptions) {
         const requestListener = typeof optionsOrListener === "function"
             ? optionsOrListener
             : listener;
@@ -480,7 +480,7 @@ const httpModule = Object.freeze({
                 currentServer.__canaryoCloseRequested = false;
                 globalThis.__canaryoActiveServer = currentServer;
                 globalThis.__canaryoPendingServerStart = () => {
-                    __canaryoListen(
+                    const listenArguments = [
                         listenPort,
                         requestListener,
                         () => {
@@ -491,7 +491,15 @@ const httpModule = Object.freeze({
                         IncomingMessage.prototype,
                         ServerResponse.prototype,
                         Socket.prototype
-                    );
+                    ];
+                    if (tlsOptions) {
+                        const key = tlsOptions.key?.toString?.() ?? String(tlsOptions.key ?? "");
+                        const cert = tlsOptions.cert?.toString?.() ?? String(tlsOptions.cert ?? "");
+                        globalThis.__canaryoServerTlsOptions = JSON.stringify({ key, cert });
+                    } else {
+                        globalThis.__canaryoServerTlsOptions = null;
+                    }
+                    __canaryoListen(...listenArguments);
                     currentServer.listening = false;
                     const callbacks = currentServer.__canaryoCloseCallbacks.splice(0);
                     for (const closeCallback of callbacks) closeCallback();
@@ -533,7 +541,12 @@ const httpsModule = Object.freeze(Object.assign({}, httpModule, {
         request.end();
         return request;
     },
-    createServer() { throw new Error("Canaryo does not support inbound HTTPS servers yet"); }
+    createServer(options, listener) {
+        if (typeof options === "function") {
+            throw new TypeError("https.createServer requires TLS options");
+        }
+        return httpModule.createServer(options, listener, options || {});
+    }
 }));
 
 const moduleCache = Object.create(null);
