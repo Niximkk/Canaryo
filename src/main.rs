@@ -3,6 +3,7 @@ mod cli;
 mod esm;
 mod http;
 mod modules;
+mod net;
 mod runner;
 mod runtime;
 

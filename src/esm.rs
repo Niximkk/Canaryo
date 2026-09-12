@@ -293,6 +293,7 @@ fn builtin_source(name: &str) -> Option<String> {
             "syncBuiltinESMExports",
         ],
         "net" => &[
+            "Server",
             "Socket",
             "Stream",
             "connect",

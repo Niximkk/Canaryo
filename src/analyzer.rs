@@ -211,7 +211,7 @@ fn scan_source(source: &str, path: &Path) -> Vec<Finding> {
         Rule {
             patterns: &["node:net", "require('net')", "require(\"net\")"],
             compatibility: Compatibility::Limited,
-            message: "usa net; clientes TCP estão disponíveis, mas servidores e IPC ainda não",
+            message: "usa net; TCP está disponível, mas IPC e opções avançadas de socket ainda não",
         },
         Rule {
             patterns: &[

@@ -442,6 +442,67 @@ fn keeps_the_standalone_event_loop_alive_for_tcp_clients() {
 }
 
 #[test]
+fn serves_duplex_tcp_connections_and_closes_gracefully() {
+    let (mut server, mut stream) = start_fixture("fixtures/net-server/server.js");
+    let server_port = stream.peer_addr().unwrap().port();
+    stream.write_all(b"canaryo").unwrap();
+    stream.shutdown(std::net::Shutdown::Write).unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+
+    assert!(response.contains("\"body\":\"canaryo\""), "{response}");
+    assert!(
+        response.contains("\"remoteAddress\":\"127.0.0.1\""),
+        "{response}"
+    );
+    assert!(
+        response.contains(&format!("\"localPort\":{server_port}")),
+        "{response}"
+    );
+    assert!(
+        response.contains(&format!("\"serverPort\":{server_port}")),
+        "{response}"
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        if let Some(status) = server.0.try_wait().unwrap() {
+            assert!(status.success());
+            break;
+        }
+        if Instant::now() >= deadline {
+            panic!("TCP server did not exit after server.close()");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn serves_other_tcp_connections_while_one_is_incomplete() {
+    let (_server, mut slow_stream) = start_fixture("fixtures/net-server/server.js");
+    let address = slow_stream.peer_addr().unwrap();
+    let mut fast_stream = TcpStream::connect(address).unwrap();
+    fast_stream
+        .set_read_timeout(Some(Duration::from_millis(500)))
+        .unwrap();
+    slow_stream.write_all(b"slow").unwrap();
+
+    let started = Instant::now();
+    fast_stream.write_all(b"fast").unwrap();
+    fast_stream.shutdown(std::net::Shutdown::Write).unwrap();
+    let mut fast_response = String::new();
+    fast_stream.read_to_string(&mut fast_response).unwrap();
+
+    assert!(started.elapsed() < Duration::from_millis(500));
+    assert!(fast_response.contains("\"body\":\"fast\""));
+
+    slow_stream.shutdown(std::net::Shutdown::Write).unwrap();
+    let mut slow_response = String::new();
+    slow_stream.read_to_string(&mut slow_response).unwrap();
+    assert!(slow_response.contains("\"body\":\"slow\""));
+}
+
+#[test]
 fn queues_requests_at_the_custom_agent_socket_limit() {
     fn read_headers(stream: &mut TcpStream) -> String {
         let mut request = Vec::new();

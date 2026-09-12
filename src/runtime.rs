@@ -938,6 +938,11 @@ fn install_host_globals<'js>(
     globals
         .set("__canaryoNetPoll", net_poll)
         .map_err(|error| error.to_string())?;
+    let net_listen =
+        Function::new(context.clone(), crate::net::listen).map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoNetListen", net_listen)
+        .map_err(|error| error.to_string())?;
     let os_info = Object::new(context.clone()).map_err(|error| error.to_string())?;
     os_info
         .set("platform", node_platform())
