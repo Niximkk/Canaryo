@@ -576,6 +576,28 @@ fn decodes_chunked_requests_and_exposes_trailers() {
 }
 
 #[test]
+fn dispatches_inbound_body_chunks_before_the_request_ends() {
+    let (_server, mut stream) = start_fixture("fixtures/http-basic/server.js");
+    stream
+        .set_read_timeout(Some(Duration::from_millis(500)))
+        .unwrap();
+    let started = Instant::now();
+    stream
+        .write_all(
+            b"POST /first-chunk HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 10\r\nConnection: close\r\n\r\nhello",
+        )
+        .unwrap();
+
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .expect("server buffered the incomplete request body");
+
+    assert!(started.elapsed() < Duration::from_millis(500));
+    assert!(response.ends_with("first:hello"), "{response}");
+}
+
+#[test]
 fn preserves_binary_response_bytes() {
     let (_server, mut stream) = start_fixture("fixtures/http-basic/server.js");
     stream

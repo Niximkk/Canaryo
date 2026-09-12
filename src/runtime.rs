@@ -81,13 +81,10 @@ IncomingMessage.prototype.__canaryoFinishBody = function() {
     this.readableEnded = true;
     this.complete = true;
     this.emit("end");
+    this.emit("close");
 };
-IncomingMessage.prototype.__canaryoDeliverBody = function() {
-    if (this.readableEnded) return;
-    if (this.__canaryoBody.length > 0) {
-        this.__canaryoDeliverChunk(Buffer.from(this.__canaryoBody));
-    }
-    this.__canaryoFinishBody();
+IncomingMessage.prototype.__canaryoDeliverBytes = function(bytes) {
+    this.__canaryoDeliverChunk(Buffer.from(bytes));
 };
 
 Socket.prototype.setTimeout = function(value, callback) {

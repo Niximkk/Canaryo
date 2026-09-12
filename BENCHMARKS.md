@@ -18,8 +18,8 @@ Startup is measured from process creation until the first complete valid HTTP re
 
 | Application | Runtime | Median | Minimum | Maximum | Canaryo difference |
 |---|---:|---:|---:|---:|---:|
-| `node:http` | Node.js | 54.83 ms | 48.41 ms | 74.50 ms | |
-| `node:http` | Canaryo | 21.55 ms | 10.07 ms | 25.45 ms | 60.7% lower |
+| `node:http` | Node.js | 51.36 ms | 45.87 ms | 54.45 ms | |
+| `node:http` | Canaryo | 25.43 ms | 24.27 ms | 30.81 ms | 50.5% lower |
 | Express 5.2.1 | Node.js | 218.57 ms | 206.50 ms | 224.74 ms | |
 | Express 5.2.1 | Canaryo | 178.58 ms | 165.86 ms | 180.64 ms | 18.3% lower |
 | Fastify 5.12.3 | Node.js | 316.42 ms | 314.90 ms | 332.60 ms | |
@@ -33,8 +33,8 @@ The original Express startup result was 342.99 ms. Direct execution, cached Comm
 
 | Application | Runtime | Requests/s | p50 | p95 | p99 | Errors | RSS | Canaryo throughput difference |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| `node:http` | Node.js | 2,135 | 0.45 ms | 0.62 ms | 0.72 ms | 0 | 38.1 MiB | |
-| `node:http` | Canaryo | 2,484 | 0.38 ms | 0.54 ms | 0.64 ms | 0 | 7.8 MiB | 16.3% higher |
+| `node:http` | Node.js | 2,417 | 0.39 ms | 0.54 ms | 0.62 ms | 0 | 38.0 MiB | |
+| `node:http` | Canaryo | 2,607 | 0.36 ms | 0.51 ms | 0.63 ms | 0 | 12.0 MiB | 7.9% higher |
 | Express 5.2.1 | Node.js | 1,582 | 0.60 ms | 0.84 ms | 1.07 ms | 0 | 54.3 MiB | |
 | Express 5.2.1 | Canaryo | 1,832 | 0.50 ms | 0.74 ms | 1.06 ms | 0 | 10.7 MiB | 15.8% higher |
 | Fastify 5.12.3 | Node.js | 2,056 | 0.47 ms | 0.64 ms | 0.78 ms | 0 | 51.5 MiB | |
@@ -44,8 +44,8 @@ The original Express startup result was 342.99 ms. Direct execution, cached Comm
 
 | Application | Runtime | Requests/s | p50 | p95 | p99 | Errors | RSS | Canaryo throughput difference |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| `node:http` | Node.js | 4,971 | 3.00 ms | 5.29 ms | 7.15 ms | 0 | 40.2 MiB | |
-| `node:http` | Canaryo | 7,569 | 2.01 ms | 2.86 ms | 4.20 ms | 0 | 11.7 MiB | 52.3% higher |
+| `node:http` | Node.js | 6,498 | 2.34 ms | 3.52 ms | 4.40 ms | 0 | 40.4 MiB | |
+| `node:http` | Canaryo | 7,940 | 1.97 ms | 2.67 ms | 3.05 ms | 0 | 8.4 MiB | 22.2% higher |
 | Express 5.2.1 | Node.js | 2,279 | 6.49 ms | 11.43 ms | 16.02 ms | 0 | 62.2 MiB | |
 | Express 5.2.1 | Canaryo | 3,211 | 4.86 ms | 7.44 ms | 9.07 ms | 0 | 10.6 MiB | 40.9% higher |
 | Fastify 5.12.3 | Node.js | 4,166 | 3.53 ms | 6.01 ms | 11.60 ms | 0 | 51.9 MiB | |
@@ -59,8 +59,8 @@ Each benchmark worker opens one HTTP/1.1 connection and reuses it for the comple
 
 | Application | Runtime | Requests/s | p50 | p95 | p99 | Errors | RSS | Canaryo throughput difference |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| `node:http` | Node.js | 16,448 | 0.06 ms | 0.11 ms | 0.15 ms | 0 | 38.9 MiB | |
-| `node:http` | Canaryo | 13,826 | 0.07 ms | 0.11 ms | 0.15 ms | 0 | 7.0 MiB | 15.9% lower |
+| `node:http` | Node.js | 17,481 | 0.05 ms | 0.10 ms | 0.14 ms | 0 | 38.6 MiB | |
+| `node:http` | Canaryo | 13,528 | 0.07 ms | 0.11 ms | 0.22 ms | 0 | 8.4 MiB | 22.6% lower |
 | Express 5.2.1 | Node.js | 6,300 | 0.14 ms | 0.24 ms | 0.35 ms | 0 | 76.3 MiB | |
 | Express 5.2.1 | Canaryo | 4,795 | 0.18 ms | 0.28 ms | 0.36 ms | 0 | 10.5 MiB | 23.9% lower |
 | Fastify 5.12.3 | Node.js | 14,237 | 0.07 ms | 0.11 ms | 0.13 ms | 0 | 52.9 MiB | |
@@ -70,8 +70,8 @@ Each benchmark worker opens one HTTP/1.1 connection and reuses it for the comple
 
 | Application | Runtime | Requests/s | p50 | p95 | p99 | Errors | RSS | Canaryo throughput difference |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| `node:http` | Node.js | 21,421 | 0.69 ms | 1.32 ms | 1.95 ms | 0 | 39.1 MiB | |
-| `node:http` | Canaryo | 28,341 | 0.52 ms | 0.80 ms | 0.98 ms | 0 | 7.1 MiB | 32.3% higher |
+| `node:http` | Node.js | 19,896 | 0.69 ms | 1.78 ms | 2.67 ms | 0 | 40.7 MiB | |
+| `node:http` | Canaryo | 20,928 | 0.67 ms | 1.14 ms | 1.32 ms | 0 | 8.7 MiB | 5.2% higher |
 | Express 5.2.1 | Node.js | 6,318 | 2.35 ms | 3.74 ms | 4.65 ms | 0 | 90.4 MiB | |
 | Express 5.2.1 | Canaryo | 6,476 | 2.28 ms | 3.86 ms | 4.33 ms | 0 | 10.3 MiB | 2.5% higher |
 | Fastify 5.12.3 | Node.js | 18,148 | 0.77 ms | 1.34 ms | 1.77 ms | 0 | 54.5 MiB | |
@@ -79,9 +79,9 @@ Each benchmark worker opens one HTTP/1.1 connection and reuses it for the comple
 
 ## Interpretation
 
-Canaryo starts all three applications faster and uses substantially less resident memory. It leads all three applications when every request opens a connection, including Fastify by 6.1% at concurrency 1 and 22.9% at concurrency 16.
+Canaryo starts all three applications faster and uses substantially less resident memory. It leads all three applications when every request opens a connection. In the latest `node:http` run, it was 7.9% faster at concurrency 1 and 22.2% faster at concurrency 16 while delivering request bodies incrementally.
 
-With persistent connections, Canaryo leads `node:http` and narrowly leads Express at concurrency 16. Node.js remains faster on Fastify, where the latest gap is 42.5% at concurrency 16. Canaryo transfers text responses across the Rust/JavaScript boundary as one string and reuses the socket object for every request on a persistent connection. Outbound HTTP and timed handlers are now scheduled without blocking other connections; the standard Fastify result remained in the same range while gaining that concurrency behavior. The remaining Fastify workload is dominated by framework JavaScript execution, where V8's optimizing JIT has an advantage over QuickJS-NG.
+With persistent connections, Node.js leads the latest single-connection `node:http` run by 22.6%, while Canaryo leads at concurrency 16 by 5.2%. Canaryo also narrowly leads Express at concurrency 16. Node.js remains faster on Fastify, where the latest gap is 42.5% at concurrency 16. Canaryo transfers text responses across the Rust/JavaScript boundary as one string and reuses the socket object for every request on a persistent connection. Outbound HTTP and timed handlers are scheduled without blocking other connections. The remaining Fastify workload is dominated by framework JavaScript execution, where V8's optimizing JIT has an advantage over QuickJS-NG.
 
 ## Methodology
 

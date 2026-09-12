@@ -13,19 +13,30 @@ const MAX_REQUEST_SIZE: usize = 1024 * 1024;
 const MAX_ASYNC_RESPONSE_WAIT: Duration = Duration::from_secs(30);
 const LISTENER: Token = Token(0);
 
-struct Request {
+struct RequestHead {
     method: String,
     url: String,
     version: String,
     headers: Vec<(String, String)>,
-    trailers: Vec<(String, String)>,
-    body: Vec<u8>,
 }
 
-struct ChunkedBody {
-    body: Vec<u8>,
-    trailers: Vec<(String, String)>,
-    consumed: usize,
+enum InboundEvent {
+    Head(RequestHead),
+    Data(Vec<u8>),
+    End(Vec<(String, String)>),
+}
+
+enum RequestBodyState {
+    Head,
+    Fixed { remaining: usize },
+    Chunked(ChunkedBodyState),
+}
+
+enum ChunkedBodyState {
+    Size { received: usize },
+    Data { remaining: usize, received: usize },
+    DataTerminator { received: usize },
+    Trailers { received: usize },
 }
 
 #[derive(Default)]
@@ -36,14 +47,24 @@ struct Response {
     body: Vec<u8>,
 }
 
-#[derive(Default)]
 struct ConnectionReader {
     buffered: Vec<u8>,
+    state: RequestBodyState,
+}
+
+impl Default for ConnectionReader {
+    fn default() -> Self {
+        Self {
+            buffered: Vec::new(),
+            state: RequestBodyState::Head,
+        }
+    }
 }
 
 struct Connection<'js> {
     stream: TcpStream,
     socket: Object<'js>,
+    incoming_request: Option<Object<'js>>,
     pending_responses: VecDeque<PendingResponse<'js>>,
     reader: ConnectionReader,
     outgoing: Vec<u8>,
@@ -130,50 +151,20 @@ pub fn listen<'js>(
 
             let token = event.token();
             let mut remove = event.is_error() || event.is_write_closed();
-            if event.is_readable() && !remove {
-                let batch = connections
-                    .get_mut(&token)
-                    .and_then(|connection| connection.read_requests().ok());
-                match batch {
-                    Some((requests, read_closed)) => {
-                        for request in requests {
-                            let keep_alive = request.keep_alive();
-                            let socket = connections
-                                .get(&token)
-                                .map(|connection| connection.socket.clone())
-                                .expect("connection exists while handling its request");
-                            let response = begin_request(
-                                &context,
-                                &handler,
-                                &request,
-                                &request_prototype,
-                                &response_prototype,
-                                &socket,
-                            )?;
-                            if let Some(connection) = connections.get_mut(&token) {
-                                connection.pending_responses.push_back(PendingResponse {
-                                    object: response,
-                                    keep_alive,
-                                    suppress_body: request.method == "HEAD",
-                                    deadline: Instant::now() + MAX_ASYNC_RESPONSE_WAIT,
-                                });
-                            }
-                            while context.execute_pending_job() {}
-                            if let Some(connection) = connections.get_mut(&token) {
-                                collect_completed_responses(connection)?;
-                            }
-                            if !keep_alive {
-                                break;
-                            }
-                        }
-                        if let Some(connection) = connections.get_mut(&token) {
-                            connection.read_closed |= read_closed || event.is_read_closed();
-                            if connection.flush().is_err() {
-                                remove = true;
-                            }
-                        }
-                    }
-                    None => remove = true,
+            if event.is_readable()
+                && !remove
+                && let Some(connection) = connections.get_mut(&token)
+            {
+                let read_closed = read_and_dispatch_requests(
+                    &context,
+                    &handler,
+                    &request_prototype,
+                    &response_prototype,
+                    connection,
+                )?;
+                connection.read_closed |= read_closed || event.is_read_closed();
+                if connection.flush().is_err() {
+                    remove = true;
                 }
             }
 
@@ -213,8 +204,8 @@ pub fn listen<'js>(
                 }
             }
 
-            if remove {
-                connections.remove(&token);
+            if remove && let Some(mut connection) = connections.remove(&token) {
+                close_connection_objects(&mut connection)?;
             }
         }
     }
@@ -245,6 +236,7 @@ fn accept_connections<'js>(
                         Connection {
                             stream,
                             socket: socket_to_js(context, socket_prototype)?,
+                            incoming_request: None,
                             pending_responses: VecDeque::new(),
                             reader: ConnectionReader::default(),
                             outgoing: Vec::with_capacity(512),
@@ -263,23 +255,28 @@ fn accept_connections<'js>(
 }
 
 impl Connection<'_> {
-    fn read_requests(&mut self) -> std::io::Result<(Vec<Request>, bool)> {
-        let mut requests = Vec::new();
+    fn next_inbound(&mut self) -> std::io::Result<ConnectionRead> {
+        let events = self.reader.parse_events()?;
+        if !events.is_empty() {
+            return Ok(ConnectionRead::Events(events));
+        }
 
-        loop {
-            while let Some(request) = self.reader.parse()? {
-                requests.push(request);
-            }
-
-            let mut chunk = [0_u8; 4096];
-            match self.stream.read(&mut chunk) {
-                Ok(0) => return Ok((requests, true)),
-                Ok(read) => self.reader.push(&chunk[..read])?,
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    return Ok((requests, false));
+        let mut chunk = [0_u8; 16 * 1024];
+        match self.stream.read(&mut chunk) {
+            Ok(0) => Ok(ConnectionRead::Closed),
+            Ok(read) => {
+                self.reader.push(&chunk[..read])?;
+                let events = self.reader.parse_events()?;
+                if events.is_empty() {
+                    Ok(ConnectionRead::Progress)
+                } else {
+                    Ok(ConnectionRead::Events(events))
                 }
-                Err(error) => return Err(error),
             }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                Ok(ConnectionRead::WouldBlock)
+            }
+            Err(error) => Err(error),
         }
     }
 
@@ -302,6 +299,133 @@ impl Connection<'_> {
         self.written = 0;
         Ok(())
     }
+}
+
+enum ConnectionRead {
+    Events(Vec<InboundEvent>),
+    Progress,
+    WouldBlock,
+    Closed,
+}
+
+fn read_and_dispatch_requests<'js>(
+    context: &Ctx<'js>,
+    handler: &Function<'js>,
+    request_prototype: &Object<'js>,
+    response_prototype: &Object<'js>,
+    connection: &mut Connection<'js>,
+) -> Result<bool> {
+    loop {
+        let read = match connection.next_inbound() {
+            Ok(read) => read,
+            Err(_) => {
+                abort_incoming_request(connection)?;
+                return Ok(true);
+            }
+        };
+        match read {
+            ConnectionRead::Events(events) => {
+                let mut progressed_at_end = false;
+                for event in events {
+                    let ends_request = matches!(&event, InboundEvent::End(_));
+                    dispatch_inbound_event(
+                        context,
+                        handler,
+                        request_prototype,
+                        response_prototype,
+                        connection,
+                        event,
+                    )?;
+                    if ends_request {
+                        while context.execute_pending_job() {}
+                        collect_completed_responses(connection)?;
+                        progressed_at_end = true;
+                    } else {
+                        progressed_at_end = false;
+                    }
+                }
+                if !progressed_at_end {
+                    while context.execute_pending_job() {}
+                    collect_completed_responses(connection)?;
+                }
+            }
+            ConnectionRead::Progress => {}
+            ConnectionRead::WouldBlock => return Ok(false),
+            ConnectionRead::Closed => {
+                abort_incoming_request(connection)?;
+                return Ok(true);
+            }
+        }
+    }
+}
+
+fn abort_incoming_request(connection: &mut Connection<'_>) -> Result<()> {
+    let Some(request) = connection.incoming_request.take() else {
+        return Ok(());
+    };
+    request.set("aborted", true)?;
+    request.set("destroyed", true)?;
+    request.set("readable", false)?;
+    let emit: Function = request.get("emit")?;
+    emit.call::<_, bool>((This(request.clone()), "aborted"))?;
+    emit.call::<_, bool>((This(request), "close"))?;
+    Ok(())
+}
+
+fn close_connection_objects(connection: &mut Connection<'_>) -> Result<()> {
+    abort_incoming_request(connection)?;
+    if !connection.socket.get::<_, bool>("destroyed")? {
+        connection.socket.set("destroyed", true)?;
+        connection.socket.set("readable", false)?;
+        connection.socket.set("writable", false)?;
+        let emit: Function = connection.socket.get("emit")?;
+        emit.call::<_, bool>((This(connection.socket.clone()), "close"))?;
+    }
+    Ok(())
+}
+
+fn dispatch_inbound_event<'js>(
+    context: &Ctx<'js>,
+    handler: &Function<'js>,
+    request_prototype: &Object<'js>,
+    response_prototype: &Object<'js>,
+    connection: &mut Connection<'js>,
+    event: InboundEvent,
+) -> Result<()> {
+    match event {
+        InboundEvent::Head(request) => {
+            let keep_alive = request.keep_alive();
+            let suppress_body = request.method == "HEAD";
+            let (request_object, response_object) = begin_request(
+                context,
+                handler,
+                &request,
+                request_prototype,
+                response_prototype,
+                &connection.socket,
+            )?;
+            connection.incoming_request = Some(request_object);
+            connection.pending_responses.push_back(PendingResponse {
+                object: response_object,
+                keep_alive,
+                suppress_body,
+                deadline: Instant::now() + MAX_ASYNC_RESPONSE_WAIT,
+            });
+        }
+        InboundEvent::Data(body) => {
+            let request = connection.incoming_request.as_ref().ok_or_else(|| {
+                Exception::throw_message(context, "HTTP body arrived without request headers")
+            })?;
+            deliver_request_chunk(context, request, &body)?;
+        }
+        InboundEvent::End(trailers) => {
+            let request = connection.incoming_request.take().ok_or_else(|| {
+                Exception::throw_message(context, "HTTP request ended without request headers")
+            })?;
+            finish_request_body(context, request, &trailers)?;
+        }
+    }
+    Ok(())
 }
 
 fn progress_connections<'js>(
@@ -382,11 +506,11 @@ fn next_response_deadline(connections: &HashMap<Token, Connection<'_>>) -> Optio
 fn begin_request<'js>(
     context: &Ctx<'js>,
     handler: &Function<'js>,
-    request: &Request,
+    request: &RequestHead,
     request_prototype: &Object<'js>,
     response_prototype: &Object<'js>,
     socket: &Object<'js>,
-) -> Result<Object<'js>> {
+) -> Result<(Object<'js>, Object<'js>)> {
     let request_object = request_to_js(context, request, request_prototype, socket)?;
     let response_object = response_to_js(context, response_prototype)?;
     let socket: Object = request_object.get("socket")?;
@@ -396,34 +520,24 @@ fn begin_request<'js>(
     response_object.set("connection", socket)?;
 
     handler.call::<_, ()>((request_object.clone(), response_object.clone()))?;
-    let deliver_body: Function = request_object.get("__canaryoDeliverBody")?;
-    deliver_body.call::<_, ()>((This(request_object),))?;
-    Ok(response_object)
+    Ok((request_object, response_object))
 }
 
 fn request_to_js<'js>(
     context: &Ctx<'js>,
-    request: &Request,
+    request: &RequestHead,
     prototype: &Object<'js>,
     socket: &Object<'js>,
 ) -> Result<Object<'js>> {
     let object = Object::new(context.clone())?;
     let headers = Object::new(context.clone())?;
     let raw_headers = Array::new(context.clone())?;
-    let trailers = Object::new(context.clone())?;
-    let raw_trailers = Array::new(context.clone())?;
 
     for (index, (name, value)) in request.headers.iter().enumerate() {
         headers.set(name.as_str(), value.as_str())?;
         raw_headers.set(index * 2, name.as_str())?;
         raw_headers.set(index * 2 + 1, value.as_str())?;
     }
-    for (index, (name, value)) in request.trailers.iter().enumerate() {
-        trailers.set(name.as_str(), value.as_str())?;
-        raw_trailers.set(index * 2, name.as_str())?;
-        raw_trailers.set(index * 2 + 1, value.as_str())?;
-    }
-
     let mut version_parts = request.version.split('.');
     let version_major = version_parts
         .next()
@@ -442,15 +556,8 @@ fn request_to_js<'js>(
     object.set("httpVersionMinor", version_minor)?;
     object.set("headers", headers)?;
     object.set("rawHeaders", raw_headers)?;
-    object.set("trailers", trailers)?;
-    object.set("rawTrailers", raw_trailers)?;
-    let body = String::from_utf8_lossy(&request.body);
-    object.set("body", body.as_ref())?;
-    let raw_body = Array::new(context.clone())?;
-    for (index, byte) in request.body.iter().enumerate() {
-        raw_body.set(index, *byte)?;
-    }
-    object.set("__canaryoBody", raw_body)?;
+    object.set("trailers", Object::new(context.clone())?)?;
+    object.set("rawTrailers", Array::new(context.clone())?)?;
     object.set("aborted", false)?;
     object.set("complete", false)?;
     object.set("destroyed", false)?;
@@ -460,6 +567,42 @@ fn request_to_js<'js>(
     object.set("connection", socket.clone())?;
     object.set_prototype(Some(prototype))?;
     Ok(object)
+}
+
+fn deliver_request_chunk<'js>(
+    context: &Ctx<'js>,
+    request: &Object<'js>,
+    body: &[u8],
+) -> Result<()> {
+    if body.is_empty() {
+        return Ok(());
+    }
+    let bytes = Array::new(context.clone())?;
+    for (index, byte) in body.iter().enumerate() {
+        bytes.set(index, *byte)?;
+    }
+    let deliver: Function = request.get("__canaryoDeliverBytes")?;
+    deliver.call::<_, ()>((This(request.clone()), bytes))
+}
+
+fn finish_request_body<'js>(
+    context: &Ctx<'js>,
+    request: Object<'js>,
+    trailers: &[(String, String)],
+) -> Result<()> {
+    if !trailers.is_empty() {
+        let trailer_object = Object::new(context.clone())?;
+        let raw_trailers = Array::new(context.clone())?;
+        for (index, (name, value)) in trailers.iter().enumerate() {
+            trailer_object.set(name.as_str(), value.as_str())?;
+            raw_trailers.set(index * 2, name.as_str())?;
+            raw_trailers.set(index * 2 + 1, value.as_str())?;
+        }
+        request.set("trailers", trailer_object)?;
+        request.set("rawTrailers", raw_trailers)?;
+    }
+    let finish: Function = request.get("__canaryoFinishBody")?;
+    finish.call::<_, ()>((This(request),))
 }
 
 fn socket_to_js<'js>(context: &Ctx<'js>, prototype: &Object<'js>) -> Result<Object<'js>> {
@@ -520,7 +663,7 @@ fn response_from_js(response: &Object<'_>) -> Result<Response> {
     })
 }
 
-impl Request {
+impl RequestHead {
     fn keep_alive(&self) -> bool {
         let connection = self
             .headers
@@ -555,164 +698,203 @@ impl ConnectionReader {
         Ok(())
     }
 
-    fn parse(&mut self) -> std::io::Result<Option<Request>> {
-        let Some(header_position) = find_bytes(&self.buffered, b"\r\n\r\n") else {
-            return Ok(None);
-        };
-        let header_end = header_position + 4;
+    fn parse_events(&mut self) -> std::io::Result<Vec<InboundEvent>> {
+        let mut events = Vec::new();
+        loop {
+            match self.state {
+                RequestBodyState::Head => {
+                    let Some(header_position) = find_bytes(&self.buffered, b"\r\n\r\n") else {
+                        break;
+                    };
+                    let header_end = header_position + 4;
+                    let (request, body_state) =
+                        parse_request_head(&self.buffered[..header_position])?;
+                    self.buffered.drain(..header_end);
+                    self.state = body_state;
+                    events.push(InboundEvent::Head(request));
+                    if matches!(self.state, RequestBodyState::Fixed { remaining: 0 }) {
+                        self.state = RequestBodyState::Head;
+                        events.push(InboundEvent::End(Vec::new()));
+                    }
+                }
+                RequestBodyState::Fixed { remaining } => {
+                    if self.buffered.is_empty() {
+                        break;
+                    }
+                    let length = remaining.min(self.buffered.len()).min(16 * 1024);
+                    events.push(InboundEvent::Data(self.buffered.drain(..length).collect()));
+                    let remaining = remaining - length;
+                    if remaining == 0 {
+                        self.state = RequestBodyState::Head;
+                        events.push(InboundEvent::End(Vec::new()));
+                    } else {
+                        self.state = RequestBodyState::Fixed { remaining };
+                    }
+                }
+                RequestBodyState::Chunked(ChunkedBodyState::Size { received }) => {
+                    let Some(line_length) = find_bytes(&self.buffered, b"\r\n") else {
+                        break;
+                    };
+                    let size_line =
+                        std::str::from_utf8(&self.buffered[..line_length]).map_err(|error| {
+                            std::io::Error::new(std::io::ErrorKind::InvalidData, error)
+                        })?;
+                    let size =
+                        usize::from_str_radix(size_line.split(';').next().unwrap_or("").trim(), 16)
+                            .map_err(|error| {
+                                std::io::Error::new(std::io::ErrorKind::InvalidData, error)
+                            })?;
+                    self.buffered.drain(..line_length + 2);
+                    self.state = if size == 0 {
+                        RequestBodyState::Chunked(ChunkedBodyState::Trailers { received })
+                    } else {
+                        RequestBodyState::Chunked(ChunkedBodyState::Data {
+                            remaining: size,
+                            received,
+                        })
+                    };
+                }
+                RequestBodyState::Chunked(ChunkedBodyState::Data {
+                    remaining,
+                    received,
+                }) => {
+                    if self.buffered.is_empty() {
+                        break;
+                    }
+                    let length = remaining.min(self.buffered.len()).min(16 * 1024);
+                    let received = received.checked_add(length).ok_or_else(request_too_large)?;
+                    if received > MAX_REQUEST_SIZE {
+                        return Err(request_too_large());
+                    }
+                    events.push(InboundEvent::Data(self.buffered.drain(..length).collect()));
+                    let remaining = remaining - length;
+                    self.state = if remaining == 0 {
+                        RequestBodyState::Chunked(ChunkedBodyState::DataTerminator { received })
+                    } else {
+                        RequestBodyState::Chunked(ChunkedBodyState::Data {
+                            remaining,
+                            received,
+                        })
+                    };
+                }
+                RequestBodyState::Chunked(ChunkedBodyState::DataTerminator { received }) => {
+                    if self.buffered.len() < 2 {
+                        break;
+                    }
+                    if &self.buffered[..2] != b"\r\n" {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "chunk HTTP sem terminador CRLF",
+                        ));
+                    }
+                    self.buffered.drain(..2);
+                    self.state = RequestBodyState::Chunked(ChunkedBodyState::Size { received });
+                }
+                RequestBodyState::Chunked(ChunkedBodyState::Trailers { received }) => {
+                    if self.buffered.starts_with(b"\r\n") {
+                        self.buffered.drain(..2);
+                        self.state = RequestBodyState::Head;
+                        events.push(InboundEvent::End(Vec::new()));
+                        continue;
+                    }
+                    let Some(trailer_length) = find_bytes(&self.buffered, b"\r\n\r\n") else {
+                        self.state =
+                            RequestBodyState::Chunked(ChunkedBodyState::Trailers { received });
+                        break;
+                    };
+                    let trailer_text = std::str::from_utf8(&self.buffered[..trailer_length])
+                        .map_err(|error| {
+                            std::io::Error::new(std::io::ErrorKind::InvalidData, error)
+                        })?;
+                    let trailers = parse_trailers(trailer_text)?;
+                    self.buffered.drain(..trailer_length + 4);
+                    self.state = RequestBodyState::Head;
+                    events.push(InboundEvent::End(trailers));
+                }
+            }
+        }
+        Ok(events)
+    }
+}
 
-        let head = std::str::from_utf8(&self.buffered[..header_end - 4])
-            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-        let mut lines = head.split("\r\n");
-        let request_line = lines.next().ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, "linha HTTP ausente")
+fn parse_request_head(data: &[u8]) -> std::io::Result<(RequestHead, RequestBodyState)> {
+    let head = std::str::from_utf8(data)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    let mut lines = head.split("\r\n");
+    let request_line = lines.next().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, "linha HTTP ausente")
+    })?;
+    let mut request_parts = request_line.split_whitespace();
+    let method = required_part(request_parts.next(), "método HTTP ausente")?.to_string();
+    let url = required_part(request_parts.next(), "URL ausente")?.to_string();
+    let version = required_part(request_parts.next(), "versão HTTP ausente")?
+        .trim_start_matches("HTTP/")
+        .to_string();
+    let mut headers = Vec::new();
+    for line in lines {
+        let (name, value) = line.split_once(':').ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "cabeçalho HTTP inválido")
         })?;
-        let mut request_parts = request_line.split_whitespace();
-        let method = required_part(request_parts.next(), "método HTTP ausente")?.to_string();
-        let url = required_part(request_parts.next(), "URL ausente")?.to_string();
-        let version = required_part(request_parts.next(), "versão HTTP ausente")?
-            .trim_start_matches("HTTP/")
-            .to_string();
-        let mut headers = Vec::new();
-
-        for line in lines {
-            let (name, value) = line.split_once(':').ok_or_else(|| {
-                std::io::Error::new(std::io::ErrorKind::InvalidData, "cabeçalho HTTP inválido")
-            })?;
-            headers.push((name.trim().to_ascii_lowercase(), value.trim().to_string()));
+        headers.push((name.trim().to_ascii_lowercase(), value.trim().to_string()));
+    }
+    let content_length = headers
+        .iter()
+        .find(|(name, _)| name == "content-length")
+        .map(|(_, value)| {
+            value
+                .parse::<usize>()
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+        })
+        .transpose()?;
+    let chunked = headers.iter().any(|(name, value)| {
+        name == "transfer-encoding"
+            && value
+                .split(',')
+                .any(|token| token.trim().eq_ignore_ascii_case("chunked"))
+    });
+    if chunked && content_length.is_some() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "content-length e transfer-encoding chunked não podem ser combinados",
+        ));
+    }
+    if content_length.is_some_and(|length| length > MAX_REQUEST_SIZE) {
+        return Err(request_too_large());
+    }
+    let state = if chunked {
+        RequestBodyState::Chunked(ChunkedBodyState::Size { received: 0 })
+    } else {
+        RequestBodyState::Fixed {
+            remaining: content_length.unwrap_or(0),
         }
-
-        let content_length = headers
-            .iter()
-            .find(|(name, _)| name == "content-length")
-            .map(|(_, value)| {
-                value
-                    .parse::<usize>()
-                    .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
-            })
-            .transpose()?;
-        let chunked = headers.iter().any(|(name, value)| {
-            name == "transfer-encoding"
-                && value
-                    .split(',')
-                    .any(|token| token.trim().eq_ignore_ascii_case("chunked"))
-        });
-        if chunked && content_length.is_some() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "content-length e transfer-encoding chunked não podem ser combinados",
-            ));
-        }
-
-        let (body, trailers, expected_size) = if chunked {
-            let Some(chunked_body) = parse_chunked_body(&self.buffered[header_end..])? else {
-                return Ok(None);
-            };
-            (
-                chunked_body.body,
-                chunked_body.trailers,
-                header_end + chunked_body.consumed,
-            )
-        } else {
-            let expected_size = header_end + content_length.unwrap_or(0);
-            if expected_size > MAX_REQUEST_SIZE {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "requisição excede o limite de 1 MiB",
-                ));
-            }
-            if self.buffered.len() < expected_size {
-                return Ok(None);
-            }
-            (
-                self.buffered[header_end..expected_size].to_vec(),
-                Vec::new(),
-                expected_size,
-            )
-        };
-
-        let remaining = self.buffered.split_off(expected_size);
-        self.buffered = remaining;
-        Ok(Some(Request {
+    };
+    Ok((
+        RequestHead {
             method,
             url,
             version,
             headers,
-            trailers,
-            body,
-        }))
-    }
+        },
+        state,
+    ))
 }
 
-fn parse_chunked_body(data: &[u8]) -> std::io::Result<Option<ChunkedBody>> {
-    let mut body = Vec::new();
-    let mut cursor = 0;
+fn parse_trailers(data: &str) -> std::io::Result<Vec<(String, String)>> {
+    data.split("\r\n")
+        .map(|line| {
+            let (name, value) = line.split_once(':').ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "trailer HTTP inválido")
+            })?;
+            Ok((name.trim().to_ascii_lowercase(), value.trim().to_string()))
+        })
+        .collect()
+}
 
-    loop {
-        let Some(line_length) = find_bytes(&data[cursor..], b"\r\n") else {
-            return Ok(None);
-        };
-        let size_line = std::str::from_utf8(&data[cursor..cursor + line_length])
-            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-        let size = usize::from_str_radix(size_line.split(';').next().unwrap_or("").trim(), 16)
-            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-        cursor += line_length + 2;
-
-        if size == 0 {
-            if data.len() < cursor + 2 {
-                return Ok(None);
-            }
-            if &data[cursor..cursor + 2] == b"\r\n" {
-                return Ok(Some(ChunkedBody {
-                    body,
-                    trailers: Vec::new(),
-                    consumed: cursor + 2,
-                }));
-            }
-
-            let Some(trailer_length) = find_bytes(&data[cursor..], b"\r\n\r\n") else {
-                return Ok(None);
-            };
-            let trailer_text = std::str::from_utf8(&data[cursor..cursor + trailer_length])
-                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-            let mut trailers = Vec::new();
-            for line in trailer_text.split("\r\n") {
-                let (name, value) = line.split_once(':').ok_or_else(|| {
-                    std::io::Error::new(std::io::ErrorKind::InvalidData, "trailer HTTP inválido")
-                })?;
-                trailers.push((name.trim().to_ascii_lowercase(), value.trim().to_string()));
-            }
-            return Ok(Some(ChunkedBody {
-                body,
-                trailers,
-                consumed: cursor + trailer_length + 4,
-            }));
-        }
-
-        let chunk_end = cursor.checked_add(size).ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, "chunk HTTP inválido")
-        })?;
-        let terminated_end = chunk_end.checked_add(2).ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, "chunk HTTP inválido")
-        })?;
-        if data.len() < terminated_end {
-            return Ok(None);
-        }
-        if &data[chunk_end..terminated_end] != b"\r\n" {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "chunk HTTP sem terminador CRLF",
-            ));
-        }
-        body.extend_from_slice(&data[cursor..chunk_end]);
-        if body.len() > MAX_REQUEST_SIZE {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "corpo da requisição excede o limite de 1 MiB",
-            ));
-        }
-        cursor = terminated_end;
-    }
+fn request_too_large() -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        "corpo da requisição excede o limite de 1 MiB",
+    )
 }
 
 fn required_part<'a>(part: Option<&'a str>, message: &str) -> std::io::Result<&'a str> {
@@ -797,13 +979,11 @@ mod tests {
 
     #[test]
     fn keeps_http_11_connections_open_by_default() {
-        let request = Request {
+        let request = RequestHead {
             method: "GET".into(),
             url: "/".into(),
             version: "1.1".into(),
             headers: Vec::new(),
-            trailers: Vec::new(),
-            body: Vec::new(),
         };
 
         assert!(request.keep_alive());
@@ -818,14 +998,21 @@ mod tests {
             )
             .unwrap();
 
-        let first = reader.parse().unwrap().unwrap();
-        let second = reader.parse().unwrap().unwrap();
+        let events = reader.parse_events().unwrap();
+        let heads = events
+            .iter()
+            .filter_map(|event| match event {
+                InboundEvent::Head(request) => Some(request),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
 
-        assert_eq!(first.url, "/first");
-        assert!(first.keep_alive());
-        assert_eq!(second.url, "/second");
-        assert!(!second.keep_alive());
-        assert!(reader.parse().unwrap().is_none());
+        assert_eq!(heads.len(), 2);
+        assert_eq!(heads[0].url, "/first");
+        assert!(heads[0].keep_alive());
+        assert_eq!(heads[1].url, "/second");
+        assert!(!heads[1].keep_alive());
+        assert!(reader.parse_events().unwrap().is_empty());
     }
 
     #[test]
@@ -837,14 +1024,30 @@ mod tests {
             )
             .unwrap();
 
-        let chunked = reader.parse().unwrap().unwrap();
-        let next = reader.parse().unwrap().unwrap();
+        let events = reader.parse_events().unwrap();
+        let body = events
+            .iter()
+            .filter_map(|event| match event {
+                InboundEvent::Data(chunk) => Some(chunk.as_slice()),
+                _ => None,
+            })
+            .flatten()
+            .copied()
+            .collect::<Vec<_>>();
+        let trailers = events.iter().find_map(|event| match event {
+            InboundEvent::End(trailers) if !trailers.is_empty() => Some(trailers),
+            _ => None,
+        });
+        let next = events.iter().find_map(|event| match event {
+            InboundEvent::Head(request) if request.url == "/next" => Some(request),
+            _ => None,
+        });
 
-        assert_eq!(chunked.body, b"Wikipedia");
+        assert_eq!(body, b"Wikipedia");
         assert_eq!(
-            chunked.trailers,
-            vec![("x-checksum".into(), "abc123".into())]
+            trailers.unwrap(),
+            &vec![("x-checksum".into(), "abc123".into())]
         );
-        assert_eq!(next.url, "/next");
+        assert_eq!(next.unwrap().url, "/next");
     }
 }

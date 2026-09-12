@@ -3,6 +3,10 @@ const port = Number(process.argv[2] || 3000);
 let listenReturned = false;
 
 http.createServer((request, response) => {
+    if (request.url === "/first-chunk") {
+        request.once("data", chunk => response.end(`first:${chunk.toString()}`));
+        return;
+    }
     if (request.url === "/echo") {
         const chunks = [];
         request.on("data", chunk => chunks.push(chunk));
