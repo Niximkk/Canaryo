@@ -143,7 +143,7 @@ flowchart LR
 | Area | Status | Current scope |
 |---|---|---|
 | CommonJS | Supported | Relative modules, JSON, package `main` and `exports`, conditional and wildcard exports, scoped packages, cache, upward `node_modules` lookup, and common `node:module` helpers. |
-| `node:http` | Partial | Non-blocking servers, persistent HTTP/1.1 connections, pipelining, request bodies and trailers, binary payloads, `HEAD`, response lifecycle and headers, plus outbound `request` and `get`. Outbound uploads and responses stream through bounded queues, support pause/resume, timeouts and aborts, and reuse a shared connection pool. Custom agents, redirects and some socket options remain incomplete. |
+| `node:http` | Partial | Non-blocking servers, persistent HTTP/1.1 connections, pipelining, request bodies and trailers, binary payloads, `HEAD`, response lifecycle and headers, plus outbound `request` and `get`. Outbound uploads and responses stream through bounded queues and support pause/resume, timeouts and aborts. `Agent` provides isolated pools, keep-alive, socket limits, `maxFreeSockets`, `agent: false`, `getName`, and pool destruction. Responses with redirects are delivered as 3xx, matching Node. Advanced socket creation and live pool introspection remain incomplete. |
 | Express | Partial | Express 5.2.1 startup, basic routing, JSON request parsing, and JSON responses. |
 | Fastify | Partial | Fastify 5.12.3 startup, parameterized routes, query strings, request/response hooks, JSON request parsing, async and timed handlers, JSON responses, and built-in Pino request logging. Plugin compatibility varies with the Node.js APIs each plugin uses. |
 | Promises and timers | Partial | Promise jobs, `AsyncResource`, `process.nextTick`, `queueMicrotask`, `setImmediate`, `setTimeout`, and `setInterval` in the native HTTP event loop. Standalone event-loop lifetime and timer handle behavior remain incomplete. |
@@ -159,7 +159,7 @@ flowchart LR
 | Filesystem APIs | Partial | Buffer-aware read, write, append, stat, exists, access, mkdir, readdir, and file streams through synchronous, callback, and `fs/promises` APIs. Watches, links, permissions, real file descriptors, and positional writes remain incomplete. |
 | ESM | Partial | Native `.mjs` and `type: module` execution, relative imports, package `import` conditions, JSON loading, named imports from common built-ins, default CommonJS interop, and static detection of `exports.name`. Dynamic CJS exports and some Node resolution rules remain incomplete. |
 | Keep-alive | Supported | Connections persist by default on HTTP/1.1 and honor `Connection: close`. |
-| TLS | Partial | Asynchronous outbound `node:https` `request` and `get` validate public certificates through rustls and WebPKI roots and stream response bodies. Inbound HTTPS servers, custom agents and client certificates remain incomplete. |
+| TLS | Partial | Asynchronous outbound `node:https` `request` and `get` validate public certificates through rustls and WebPKI roots, stream request and response bodies, and support independent HTTPS agents. Inbound HTTPS servers, custom trust stores and client certificates remain incomplete. |
 | Native `.node` addons | Unsupported | Native Node.js ABI modules cannot be loaded. |
 
 `canaryo check` reports one of three project-level outcomes:

@@ -261,6 +261,159 @@ fn streams_outbound_request_bodies_before_end() {
 }
 
 #[test]
+fn isolates_and_reuses_custom_http_agent_connections() {
+    fn read_headers(stream: &mut TcpStream) -> String {
+        let mut request = Vec::new();
+        while !request.ends_with(b"\r\n\r\n") {
+            let mut byte = [0];
+            stream.read_exact(&mut byte).unwrap();
+            request.push(byte[0]);
+        }
+        String::from_utf8(request).unwrap()
+    }
+
+    let upstream = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let upstream_port = upstream.local_addr().unwrap().port();
+    let upstream_thread = thread::spawn(move || {
+        let (mut pooled_stream, _) = upstream.accept().unwrap();
+        pooled_stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let first = read_headers(&mut pooled_stream);
+        pooled_stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\na")
+            .unwrap();
+        let second = read_headers(&mut pooled_stream);
+        pooled_stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nb")
+            .unwrap();
+
+        let (mut separate_stream, _) = upstream.accept().unwrap();
+        let third = read_headers(&mut separate_stream);
+        separate_stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\nConnection: close\r\n\r\nc")
+            .unwrap();
+        (first, second, third)
+    });
+    let (_server, mut stream) = start_fixture_with_args(
+        "fixtures/http-client/server.js",
+        &[upstream_port.to_string()],
+        Stdio::null(),
+    );
+
+    stream
+        .write_all(b"GET /agent HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    let (first, second, third) = upstream_thread.join().unwrap();
+
+    assert!(first.starts_with("GET /agent/one HTTP/1.1"));
+    assert!(second.starts_with("GET /agent/two HTTP/1.1"));
+    assert!(third.starts_with("GET /agent/three HTTP/1.1"));
+    assert!(
+        response.ends_with(&format!("abc:true:127.0.0.1:{upstream_port}:")),
+        "{response}"
+    );
+}
+
+#[test]
+fn returns_redirect_responses_without_following_them() {
+    let upstream = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let upstream_port = upstream.local_addr().unwrap().port();
+    let upstream_thread = thread::spawn(move || {
+        let (mut stream, _) = upstream.accept().unwrap();
+        let mut request = Vec::new();
+        while !request.ends_with(b"\r\n\r\n") {
+            let mut byte = [0];
+            stream.read_exact(&mut byte).unwrap();
+            request.push(byte[0]);
+        }
+        stream
+            .write_all(
+                b"HTTP/1.1 302 Found\r\nLocation: /redirect/final\r\nContent-Length: 8\r\nConnection: close\r\n\r\nredirect",
+            )
+            .unwrap();
+        String::from_utf8(request).unwrap()
+    });
+    let (_server, mut stream) = start_fixture_with_args(
+        "fixtures/http-client/server.js",
+        &[upstream_port.to_string()],
+        Stdio::null(),
+    );
+
+    stream
+        .write_all(b"GET /redirect HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+
+    assert!(
+        upstream_thread
+            .join()
+            .unwrap()
+            .starts_with("GET /redirect/source HTTP/1.1")
+    );
+    assert!(response.ends_with("302:redirect"), "{response}");
+}
+
+#[test]
+fn queues_requests_at_the_custom_agent_socket_limit() {
+    fn read_headers(stream: &mut TcpStream) -> String {
+        let mut request = Vec::new();
+        while !request.ends_with(b"\r\n\r\n") {
+            let mut byte = [0];
+            stream.read_exact(&mut byte).unwrap();
+            request.push(byte[0]);
+        }
+        String::from_utf8(request).unwrap()
+    }
+
+    let upstream = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let upstream_port = upstream.local_addr().unwrap().port();
+    let upstream_thread = thread::spawn(move || {
+        let (mut pooled_stream, _) = upstream.accept().unwrap();
+        pooled_stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let first = read_headers(&mut pooled_stream);
+
+        upstream.set_nonblocking(true).unwrap();
+        thread::sleep(Duration::from_millis(150));
+        match upstream.accept() {
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            Ok(_) => panic!("maxSockets allowed a second simultaneous connection"),
+            Err(error) => panic!("unexpected accept error: {error}"),
+        }
+        pooled_stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\na")
+            .unwrap();
+        let second = read_headers(&mut pooled_stream);
+        pooled_stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\nConnection: close\r\n\r\nb")
+            .unwrap();
+        (first, second)
+    });
+    let (_server, mut stream) = start_fixture_with_args(
+        "fixtures/http-client/server.js",
+        &[upstream_port.to_string()],
+        Stdio::null(),
+    );
+
+    stream
+        .write_all(b"GET /agent-limit HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    let (first, second) = upstream_thread.join().unwrap();
+
+    assert!(first.contains("/limit/one") || first.contains("/limit/two"));
+    assert!(second.contains("/limit/one") || second.contains("/limit/two"));
+    assert_ne!(first, second);
+    assert!(response.ends_with("ab"), "{response}");
+}
+
+#[test]
 fn keeps_serving_while_an_outbound_request_is_pending() {
     let upstream = TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let upstream_port = upstream.local_addr().unwrap().port();

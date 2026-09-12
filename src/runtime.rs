@@ -5,7 +5,7 @@ use std::{
     net::{IpAddr, ToSocketAddrs},
     path::Path,
     sync::{
-        Arc, Mutex,
+        Arc, Condvar, Mutex,
         atomic::{AtomicU64, Ordering},
         mpsc::{Receiver, SyncSender, sync_channel},
     },
@@ -213,14 +213,24 @@ function normalizeClientRequest(input, options, defaultProtocol) {
         port: values.port || "",
         path,
         headers: Object.assign({}, values.headers || {}),
-        timeout: Number(values.timeout) || 0
+        timeout: Number(values.timeout) || 0,
+        agent: values.agent
     };
 }
 
-function ClientRequest(input, options, callback, defaultProtocol = "http:") {
+function ClientRequest(input, options, callback, defaultProtocol = "http:", defaultAgent) {
     const EventEmitter = ensureHttpEventPrototypes();
     EventEmitter.call(this);
     const normalized = normalizeClientRequest(input, options, defaultProtocol);
+    const requestAgent = normalized.agent === undefined
+        ? (defaultAgent || (normalized.protocol === "https:" ? httpsGlobalAgent : globalAgent))
+        : normalized.agent;
+    if (requestAgent !== false && (!requestAgent || requestAgent.__canaryoAgentId === undefined)) {
+        throw new TypeError("options.agent must be an instance of Agent or false");
+    }
+    if (requestAgent && requestAgent.protocol !== normalized.protocol) {
+        throw new Error(`Protocol ${normalized.protocol} not supported by Agent using ${requestAgent.protocol}`);
+    }
     this.method = normalized.method;
     this.protocol = normalized.protocol;
     this.host = normalized.hostname;
@@ -228,7 +238,9 @@ function ClientRequest(input, options, callback, defaultProtocol = "http:") {
     this.finished = false;
     this.writableEnded = false;
     this.destroyed = false;
-    this.timeout = normalized.timeout;
+    this.timeout = normalized.timeout || Number(requestAgent && requestAgent.options.timeout) || 0;
+    this.agent = requestAgent;
+    this._agentId = requestAgent === false ? 0 : requestAgent.__canaryoAgentId;
     this._url = normalized.url;
     this._headers = Object.create(null);
     for (const [name, value] of Object.entries(normalized.headers)) this.setHeader(name, value);
@@ -254,7 +266,8 @@ ClientRequest.prototype.__canaryoStart = function(hasBody) {
         this.method,
         this._url,
         JSON.stringify(Object.entries(this._headers)),
-        Boolean(hasBody)
+        Boolean(hasBody),
+        this._agentId
     );
     this.headersSent = true;
     pendingClientRequests.set(this._requestId, this);
@@ -321,13 +334,57 @@ ClientRequest.prototype.setTimeout = function(timeout, callback) {
     return this;
 };
 
-function clientRequest(defaultProtocol, input, options, callback) {
+function clientRequest(defaultProtocol, defaultAgent, input, options, callback) {
     if (typeof options === "function") { callback = options; options = undefined; }
-    return new ClientRequest(input, options, callback, defaultProtocol);
+    return new ClientRequest(input, options, callback, defaultProtocol, defaultAgent);
 }
-function Agent(options = {}) { this.options = options; }
-Agent.prototype.destroy = function() {};
+function Agent(options = {}) {
+    this.options = Object.assign({}, options);
+    this.protocol = options.protocol || "http:";
+    this.keepAlive = Boolean(options.keepAlive);
+    this.keepAliveMsecs = Number(options.keepAliveMsecs) || 1000;
+    this.maxSockets = options.maxSockets === undefined ? Agent.defaultMaxSockets : Number(options.maxSockets);
+    this.maxFreeSockets = options.maxFreeSockets === undefined ? 256 : Number(options.maxFreeSockets);
+    this.maxTotalSockets = options.maxTotalSockets === undefined ? Infinity : Number(options.maxTotalSockets);
+    this.scheduling = options.scheduling || "lifo";
+    this.requests = Object.create(null);
+    this.sockets = Object.create(null);
+    this.freeSockets = Object.create(null);
+    this.__canaryoAgentId = __canaryoHttpAgentCreate(JSON.stringify({
+        protocol: this.protocol,
+        keepAlive: this.keepAlive,
+        maxFreeSockets: this.maxFreeSockets,
+        maxSockets: Number.isFinite(this.maxSockets) ? this.maxSockets : null,
+        maxTotalSockets: Number.isFinite(this.maxTotalSockets) ? this.maxTotalSockets : null,
+        timeout: Number(options.timeout) || 0,
+        noDelay: options.noDelay !== false
+    }));
+}
+Agent.defaultMaxSockets = Infinity;
+Agent.prototype.getName = function(options = {}) {
+    const host = options.host || options.hostname || "localhost";
+    const port = options.port || (this.protocol === "https:" ? 443 : 80);
+    return `${host}:${port}:${options.localAddress || ""}`;
+};
+Agent.prototype.destroy = function() {
+    __canaryoHttpAgentDestroy(this.__canaryoAgentId);
+    this.__canaryoAgentId = __canaryoHttpAgentCreate(JSON.stringify({
+        protocol: this.protocol,
+        keepAlive: this.keepAlive,
+        maxFreeSockets: this.maxFreeSockets,
+        maxSockets: Number.isFinite(this.maxSockets) ? this.maxSockets : null,
+        maxTotalSockets: Number.isFinite(this.maxTotalSockets) ? this.maxTotalSockets : null,
+        timeout: Number(this.options.timeout) || 0,
+        noDelay: this.options.noDelay !== false
+    }));
+};
+function HttpsAgent(options = {}) {
+    Agent.call(this, Object.assign({}, options, { protocol: "https:" }));
+}
+HttpsAgent.prototype = Object.create(Agent.prototype, { constructor: { value: HttpsAgent } });
+HttpsAgent.defaultMaxSockets = Agent.defaultMaxSockets;
 const globalAgent = new Agent({ keepAlive: true });
+const httpsGlobalAgent = new HttpsAgent({ keepAlive: true });
 const pendingClientRequests = new Map();
 
 function finishClientRequest(request) {
@@ -388,9 +445,9 @@ const httpModule = Object.freeze({
     globalAgent,
     METHODS: ["GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH"],
     STATUS_CODES: { 200: "OK", 201: "Created", 202: "Accepted", 204: "No Content", 400: "Bad Request", 404: "Not Found", 500: "Internal Server Error", 504: "Gateway Timeout" },
-    request(input, options, callback) { return clientRequest("http:", input, options, callback); },
+    request(input, options, callback) { return clientRequest("http:", globalAgent, input, options, callback); },
     get(input, options, callback) {
-        const request = clientRequest("http:", input, options, callback);
+        const request = clientRequest("http:", globalAgent, input, options, callback);
         request.end();
         return request;
     },
@@ -468,10 +525,11 @@ const httpModule = Object.freeze({
     }
 });
 const httpsModule = Object.freeze(Object.assign({}, httpModule, {
-    globalAgent: new Agent({ keepAlive: true, protocol: "https:" }),
-    request(input, options, callback) { return clientRequest("https:", input, options, callback); },
+    Agent: HttpsAgent,
+    globalAgent: httpsGlobalAgent,
+    request(input, options, callback) { return clientRequest("https:", httpsGlobalAgent, input, options, callback); },
     get(input, options, callback) {
-        const request = clientRequest("https:", input, options, callback);
+        const request = clientRequest("https:", httpsGlobalAgent, input, options, callback);
         request.end();
         return request;
     },
@@ -722,18 +780,39 @@ fn install_host_globals<'js>(
     let (http_sender, http_receiver) = sync_channel(64);
     let http_runtime = Arc::new(OutboundHttpRuntime {
         sender: http_sender,
-        next_id: Arc::new(AtomicU64::new(1)),
-        agent: ureq::AgentBuilder::new()
-            .timeout(Duration::from_secs(30))
-            .build(),
+        next_request_id: AtomicU64::new(1),
+        next_agent_id: AtomicU64::new(1),
+        agents: Mutex::new(HashMap::new()),
         uploads: Mutex::new(HashMap::new()),
     });
+    let http_agent_create = {
+        let runtime = Arc::clone(&http_runtime);
+        Function::new(context.clone(), move |context, options| {
+            create_outbound_http_agent(context, options, &runtime)
+        })
+        .map_err(|error| error.to_string())?
+    };
+    globals
+        .set("__canaryoHttpAgentCreate", http_agent_create)
+        .map_err(|error| error.to_string())?;
+    let http_agent_destroy = {
+        let runtime = Arc::clone(&http_runtime);
+        Function::new(context.clone(), move |id| {
+            destroy_outbound_http_agent(id, &runtime)
+        })
+        .map_err(|error| error.to_string())?
+    };
+    globals
+        .set("__canaryoHttpAgentDestroy", http_agent_destroy)
+        .map_err(|error| error.to_string())?;
     let http_request = {
         let runtime = Arc::clone(&http_runtime);
         Function::new(
             context.clone(),
-            move |context, method, url, headers, has_body| {
-                start_outbound_http_request(context, method, url, headers, has_body, &runtime)
+            move |context, method, url, headers, has_body, agent_id| {
+                start_outbound_http_request(
+                    context, method, url, headers, has_body, agent_id, &runtime,
+                )
             },
         )
         .map_err(|error| error.to_string())?
@@ -955,9 +1034,155 @@ enum OutboundHttpEvent {
 
 struct OutboundHttpRuntime {
     sender: SyncSender<OutboundHttpEvent>,
-    next_id: Arc<AtomicU64>,
-    agent: ureq::Agent,
+    next_request_id: AtomicU64,
+    next_agent_id: AtomicU64,
+    agents: Mutex<HashMap<u64, OutboundHttpAgent>>,
     uploads: Mutex<HashMap<u64, SyncSender<OutboundHttpUpload>>>,
+}
+
+struct OutboundHttpAgentOptions {
+    protocol: String,
+    keep_alive: bool,
+    max_free_sockets: usize,
+    max_sockets: usize,
+    max_total_sockets: usize,
+    timeout: Duration,
+    no_delay: bool,
+}
+
+impl OutboundHttpAgentOptions {
+    fn parse<'js>(context: &rquickjs::Ctx<'js>, json: &str) -> rquickjs::Result<Self> {
+        let value: serde_json::Value = serde_json::from_str(json)
+            .map_err(|error| rquickjs::Exception::throw_message(context, &error.to_string()))?;
+        let max_free_sockets = value
+            .get("maxFreeSockets")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(256)
+            .min(usize::MAX as u64) as usize;
+        Ok(Self {
+            protocol: value
+                .get("protocol")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("http:")
+                .to_string(),
+            keep_alive: value
+                .get("keepAlive")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+            max_free_sockets,
+            max_sockets: parse_http_socket_limit(&value, "maxSockets"),
+            max_total_sockets: parse_http_socket_limit(&value, "maxTotalSockets"),
+            timeout: Duration::from_millis(
+                value
+                    .get("timeout")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0),
+            ),
+            no_delay: value
+                .get("noDelay")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(true),
+        })
+    }
+
+    fn build(&self) -> OutboundHttpAgent {
+        let idle_connections = if self.keep_alive {
+            self.max_free_sockets
+        } else {
+            0
+        };
+        let mut builder = ureq::AgentBuilder::new()
+            .https_only(self.protocol == "https:")
+            .max_idle_connections(idle_connections.min(self.max_total_sockets))
+            .max_idle_connections_per_host(idle_connections.min(self.max_sockets))
+            .no_delay(self.no_delay)
+            .redirects(0);
+        if !self.timeout.is_zero() {
+            builder = builder.timeout(self.timeout);
+        }
+        OutboundHttpAgent {
+            client: builder.build(),
+            limiter: Arc::new(OutboundHttpAgentLimiter {
+                max_sockets: self.max_sockets,
+                max_total_sockets: self.max_total_sockets,
+                state: Mutex::new(OutboundHttpAgentLimitState {
+                    total: 0,
+                    origins: HashMap::new(),
+                }),
+                available: Condvar::new(),
+            }),
+        }
+    }
+}
+
+fn parse_http_socket_limit(value: &serde_json::Value, name: &str) -> usize {
+    value
+        .get(name)
+        .and_then(serde_json::Value::as_u64)
+        .map(|limit| limit.max(1).min(usize::MAX as u64) as usize)
+        .unwrap_or(usize::MAX)
+}
+
+#[derive(Clone)]
+struct OutboundHttpAgent {
+    client: ureq::Agent,
+    limiter: Arc<OutboundHttpAgentLimiter>,
+}
+
+struct OutboundHttpAgentLimiter {
+    max_sockets: usize,
+    max_total_sockets: usize,
+    state: Mutex<OutboundHttpAgentLimitState>,
+    available: Condvar,
+}
+
+struct OutboundHttpAgentLimitState {
+    total: usize,
+    origins: HashMap<String, usize>,
+}
+
+impl OutboundHttpAgentLimiter {
+    fn acquire(self: &Arc<Self>, origin: String) -> OutboundHttpAgentPermit {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        loop {
+            let origin_count = state.origins.get(&origin).copied().unwrap_or(0);
+            if state.total < self.max_total_sockets && origin_count < self.max_sockets {
+                state.total += 1;
+                *state.origins.entry(origin.clone()).or_default() += 1;
+                return OutboundHttpAgentPermit {
+                    limiter: Arc::clone(self),
+                    origin,
+                };
+            }
+            state = self
+                .available
+                .wait(state)
+                .unwrap_or_else(|error| error.into_inner());
+        }
+    }
+}
+
+struct OutboundHttpAgentPermit {
+    limiter: Arc<OutboundHttpAgentLimiter>,
+    origin: String,
+}
+
+impl Drop for OutboundHttpAgentPermit {
+    fn drop(&mut self) {
+        let mut state = self
+            .limiter
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        state.total = state.total.saturating_sub(1);
+        if let Some(count) = state.origins.get_mut(&self.origin) {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                state.origins.remove(&self.origin);
+            }
+        }
+        self.limiter.available.notify_one();
+    }
 }
 
 enum OutboundHttpUpload {
@@ -1024,19 +1249,65 @@ impl OutboundHttpEvent {
     }
 }
 
+fn create_outbound_http_agent<'js>(
+    context: rquickjs::Ctx<'js>,
+    options_json: String,
+    runtime: &OutboundHttpRuntime,
+) -> rquickjs::Result<u64> {
+    let options = OutboundHttpAgentOptions::parse(&context, &options_json)?;
+    let agent = options.build();
+    let id = runtime.next_agent_id.fetch_add(1, Ordering::Relaxed);
+    runtime
+        .agents
+        .lock()
+        .map_err(|_| rquickjs::Exception::throw_message(&context, "HTTP agent lock poisoned"))?
+        .insert(id, agent);
+    Ok(id)
+}
+
+fn destroy_outbound_http_agent(id: u64, runtime: &OutboundHttpRuntime) {
+    if let Ok(mut agents) = runtime.agents.lock() {
+        agents.remove(&id);
+    }
+}
+
 fn start_outbound_http_request<'js>(
     context: rquickjs::Ctx<'js>,
     method: String,
     url: String,
     headers_json: String,
     has_body: bool,
+    agent_id: u64,
     runtime: &OutboundHttpRuntime,
 ) -> rquickjs::Result<u64> {
     let headers: Vec<(String, String)> = serde_json::from_str(&headers_json)
         .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))?;
-    let id = runtime.next_id.fetch_add(1, Ordering::Relaxed);
+    let id = runtime.next_request_id.fetch_add(1, Ordering::Relaxed);
     let sender = runtime.sender.clone();
-    let agent = runtime.agent.clone();
+    let agent = if agent_id == 0 {
+        OutboundHttpAgentOptions {
+            protocol: if url.starts_with("https:") {
+                "https:".into()
+            } else {
+                "http:".into()
+            },
+            keep_alive: false,
+            max_free_sockets: 0,
+            max_sockets: 1,
+            max_total_sockets: 1,
+            timeout: Duration::ZERO,
+            no_delay: true,
+        }
+        .build()
+    } else {
+        runtime
+            .agents
+            .lock()
+            .map_err(|_| rquickjs::Exception::throw_message(&context, "HTTP agent lock poisoned"))?
+            .get(&agent_id)
+            .cloned()
+            .ok_or_else(|| rquickjs::Exception::throw_message(&context, "HTTP agent not found"))?
+    };
     let upload = if has_body {
         let (upload_sender, upload_receiver) = sync_channel(16);
         runtime
@@ -1122,12 +1393,13 @@ fn perform_outbound_http_request(
     url: String,
     headers: Vec<(String, String)>,
     upload: Option<OutboundHttpUploadReader>,
-    agent: ureq::Agent,
+    agent: OutboundHttpAgent,
     sender: SyncSender<OutboundHttpEvent>,
 ) {
     use base64::Engine;
 
-    let mut request = agent.request(&method, &url);
+    let _permit = agent.limiter.acquire(outbound_http_origin(&url));
+    let mut request = agent.client.request(&method, &url);
     for (name, value) in headers {
         request = request.set(&name, &value);
     }
@@ -1196,6 +1468,14 @@ fn perform_outbound_http_request(
             }
         }
     }
+}
+
+fn outbound_http_origin(url: &str) -> String {
+    let authority_start = url.find("://").map_or(0, |index| index + 3);
+    let authority_end = url[authority_start..]
+        .find(['/', '?', '#'])
+        .map_or(url.len(), |index| authority_start + index);
+    url[..authority_end].to_ascii_lowercase()
 }
 
 fn node_platform() -> &'static str {
