@@ -881,7 +881,9 @@ fn serves_static_files_from_express() {
             .to_ascii_lowercase()
             .contains("content-type: text/plain")
     );
-    assert!(response.ends_with("hello from express static\n"));
+    let body = response.split_once("\r\n\r\n").unwrap().1.as_bytes();
+    let expected = std::fs::read("fixtures/express-static/public/hello.txt").unwrap();
+    assert_eq!(body, expected);
 }
 
 #[test]
