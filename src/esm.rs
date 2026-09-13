@@ -194,8 +194,10 @@ fn builtin_source(name: &str) -> Option<String> {
         "async_hooks" => &[
             "AsyncLocalStorage",
             "AsyncResource",
+            "createHook",
             "executionAsyncId",
             "triggerAsyncId",
+            "executionAsyncResource",
         ],
         "http" => &[
             "createServer",

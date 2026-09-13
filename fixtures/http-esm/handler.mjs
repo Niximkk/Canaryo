@@ -1,7 +1,19 @@
 import { suffix } from "./message.cjs";
-import { AsyncLocalStorage } from "node:async_hooks";
+import {
+    AsyncLocalStorage,
+    AsyncResource,
+    createHook,
+    executionAsyncId,
+    executionAsyncResource,
+    triggerAsyncId
+} from "node:async_hooks";
 
 const storage = new AsyncLocalStorage();
+const asyncHooksReady = typeof AsyncResource === "function" &&
+    typeof createHook === "function" &&
+    executionAsyncId() === 1 &&
+    triggerAsyncId() === 0 &&
+    typeof executionAsyncResource() === "object";
 
 export function handleRequest(_request, response, ready) {
     storage.run({ runtime: "canaryo" }, () => {
@@ -9,7 +21,7 @@ export function handleRequest(_request, response, ready) {
         response.end(JSON.stringify({
             runtime: storage.getStore().runtime,
             modules: `esm+cjs${suffix}`,
-            ready
+            ready: ready && asyncHooksReady
         }));
     });
 }

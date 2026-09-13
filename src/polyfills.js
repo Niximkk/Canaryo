@@ -928,23 +928,91 @@
         return (callback, ...args) => runInAsyncContext(snapshot, callback, undefined, args);
     };
 
-    function AsyncResource(type) {
-        this.type = String(type);
+    const rootAsyncResource = {};
+    const activeAsyncHooks = new Set();
+    let nextAsyncId = 2;
+    let currentAsyncId = 1;
+    let currentTriggerAsyncId = 0;
+    let currentAsyncResource = rootAsyncResource;
+
+    function emitAsyncHook(name, ...args) {
+        for (const hook of [...activeAsyncHooks]) {
+            const callback = hook.callbacks[name];
+            if (typeof callback === "function") callback.apply(hook.callbacks, args);
+        }
+    }
+
+    function createHook(callbacks) {
+        if (!callbacks || typeof callbacks !== "object") throw new TypeError("callbacks must be an object");
+        for (const name of ["init", "before", "after", "destroy", "promiseResolve"]) {
+            if (callbacks[name] !== undefined && typeof callbacks[name] !== "function") {
+                throw new TypeError(`hook.${name} must be a function`);
+            }
+        }
+        return {
+            callbacks,
+            enable() {
+                activeAsyncHooks.add(this);
+                return this;
+            },
+            disable() {
+                activeAsyncHooks.delete(this);
+                return this;
+            }
+        };
+    }
+
+    function executionAsyncId() { return currentAsyncId; }
+    function triggerAsyncId() { return currentTriggerAsyncId; }
+    function executionAsyncResource() { return currentAsyncResource; }
+
+    function AsyncResource(type, options = {}) {
+        if (typeof type !== "string") throw new TypeError("type must be a string");
+        const configuredTrigger = typeof options === "number" ? options : options?.triggerAsyncId;
+        this.type = type;
+        this._asyncId = nextAsyncId++;
+        this._triggerAsyncId = configuredTrigger === undefined ? currentAsyncId : Number(configuredTrigger);
+        this._destroyed = false;
         if (asyncContextEnabled) this.context = captureAsyncContext();
+        emitAsyncHook("init", this._asyncId, this.type, this._triggerAsyncId, this);
     }
     AsyncResource.prototype.runInAsyncScope = function (fn, thisArg, ...args) {
-        if (!this.context) return fn.apply(thisArg, args);
-        return runInAsyncContext(this.context, fn, thisArg, args);
+        if (typeof fn !== "function") throw new TypeError("fn must be a function");
+        const previousId = currentAsyncId;
+        const previousTriggerId = currentTriggerAsyncId;
+        const previousResource = currentAsyncResource;
+        const previousContext = this.context ? enterAsyncContext(this.context) : undefined;
+        currentAsyncId = this._asyncId;
+        currentTriggerAsyncId = this._triggerAsyncId;
+        currentAsyncResource = this;
+        try {
+            emitAsyncHook("before", this._asyncId);
+            return fn.apply(thisArg, args);
+        } finally {
+            emitAsyncHook("after", this._asyncId);
+            currentAsyncId = previousId;
+            currentTriggerAsyncId = previousTriggerId;
+            currentAsyncResource = previousResource;
+            if (previousContext) restoreAsyncContext(previousContext);
+        }
     };
     AsyncResource.prototype.bind = function (fn, thisArg) {
         const resource = this;
-        return function (...args) {
+        const bound = function (...args) {
             return resource.runInAsyncScope(fn, thisArg === undefined ? this : thisArg, ...args);
         };
+        Object.defineProperty(bound, "asyncResource", { value: resource });
+        return bound;
     };
-    AsyncResource.prototype.emitDestroy = function () { return this; };
-    AsyncResource.prototype.asyncId = function () { return 0; };
-    AsyncResource.prototype.triggerAsyncId = function () { return 0; };
+    AsyncResource.prototype.emitDestroy = function () {
+        if (this._destroyed) return this;
+        this._destroyed = true;
+        const asyncId = this._asyncId;
+        setImmediate(() => emitAsyncHook("destroy", asyncId));
+        return this;
+    };
+    AsyncResource.prototype.asyncId = function () { return this._asyncId; };
+    AsyncResource.prototype.triggerAsyncId = function () { return this._triggerAsyncId; };
     AsyncResource.bind = function (fn, type, thisArg) {
         return new AsyncResource(type || fn.name || "bound-anonymous-fn").bind(fn, thisArg);
     };
@@ -2055,7 +2123,14 @@
 
     globalThis.__canaryoBuiltins = Object.freeze({
         assert,
-        async_hooks: { AsyncLocalStorage, AsyncResource, executionAsyncId: () => 0, triggerAsyncId: () => 0 },
+        async_hooks: {
+            AsyncLocalStorage,
+            AsyncResource,
+            createHook,
+            executionAsyncId,
+            triggerAsyncId,
+            executionAsyncResource
+        },
         buffer: {
             Buffer,
             SlowBuffer: Buffer,

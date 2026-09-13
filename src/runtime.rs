@@ -2781,6 +2781,66 @@ mod tests {
     }
 
     #[test]
+    fn tracks_async_resource_lifecycle_and_execution_ids() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            context
+                .eval::<(), _>(
+                    r#"
+                    globalThis.asyncHooksModule = __canaryoBuiltins.async_hooks;
+                    globalThis.asyncHookEvents = [];
+                    globalThis.rootAsyncResource = asyncHooksModule.executionAsyncResource();
+                    globalThis.asyncHook = asyncHooksModule.createHook({
+                        init(id, type, trigger, resource) {
+                            asyncHookEvents.push(`init:${id}:${type}:${trigger}:${resource.type}`);
+                        },
+                        before(id) {
+                            asyncHookEvents.push(`before:${id}:${asyncHooksModule.executionAsyncId()}`);
+                        },
+                        after(id) {
+                            asyncHookEvents.push(`after:${id}:${asyncHooksModule.executionAsyncId()}`);
+                        },
+                        destroy(id) {
+                            asyncHookEvents.push(`destroy:${id}`);
+                        }
+                    }).enable();
+                    globalThis.testAsyncResource = new asyncHooksModule.AsyncResource("CANARYO_TEST");
+                    globalThis.asyncResourceResult = testAsyncResource.runInAsyncScope(function (value) {
+                        asyncHookEvents.push(`inside:${asyncHooksModule.executionAsyncId()}:${asyncHooksModule.triggerAsyncId()}`);
+                        return value + this.offset;
+                    }, { offset: 2 }, 40);
+                    testAsyncResource.emitDestroy();
+                    "#,
+                )
+                .unwrap();
+
+            let run_timers: Function = context.globals().get("__canaryoRunTimers").unwrap();
+            run_timers.call::<_, i64>(()).unwrap();
+
+            let supported = context
+                .eval::<bool, _>(
+                    r#"
+                    asyncHook.disable();
+                    asyncResourceResult === 42 &&
+                        testAsyncResource.asyncId() === 2 &&
+                        testAsyncResource.triggerAsyncId() === 1 &&
+                        asyncHooksModule.executionAsyncId() === 1 &&
+                        asyncHooksModule.triggerAsyncId() === 0 &&
+                        asyncHooksModule.executionAsyncResource() === rootAsyncResource &&
+                        asyncHookEvents.join("|") ===
+                            "init:2:CANARYO_TEST:1:CANARYO_TEST|before:2:2|inside:2:1|after:2:2|destroy:2"
+                    "#,
+                )
+                .unwrap();
+            assert!(supported);
+        });
+    }
+
+    #[test]
     fn preserves_async_local_storage_in_promise_callbacks() {
         let runtime = Runtime::new().unwrap();
         let context = Context::full(&runtime).unwrap();
