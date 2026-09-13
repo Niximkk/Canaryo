@@ -2436,7 +2436,12 @@ mod tests {
                         .write(Buffer.from("hello")) === "hello" &&
                     Buffer.byteLength(new Uint8Array([1, 2, 3])) === 3 &&
                     Buffer.byteLength(new Uint8Array([1, 2, 3]).subarray(1)) === 2 &&
-                    Buffer.byteLength(new ArrayBuffer(4)) === 4
+                    Buffer.byteLength(new ArrayBuffer(4)) === 4 &&
+                    __canaryoBuiltins.buffer.Blob === Blob &&
+                    __canaryoBuiltins.buffer.File === File &&
+                    new Blob(["can", Buffer.from("aryo")], { type: "TEXT/PLAIN" }).size === 7 &&
+                    new File(["value"], "data.txt", { lastModified: 42 }).lastModified === 42 &&
+                    atob(btoa("Canaryo")) === "Canaryo"
                     "#,
                 )
                 .unwrap()

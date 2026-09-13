@@ -250,7 +250,11 @@ fn builtin_source(name: &str) -> Option<String> {
         ],
         "buffer" => &[
             "Buffer",
+            "Blob",
+            "File",
             "SlowBuffer",
+            "atob",
+            "btoa",
             "INSPECT_MAX_BYTES",
             "kMaxLength",
             "constants",

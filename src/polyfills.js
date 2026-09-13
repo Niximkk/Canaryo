@@ -617,6 +617,27 @@
             return new Blob([this._buffer.subarray(first, Math.max(first, last))], { type });
         }
     }
+    class File extends Blob {
+        constructor(sources, name, options = {}) {
+            super(sources, options);
+            this.name = String(name);
+            this.lastModified = options.lastModified === undefined
+                ? Date.now()
+                : Number(options.lastModified);
+        }
+    }
+    function atob(value) {
+        return decodeBase64(String(value)).map(byte => String.fromCharCode(byte)).join("");
+    }
+    function btoa(value) {
+        const bytes = [];
+        for (const character of String(value)) {
+            const code = character.charCodeAt(0);
+            if (code > 0xff) throw new DOMException("Invalid character", "InvalidCharacterError");
+            bytes.push(code);
+        }
+        return encodeBase64(bytes);
+    }
 
     class TextEncoder {
         encode(value) { return new Uint8Array(encodeUtf8(value)); }
@@ -1918,6 +1939,9 @@
 
     globalThis.Buffer = Buffer;
     globalThis.Blob = Blob;
+    globalThis.File = File;
+    globalThis.atob = atob;
+    globalThis.btoa = btoa;
     globalThis.DOMException = DOMException;
     globalThis.Event = Event;
     globalThis.EventTarget = EventTarget;
@@ -2929,7 +2953,11 @@
         },
         buffer: {
             Buffer,
+            Blob,
+            File,
             SlowBuffer: Buffer,
+            atob,
+            btoa,
             INSPECT_MAX_BYTES: 50,
             kMaxLength: 0x7fffffff,
             constants: { MAX_LENGTH: 0x7fffffff, MAX_STRING_LENGTH: 0x1fffffe8 }
