@@ -151,6 +151,7 @@ fn is_builtin(name: &str) -> bool {
         "assert"
             | "async_hooks"
             | "buffer"
+            | "console"
             | "crypto"
             | "diagnostics_channel"
             | "dns"
@@ -163,10 +164,13 @@ fn is_builtin(name: &str) -> bool {
             | "os"
             | "path"
             | "perf_hooks"
+            | "process"
             | "querystring"
             | "stream"
+            | "stream/promises"
             | "string_decoder"
             | "timers"
+            | "timers/promises"
             | "tty"
             | "url"
             | "util"
@@ -230,6 +234,7 @@ fn builtin_source(name: &str) -> Option<String> {
             "kMaxLength",
             "constants",
         ],
+        "console" => &["Console", "log", "info", "debug", "warn", "error"],
         "crypto" => &[
             "createHash",
             "createHmac",
@@ -373,6 +378,29 @@ fn builtin_source(name: &str) -> Option<String> {
             "posix",
         ],
         "perf_hooks" => &["performance"],
+        "process" => &[
+            "argv",
+            "argv0",
+            "execArgv",
+            "execPath",
+            "env",
+            "platform",
+            "arch",
+            "version",
+            "versions",
+            "release",
+            "cwd",
+            "nextTick",
+            "uptime",
+            "hrtime",
+            "memoryUsage",
+            "cpuUsage",
+            "resourceUsage",
+            "emitWarning",
+            "getBuiltinModule",
+            "stdout",
+            "stderr",
+        ],
         "querystring" => &["parse", "stringify", "escape", "unescape"],
         "stream" => &[
             "Stream",
@@ -383,7 +411,9 @@ fn builtin_source(name: &str) -> Option<String> {
             "PassThrough",
             "finished",
             "pipeline",
+            "promises",
         ],
+        "stream/promises" => &["finished", "pipeline"],
         "string_decoder" => &["StringDecoder"],
         "timers" => &[
             "setTimeout",
@@ -393,6 +423,7 @@ fn builtin_source(name: &str) -> Option<String> {
             "setImmediate",
             "clearImmediate",
         ],
+        "timers/promises" => &["setTimeout", "setInterval", "setImmediate", "scheduler"],
         "tty" => &["isatty", "ReadStream", "WriteStream"],
         "url" => &[
             "URL",

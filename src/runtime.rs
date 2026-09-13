@@ -23,13 +23,38 @@ use crate::{esm, http, modules};
 const BOOTSTRAP: &str = r#"
 globalThis.global = globalThis;
 (() => {
+function Console(stdout, stderr = stdout) {
+    if (stdout && stdout.stdout) {
+        stderr = stdout.stderr || stdout.stdout;
+        stdout = stdout.stdout;
+    }
+    this._stdout = stdout;
+    this._stderr = stderr;
+}
+Console.prototype.log = Console.prototype.info = Console.prototype.debug = function (...values) {
+    this._stdout.write(values.map(formatValue).join(" ") + "\n");
+};
+Console.prototype.error = Console.prototype.warn = function (...values) {
+    this._stderr.write(values.map(formatValue).join(" ") + "\n");
+};
+
 globalThis.console = Object.freeze({
     log(...values) {
         __canaryoPrint(values.map(formatValue).join(" "));
     },
+    info(...values) {
+        __canaryoPrint(values.map(formatValue).join(" "));
+    },
+    debug(...values) {
+        __canaryoPrint(values.map(formatValue).join(" "));
+    },
     error(...values) {
         __canaryoPrintError(values.map(formatValue).join(" "));
-    }
+    },
+    warn(...values) {
+        __canaryoPrintError(values.map(formatValue).join(" "));
+    },
+    Console
 });
 
 function formatValue(value) {
@@ -2512,6 +2537,104 @@ mod tests {
             let run_timers: Function = context.globals().get("__canaryoRunTimers").unwrap();
             assert_eq!(run_timers.call::<_, i64>(()).unwrap(), -1);
             assert_eq!(context.globals().get::<_, i32>("timerResult").unwrap(), 42);
+        });
+    }
+
+    #[test]
+    fn exposes_promise_timers_streams_and_builtin_aliases() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            let synchronous = context
+                .eval::<bool, _>(
+                    r#"
+                    const timers = __canaryoBuiltins["timers/promises"];
+                    const streams = __canaryoBuiltins.stream;
+                    const streamPromises = __canaryoBuiltins["stream/promises"];
+                    globalThis.promiseTimerValue = 0;
+                    globalThis.promiseImmediateValue = "";
+                    globalThis.promiseIntervalValue = "";
+                    globalThis.promiseSchedulerDone = false;
+                    globalThis.promisePipelineDone = false;
+                    globalThis.promisePipelineOutput = "";
+                    timers.setTimeout(0, 42).then(value => { promiseTimerValue = value; });
+                    timers.setImmediate("ready").then(value => { promiseImmediateValue = value; });
+                    const interval = timers.setInterval(0, "tick");
+                    interval.next().then(result => {
+                        promiseIntervalValue = result.value;
+                        return interval.return();
+                    });
+                    timers.scheduler.wait(0).then(() => { promiseSchedulerDone = true; });
+                    const source = new streams.Readable();
+                    const destination = new streams.Writable({
+                        write(chunk, _encoding, callback) {
+                            promisePipelineOutput += chunk.toString();
+                            callback();
+                        }
+                    });
+                    streamPromises.pipeline(source, destination).then(() => {
+                        promisePipelineDone = true;
+                    });
+                    source.push("canaryo");
+                    source.push(null);
+                    __canaryoBuiltins.console === globalThis.console &&
+                        __canaryoBuiltins.process === process &&
+                        streams.promises === streamPromises &&
+                        typeof timers.scheduler.wait === "function"
+                    "#,
+                )
+                .unwrap();
+
+            let run_timers: Function = context.globals().get("__canaryoRunTimers").unwrap();
+            for _ in 0..4 {
+                run_timers.call::<_, i64>(()).unwrap();
+                while context.execute_pending_job() {}
+            }
+
+            assert!(synchronous);
+            assert_eq!(
+                context
+                    .globals()
+                    .get::<_, i32>("promiseTimerValue")
+                    .unwrap(),
+                42
+            );
+            assert_eq!(
+                context
+                    .globals()
+                    .get::<_, String>("promiseImmediateValue")
+                    .unwrap(),
+                "ready"
+            );
+            assert_eq!(
+                context
+                    .globals()
+                    .get::<_, String>("promiseIntervalValue")
+                    .unwrap(),
+                "tick"
+            );
+            assert!(
+                context
+                    .globals()
+                    .get::<_, bool>("promiseSchedulerDone")
+                    .unwrap()
+            );
+            assert!(
+                context
+                    .globals()
+                    .get::<_, bool>("promisePipelineDone")
+                    .unwrap()
+            );
+            assert_eq!(
+                context
+                    .globals()
+                    .get::<_, String>("promisePipelineOutput")
+                    .unwrap(),
+                "canaryo"
+            );
         });
     }
 

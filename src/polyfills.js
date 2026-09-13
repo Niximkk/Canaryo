@@ -1411,9 +1411,108 @@
             Promise.resolve(),
             snapshot
                 ? () => runInAsyncContext(snapshot, callback, undefined, [])
-                : callback
+            : callback
         );
     };
+
+    function timerAbortError() {
+        const error = new Error("The operation was aborted");
+        error.name = "AbortError";
+        error.code = "ABORT_ERR";
+        return error;
+    }
+    function schedulePromiseTimer(schedule, delay, value, options = {}) {
+        return new Promise((resolve, reject) => {
+            if (options.signal?.aborted) {
+                reject(timerAbortError());
+                return;
+            }
+            let handle;
+            const onAbort = () => {
+                clearTimer(handle);
+                reject(timerAbortError());
+            };
+            const complete = () => {
+                options.signal?.removeEventListener?.("abort", onAbort);
+                resolve(value);
+            };
+            handle = schedule(complete, delay);
+            if (options.ref === false) handle.unref();
+            options.signal?.addEventListener?.("abort", onAbort, { once: true });
+        });
+    }
+    const timersPromises = {
+        setTimeout(delay = 1, value, options) {
+            return schedulePromiseTimer(setTimeout, delay, value, options);
+        },
+        setImmediate(value, options) {
+            return schedulePromiseTimer(callback => setImmediate(callback), 0, value, options);
+        },
+        setInterval(delay = 1, value, options = {}) {
+            let buffered = 0;
+            let stopped = false;
+            let failure;
+            const waiting = [];
+            const handle = setInterval(() => {
+                const waiter = waiting.shift();
+                if (waiter) waiter.resolve({ value, done: false });
+                else buffered++;
+            }, delay);
+            if (options.ref === false) handle.unref();
+            const onAbort = () => {
+                failure = timerAbortError();
+                stopped = true;
+                clearTimer(handle);
+                while (waiting.length > 0) waiting.shift().reject(failure);
+            };
+            if (options.signal?.aborted) onAbort();
+            else options.signal?.addEventListener?.("abort", onAbort, { once: true });
+            return {
+                next() {
+                    if (failure) return Promise.reject(failure);
+                    if (buffered > 0) {
+                        buffered--;
+                        return Promise.resolve({ value, done: false });
+                    }
+                    if (stopped) return Promise.resolve({ value: undefined, done: true });
+                    return new Promise((resolve, reject) => waiting.push({ resolve, reject }));
+                },
+                return() {
+                    stopped = true;
+                    clearTimer(handle);
+                    options.signal?.removeEventListener?.("abort", onAbort);
+                    while (waiting.length > 0) waiting.shift().resolve({ value: undefined, done: true });
+                    return Promise.resolve({ value: undefined, done: true });
+                },
+                [Symbol.asyncIterator]() { return this; }
+            };
+        }
+    };
+    timersPromises.scheduler = {
+        wait(delay, options) { return timersPromises.setTimeout(delay, undefined, options); },
+        yield() { return timersPromises.setImmediate(); }
+    };
+
+    const streamPromises = {
+        finished(stream, _options) {
+            return new Promise((resolve, reject) => {
+                finished(stream, error => error ? reject(error) : resolve());
+            });
+        },
+        pipeline(...streams) {
+            if (streams.length > 0) {
+                const options = streams[streams.length - 1];
+                if (options && typeof options === "object" &&
+                    typeof options.pipe !== "function" && typeof options.on !== "function") {
+                    streams.pop();
+                }
+            }
+            return new Promise((resolve, reject) => {
+                pipeline(...streams, error => error ? reject(error) : resolve());
+            });
+        }
+    };
+    Stream.promises = streamPromises;
 
     function Stats(values) {
         Object.assign(this, values);
@@ -2032,9 +2131,10 @@
     };
 
     const builtinModules = [
-        "assert", "async_hooks", "buffer", "crypto", "diagnostics_channel", "dns",
+        "assert", "async_hooks", "buffer", "console", "crypto", "diagnostics_channel", "dns",
         "dns/promises", "events", "fs", "fs/promises", "http", "https", "module", "net", "os",
-        "path", "perf_hooks", "querystring", "stream", "string_decoder", "timers", "tty",
+        "path", "perf_hooks", "process", "querystring", "stream", "stream/promises", "string_decoder",
+        "timers", "timers/promises", "tty",
         "url", "util", "worker_threads", "zlib"
     ];
     function isBuiltin(name) {
@@ -2270,6 +2370,7 @@
             kMaxLength: 0x7fffffff,
             constants: { MAX_LENGTH: 0x7fffffff, MAX_STRING_LENGTH: 0x1fffffe8 }
         },
+        console: globalThis.console,
         crypto: cryptoModule,
         depd,
         diagnostics_channel: diagnosticsChannel,
@@ -2312,10 +2413,13 @@
         },
         path,
         perf_hooks: { performance },
+        process,
         querystring: { parse(value) { return Object.fromEntries(String(value).split("&").filter(Boolean).map(item => item.split("=").map(decodeURIComponent))); }, stringify(value) { return Object.entries(value).map(([key, item]) => `${encodeURIComponent(key)}=${encodeURIComponent(item)}`).join("&"); }, escape: encodeURIComponent, unescape: decodeURIComponent },
         stream: Stream,
+        "stream/promises": streamPromises,
         string_decoder: { StringDecoder },
         timers: { setImmediate, clearImmediate: clearTimer, setTimeout, clearTimeout: clearTimer, setInterval, clearInterval: clearTimer },
+        "timers/promises": timersPromises,
         tty: { isatty: () => false, ReadStream: function () {}, WriteStream: function () {} },
         url: {
             URL,
