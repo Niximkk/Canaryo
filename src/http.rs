@@ -11,9 +11,11 @@ use mio::{Events, Interest, Poll, Token, net::TcpStream};
 use rquickjs::function::This;
 use rquickjs::{Array, Coerced, Ctx, Exception, Function, Object, Result};
 
-const MAX_REQUEST_SIZE: usize = 1024 * 1024;
+const DEFAULT_MAX_REQUEST_SIZE: usize = 1024 * 1024;
+const MAX_HEADER_SIZE: usize = 64 * 1024;
 const MAX_ASYNC_RESPONSE_WAIT: Duration = Duration::from_secs(30);
 const LISTENER: Token = Token(0);
+const REQUEST_TOO_LARGE_MESSAGE: &str = "request body exceeds the configured limit";
 
 struct RequestHead {
     method: String,
@@ -52,6 +54,7 @@ struct Response {
 struct ConnectionReader {
     buffered: Vec<u8>,
     state: RequestBodyState,
+    max_request_size: usize,
 }
 
 impl Default for ConnectionReader {
@@ -59,6 +62,19 @@ impl Default for ConnectionReader {
         Self {
             buffered: Vec::new(),
             state: RequestBodyState::Head,
+            max_request_size: DEFAULT_MAX_REQUEST_SIZE,
+        }
+    }
+}
+
+struct ServerOptions {
+    max_request_size: usize,
+}
+
+impl Default for ServerOptions {
+    fn default() -> Self {
+        Self {
+            max_request_size: DEFAULT_MAX_REQUEST_SIZE,
         }
     }
 }
@@ -168,9 +184,12 @@ struct PendingResponse<'js> {
 struct ServerBindings<'js> {
     handler: Function<'js>,
     on_listening: Function<'js>,
+    max_connections: Function<'js>,
+    connection_dropped: Function<'js>,
     request_prototype: Object<'js>,
     response_prototype: Object<'js>,
     socket_prototype: Object<'js>,
+    options: ServerOptions,
 }
 
 pub fn listen<'js>(
@@ -187,18 +206,40 @@ pub fn listen<'js>(
         .as_deref()
         .map(|options| tls_server_config(&context, options))
         .transpose()?;
+    let options_json: Option<String> = context.globals().get("__canaryoServerOptions")?;
+    let options = options_json
+        .as_deref()
+        .map(|options| server_options(&context, options))
+        .transpose()?
+        .unwrap_or_default();
     listen_with_config(
-        context,
+        context.clone(),
         port,
         ServerBindings {
             handler,
             on_listening,
+            max_connections: context.globals().get("__canaryoServerMaxConnections")?,
+            connection_dropped: context.globals().get("__canaryoServerConnectionDropped")?,
             request_prototype,
             response_prototype,
             socket_prototype,
+            options,
         },
         tls_config,
     )
+}
+
+fn server_options<'js>(context: &Ctx<'js>, json: &str) -> Result<ServerOptions> {
+    let options: serde_json::Value = serde_json::from_str(json).map_err(|error| {
+        Exception::throw_message(context, &format!("invalid HTTP server options: {error}"))
+    })?;
+    let max_request_size = options
+        .get("maxRequestSize")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_MAX_REQUEST_SIZE);
+    Ok(ServerOptions { max_request_size })
 }
 
 fn tls_server_config<'js>(context: &Ctx<'js>, tls_json: &str) -> Result<Arc<rustls::ServerConfig>> {
@@ -335,12 +376,12 @@ fn listen_with_config<'js>(
             if event.token() == LISTENER {
                 accept_connections(
                     &context,
-                    &bindings.socket_prototype,
                     &mut listener,
                     poll.registry(),
                     &mut connections,
                     &mut next_token,
                     tls_config.as_ref(),
+                    &bindings,
                 )?;
                 continue;
             }
@@ -412,16 +453,31 @@ fn listen_with_config<'js>(
 
 fn accept_connections<'js>(
     context: &Ctx<'js>,
-    socket_prototype: &Object<'js>,
     listener: &mut mio::net::TcpListener,
     registry: &mio::Registry,
     connections: &mut HashMap<Token, Connection<'js>>,
     next_token: &mut usize,
     tls_config: Option<&Arc<rustls::ServerConfig>>,
+    bindings: &ServerBindings<'js>,
 ) -> Result<()> {
     loop {
         match listener.accept() {
-            Ok((mut socket, _)) => {
+            Ok((mut socket, remote_address)) => {
+                let connection_limit = bindings.max_connections.call::<_, Option<usize>>(())?;
+                if connection_limit.is_some_and(|limit| connections.len() >= limit) {
+                    let local_address = socket.local_addr().ok();
+                    bindings.connection_dropped.call::<_, ()>((
+                        remote_address.ip().to_string(),
+                        remote_address.port(),
+                        local_address
+                            .map(|address| address.ip().to_string())
+                            .unwrap_or_default(),
+                        local_address
+                            .map(|address| address.port())
+                            .unwrap_or_default(),
+                    ))?;
+                    continue;
+                }
                 let token = Token(*next_token);
                 *next_token = next_token.wrapping_add(1).max(1);
                 let _ = socket.set_nodelay(true);
@@ -443,10 +499,14 @@ fn accept_connections<'js>(
                         token,
                         Connection {
                             stream,
-                            socket: socket_to_js(context, socket_prototype, tls_config.is_some())?,
+                            socket: socket_to_js(
+                                context,
+                                &bindings.socket_prototype,
+                                tls_config.is_some(),
+                            )?,
                             incoming_request: None,
                             pending_responses: VecDeque::new(),
-                            reader: ConnectionReader::default(),
+                            reader: ConnectionReader::new(bindings.options.max_request_size),
                             outgoing: Vec::with_capacity(512),
                             written: 0,
                             writable_interest: false,
@@ -538,8 +598,25 @@ fn read_and_dispatch_requests<'js>(
     loop {
         let read = match connection.next_inbound() {
             Ok(read) => read,
-            Err(_) => {
+            Err(error) => {
                 abort_incoming_request(connection)?;
+                if error.to_string() == REQUEST_TOO_LARGE_MESSAGE {
+                    connection.pending_responses.clear();
+                    connection.outgoing.clear();
+                    connection.written = 0;
+                    append_response(
+                        &mut connection.outgoing,
+                        &Response {
+                            status: 413,
+                            body: b"Payload Too Large".to_vec(),
+                            ..Response::default()
+                        },
+                        false,
+                        false,
+                    );
+                    connection.close_after_write = true;
+                    return Ok(false);
+                }
                 return Ok(true);
             }
         };
@@ -913,12 +990,23 @@ impl RequestHead {
 }
 
 impl ConnectionReader {
+    fn new(max_request_size: usize) -> Self {
+        Self {
+            buffered: Vec::new(),
+            state: RequestBodyState::Head,
+            max_request_size,
+        }
+    }
+
     fn push(&mut self, data: &[u8]) -> std::io::Result<()> {
         self.buffered.extend_from_slice(data);
-        if self.buffered.len() > MAX_REQUEST_SIZE {
+        if matches!(self.state, RequestBodyState::Head)
+            && self.buffered.len() > MAX_HEADER_SIZE
+            && find_bytes(&self.buffered, b"\r\n\r\n").is_none()
+        {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                "requisição excede o limite de 1 MiB",
+                "HTTP headers exceed the 64 KiB limit",
             ));
         }
         Ok(())
@@ -933,8 +1021,10 @@ impl ConnectionReader {
                         break;
                     };
                     let header_end = header_position + 4;
-                    let (request, body_state) =
-                        parse_request_head(&self.buffered[..header_position])?;
+                    let (request, body_state) = parse_request_head(
+                        &self.buffered[..header_position],
+                        self.max_request_size,
+                    )?;
                     self.buffered.drain(..header_end);
                     self.state = body_state;
                     events.push(InboundEvent::Head(request));
@@ -989,7 +1079,7 @@ impl ConnectionReader {
                     }
                     let length = remaining.min(self.buffered.len()).min(16 * 1024);
                     let received = received.checked_add(length).ok_or_else(request_too_large)?;
-                    if received > MAX_REQUEST_SIZE {
+                    if received > self.max_request_size {
                         return Err(request_too_large());
                     }
                     events.push(InboundEvent::Data(self.buffered.drain(..length).collect()));
@@ -1043,7 +1133,10 @@ impl ConnectionReader {
     }
 }
 
-fn parse_request_head(data: &[u8]) -> std::io::Result<(RequestHead, RequestBodyState)> {
+fn parse_request_head(
+    data: &[u8],
+    max_request_size: usize,
+) -> std::io::Result<(RequestHead, RequestBodyState)> {
     let head = std::str::from_utf8(data)
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
     let mut lines = head.split("\r\n");
@@ -1084,7 +1177,7 @@ fn parse_request_head(data: &[u8]) -> std::io::Result<(RequestHead, RequestBodyS
             "content-length e transfer-encoding chunked não podem ser combinados",
         ));
     }
-    if content_length.is_some_and(|length| length > MAX_REQUEST_SIZE) {
+    if content_length.is_some_and(|length| length > max_request_size) {
         return Err(request_too_large());
     }
     let state = if chunked {
@@ -1117,10 +1210,7 @@ fn parse_trailers(data: &str) -> std::io::Result<Vec<(String, String)>> {
 }
 
 fn request_too_large() -> std::io::Error {
-    std::io::Error::new(
-        std::io::ErrorKind::InvalidData,
-        "corpo da requisição excede o limite de 1 MiB",
-    )
+    std::io::Error::new(std::io::ErrorKind::InvalidData, REQUEST_TOO_LARGE_MESSAGE)
 }
 
 fn required_part<'a>(part: Option<&'a str>, message: &str) -> std::io::Result<&'a str> {
@@ -1181,6 +1271,7 @@ fn reason_phrase(status: u16) -> &'static str {
         202 => "Accepted",
         204 => "No Content",
         400 => "Bad Request",
+        413 => "Payload Too Large",
         404 => "Not Found",
         500 => "Internal Server Error",
         504 => "Gateway Timeout",

@@ -139,7 +139,7 @@ flowchart LR
 | Area | Status | Current scope |
 |---|---|---|
 | CommonJS | Supported | Relative modules, JSON, package `main` and `exports`, conditional and wildcard exports, scoped packages, cache, upward `node_modules` lookup, and common `node:module` helpers. |
-| `node:http` | Partial | Non-blocking servers, persistent HTTP/1.1 connections, pipelining, incrementally delivered request bodies, chunk extensions and trailers, binary payloads, `HEAD`, response lifecycle and headers, plus outbound `request` and `get`. Outbound uploads and responses stream through bounded queues and support pause/resume, timeouts and aborts. `Agent` provides isolated pools, keep-alive, socket limits, `maxFreeSockets`, `agent: false`, `getName`, and pool destruction. Responses with redirects are delivered as 3xx, matching Node. Advanced socket creation, inbound socket-level backpressure and live pool introspection remain incomplete. |
+| `node:http` | Partial | Non-blocking servers, persistent HTTP/1.1 connections, pipelining, incrementally delivered request bodies, chunk extensions and trailers, binary payloads, `HEAD`, response lifecycle and headers, `server.maxConnections`, configurable request limits, plus outbound `request` and `get`. Outbound uploads and responses stream through bounded queues and support pause/resume, timeouts and aborts. `Agent` provides isolated pools, keep-alive, socket limits, `maxFreeSockets`, `agent: false`, `getName`, and pool destruction. Responses with redirects are delivered as 3xx, matching Node. Advanced socket creation, inbound socket-level backpressure and live pool introspection remain incomplete. |
 | Express | Partial | Express 5.2.1 startup, basic routing, JSON request parsing, and JSON responses. |
 | Fastify | Partial | Fastify 5.12.3 startup, parameterized routes, query strings, request/response hooks, JSON request parsing, async and timed handlers, JSON responses, and built-in Pino request logging. Plugin compatibility varies with the Node.js APIs each plugin uses. |
 | Promises and timers | Partial | Promise jobs, `AsyncResource`, `process.nextTick`, `queueMicrotask`, `setImmediate`, `setTimeout`, and `setInterval` in the native HTTP event loop. Standalone event-loop lifetime and timer handle behavior remain incomplete. |
@@ -168,6 +168,8 @@ flowchart LR
 - **Incompatible:** the application requires functionality the runtime cannot execute.
 
 ## Development
+
+Canaryo limits inbound request bodies to 1 MiB by default. Applications that need a different ceiling can pass the Canaryo extension `maxRequestSize` to `http.createServer({ maxRequestSize }, listener)`. Requests above it receive `413 Payload Too Large`.
 
 Run the complete validation suite:
 
@@ -198,8 +200,8 @@ cargo bench --bench runtime -- --startup-only --startup-runs 15
 
 ## Roadmap
 
-- Remaining server connection limits, backpressure, and graceful shutdown behavior.
-- Inbound socket-level backpressure and configurable request-size limits.
+- Remaining server backpressure and graceful shutdown behavior.
+- Inbound socket-level backpressure.
 - Additional asynchronous I/O sources and complete timer lifecycle behavior.
 - Wider Buffer, stream, filesystem, crypto, and networking support.
 - Complete ESM/CommonJS interop and the remaining Node package-resolution rules.

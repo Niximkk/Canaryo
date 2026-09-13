@@ -446,7 +446,7 @@ const httpModule = Object.freeze({
     Agent,
     globalAgent,
     METHODS: ["GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH"],
-    STATUS_CODES: { 200: "OK", 201: "Created", 202: "Accepted", 204: "No Content", 400: "Bad Request", 404: "Not Found", 500: "Internal Server Error", 504: "Gateway Timeout" },
+    STATUS_CODES: { 200: "OK", 201: "Created", 202: "Accepted", 204: "No Content", 400: "Bad Request", 404: "Not Found", 413: "Payload Too Large", 500: "Internal Server Error", 504: "Gateway Timeout" },
     request(input, options, callback) { return clientRequest("http:", globalAgent, input, options, callback); },
     get(input, options, callback) {
         const request = clientRequest("http:", globalAgent, input, options, callback);
@@ -465,6 +465,8 @@ const httpModule = Object.freeze({
             listening: false,
             __canaryoCloseRequested: false,
             __canaryoCloseCallbacks: [],
+            maxConnections: Infinity,
+            maxRequestSize: Number(optionsOrListener?.maxRequestSize) || 1024 * 1024,
             keepAliveTimeout: 5000,
             requestTimeout: 300000,
             timeout: 0,
@@ -501,6 +503,11 @@ const httpModule = Object.freeze({
                     } else {
                         globalThis.__canaryoServerTlsOptions = null;
                     }
+                    globalThis.__canaryoServerOptions = JSON.stringify({
+                        maxRequestSize: Number.isFinite(currentServer.maxRequestSize)
+                            ? Math.max(1, Math.trunc(currentServer.maxRequestSize))
+                            : 1024 * 1024
+                    });
                     __canaryoListen(...listenArguments);
                     currentServer.listening = false;
                     const callbacks = currentServer.__canaryoCloseCallbacks.splice(0);
@@ -648,6 +655,20 @@ globalThis.__canaryoStartPendingServer = () => {
 globalThis.__canaryoServerShouldClose = () => Boolean(
     globalThis.__canaryoActiveServer && globalThis.__canaryoActiveServer.__canaryoCloseRequested
 );
+globalThis.__canaryoServerMaxConnections = () => {
+    const value = Number(globalThis.__canaryoActiveServer?.maxConnections);
+    return Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : null;
+};
+globalThis.__canaryoServerConnectionDropped = (remoteAddress, remotePort, localAddress, localPort) => {
+    globalThis.__canaryoActiveServer?.emit("drop", {
+        localAddress,
+        localPort,
+        localFamily: "IPv4",
+        remoteAddress,
+        remotePort,
+        remoteFamily: "IPv4"
+    });
+};
 })();
 "#;
 

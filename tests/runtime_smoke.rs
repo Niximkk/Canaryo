@@ -806,6 +806,84 @@ fn dispatches_inbound_body_chunks_before_the_request_ends() {
 }
 
 #[test]
+fn rejects_request_bodies_above_the_configured_limit() {
+    let (_server, mut stream) = start_fixture("fixtures/http-limits/server.js");
+    stream
+        .write_all(
+            b"POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 9\r\nConnection: close\r\n\r\ntoo-large",
+        )
+        .unwrap();
+    let response = read_response(&mut stream);
+
+    assert!(
+        response.starts_with("HTTP/1.1 413 Payload Too Large"),
+        "{response}"
+    );
+    assert!(response.ends_with("Payload Too Large"), "{response}");
+}
+
+#[test]
+fn accepts_request_bodies_at_the_configured_limit() {
+    let (_server, mut stream) = start_fixture("fixtures/http-limits/server.js");
+    stream
+        .write_all(
+            b"POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 8\r\nConnection: close\r\n\r\naccepted",
+        )
+        .unwrap();
+    let response = read_response(&mut stream);
+
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+    assert!(response.ends_with("accepted"), "{response}");
+}
+
+#[test]
+fn applies_the_request_limit_to_chunked_bodies() {
+    let (_server, mut stream) = start_fixture("fixtures/http-limits/server.js");
+    stream
+        .write_all(
+            b"POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n5\r\nfirst\r\n4\r\nmore\r\n0\r\n\r\n",
+        )
+        .unwrap();
+    let response = read_response(&mut stream);
+
+    assert!(
+        response.starts_with("HTTP/1.1 413 Payload Too Large"),
+        "{response}"
+    );
+}
+
+#[test]
+fn enforces_the_http_server_connection_limit() {
+    let (_server, mut held_connection) = start_fixture("fixtures/http-limits/server.js");
+    let address = held_connection.peer_addr().unwrap();
+    let mut rejected = TcpStream::connect(address).unwrap();
+    rejected
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .unwrap();
+    rejected
+        .write_all(b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let mut response = Vec::new();
+    match rejected.read_to_end(&mut response) {
+        Ok(_) => {}
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted
+            ) => {}
+        Err(error) => panic!("limited connection was not rejected: {error}"),
+    }
+
+    assert!(response.is_empty());
+
+    held_connection
+        .write_all(b"GET /drops HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let response = read_response(&mut held_connection);
+    assert!(response.ends_with('1'), "{response}");
+}
+
+#[test]
 fn preserves_binary_response_bytes() {
     let (_server, mut stream) = start_fixture("fixtures/http-basic/server.js");
     stream
