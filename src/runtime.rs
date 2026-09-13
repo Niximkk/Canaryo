@@ -129,7 +129,32 @@ Socket.prototype.destroy = function() {
     return this;
 };
 
+function validateHeaderName(name, label = "Header name") {
+    if (typeof name !== "string" || !/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(name)) {
+        const error = new TypeError(`${label} must be a valid HTTP token [${name}]`);
+        error.code = "ERR_INVALID_HTTP_TOKEN";
+        throw error;
+    }
+}
+function validateHeaderValue(name, value) {
+    if (value === undefined) {
+        const error = new TypeError(`Invalid value \"undefined\" for header \"${name}\"`);
+        error.code = "ERR_HTTP_INVALID_HEADER_VALUE";
+        throw error;
+    }
+    const values = Array.isArray(value) ? value : [value];
+    for (const item of values) {
+        if (/[\0-\x08\x0a-\x1f\x7f]/.test(String(item))) {
+            const error = new TypeError(`Invalid character in header content [${name}]`);
+            error.code = "ERR_INVALID_CHAR";
+            throw error;
+        }
+    }
+}
+
 ServerResponse.prototype.setHeader = function(name, value) {
+    validateHeaderName(name);
+    validateHeaderValue(name, value);
     this.__canaryoHeaders[String(name).toLowerCase()] = String(value);
     return this;
 };
@@ -303,6 +328,8 @@ function ClientRequest(input, options, callback, defaultProtocol = "http:", defa
 }
 ClientRequest.prototype.setHeader = function(name, value) {
     if (this.headersSent) throw new Error("Cannot set headers after they are sent");
+    validateHeaderName(name);
+    validateHeaderValue(name, value);
     this._headers[String(name).toLowerCase()] = Array.isArray(value) ? value.join(", ") : String(value);
 };
 ClientRequest.prototype.getHeader = function(name) { return this._headers[String(name).toLowerCase()]; };
@@ -505,6 +532,9 @@ const httpModule = Object.freeze({
     globalAgent,
     METHODS: ["GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH"],
     STATUS_CODES: { 200: "OK", 201: "Created", 202: "Accepted", 204: "No Content", 400: "Bad Request", 404: "Not Found", 413: "Payload Too Large", 500: "Internal Server Error", 504: "Gateway Timeout" },
+    maxHeaderSize: 16 * 1024,
+    validateHeaderName,
+    validateHeaderValue,
     request(input, options, callback) { return clientRequest("http:", globalAgent, input, options, callback); },
     get(input, options, callback) {
         const request = clientRequest("http:", globalAgent, input, options, callback);

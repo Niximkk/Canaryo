@@ -235,6 +235,9 @@ fn builtin_source(name: &str) -> Option<String> {
             "globalAgent",
             "METHODS",
             "STATUS_CODES",
+            "maxHeaderSize",
+            "validateHeaderName",
+            "validateHeaderValue",
         ],
         "https" => &[
             "createServer",
@@ -247,6 +250,9 @@ fn builtin_source(name: &str) -> Option<String> {
             "globalAgent",
             "METHODS",
             "STATUS_CODES",
+            "maxHeaderSize",
+            "validateHeaderName",
+            "validateHeaderValue",
         ],
         "buffer" => &[
             "Buffer",

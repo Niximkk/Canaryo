@@ -799,7 +799,7 @@ fn keeps_serving_while_an_outbound_request_is_pending() {
         thread::sleep(Duration::from_millis(300));
         stream
             .write_all(
-                b"HTTP/1.1 200 OK\r\nContent-Length: 11\r\nConnection: close\r\n\r\noutbound-ok",
+                b"HTTP/1.1 200 OK\r\nContent-Length: 11\r\nX-Upstream: yes\r\nConnection: close\r\n\r\noutbound-ok",
             )
             .unwrap();
     });
