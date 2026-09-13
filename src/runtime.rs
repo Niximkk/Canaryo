@@ -2736,15 +2736,82 @@ mod tests {
                     });
                     const removed = diagnostics.unsubscribe("canaryo.request", subscriber);
                     channel.publish({ id: 0 });
+                    const unbound = channel.unbindStore(storage);
                     diagnostics.channel("canaryo.request") === channel &&
                         stored === 42 && messages.join() === "canaryo.request:42" &&
-                        removed && !diagnostics.hasSubscribers("canaryo.request")
+                        removed && unbound && !diagnostics.hasSubscribers("canaryo.request")
                     "#,
                 )
                 .unwrap()
         });
 
         assert!(supported);
+    }
+
+    #[test]
+    fn traces_sync_promise_and_callback_operations() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            context
+                .eval::<(), _>(
+                    r#"
+                    const diagnostics = __canaryoBuiltins.diagnostics_channel;
+                    const tracing = diagnostics.tracingChannel("canaryo.operation");
+                    globalThis.traceEvents = [];
+                    const subscribers = {};
+                    for (const event of ["start", "end", "asyncStart", "asyncEnd", "error"]) {
+                        subscribers[event] = context => traceEvents.push(
+                            `${event}:${context.name}:${context.result ?? ""}:${context.error?.message ?? ""}`
+                        );
+                    }
+                    tracing.subscribe(subscribers);
+                    globalThis.syncTraceResult = tracing.traceSync(
+                        function (value) { return value + this.offset; },
+                        { name: "sync" },
+                        { offset: 2 },
+                        40
+                    );
+                    globalThis.callbackTraceResult = tracing.traceCallback(
+                        callback => { callback(null, 7); return 9; },
+                        0,
+                        { name: "callback" },
+                        undefined,
+                        value => { globalThis.callbackValue = value; }
+                    );
+                    globalThis.promiseTraceDone = false;
+                    tracing.tracePromise(
+                        () => Promise.resolve(11),
+                        { name: "promise" }
+                    ).then(value => { promiseTraceDone = value === 11; });
+                    globalThis.traceSubscribers = subscribers;
+                    globalThis.traceChannel = tracing;
+                    "#,
+                )
+                .unwrap();
+            while context.execute_pending_job() {}
+
+            let supported = context
+                .eval::<bool, _>(
+                    r#"
+                    const removed = traceChannel.unsubscribe(traceSubscribers);
+                    syncTraceResult === 42 && callbackTraceResult === 9 && callbackValue === null &&
+                        promiseTraceDone && removed && !traceChannel.hasSubscribers &&
+                        traceEvents.join("|") === [
+                            "start:sync::", "end:sync:42:",
+                            "start:callback::", "asyncStart:callback:7:",
+                            "asyncEnd:callback:7:", "end:callback:7:",
+                            "start:promise::", "end:promise::",
+                            "asyncStart:promise:11:", "asyncEnd:promise:11:"
+                        ].join("|")
+                    "#,
+                )
+                .unwrap();
+            assert!(supported);
+        });
     }
 
     #[test]

@@ -1037,7 +1037,7 @@
         const stores = new Map();
         return {
             name: String(name),
-            get hasSubscribers() { return subscribers.size > 0; },
+            get hasSubscribers() { return subscribers.size > 0 || stores.size > 0; },
             publish(message) {
                 for (const subscriber of [...subscribers]) subscriber(message, this.name);
             },
@@ -1063,6 +1063,152 @@
         };
     }
     const diagnosticsChannels = new Map();
+    const tracingEvents = ["start", "end", "asyncStart", "asyncEnd", "error"];
+
+    function createTracingChannel(nameOrChannels, channelForName) {
+        const channels = typeof nameOrChannels === "object" && nameOrChannels !== null
+            ? nameOrChannels
+            : Object.fromEntries(tracingEvents.map(event => [
+                event,
+                channelForName(`tracing:${String(nameOrChannels)}:${event}`)
+            ]));
+        const tracing = {};
+        for (const event of tracingEvents) {
+            if (!channels[event] || typeof channels[event].publish !== "function") {
+                throw new TypeError(`channels.${event} must be a diagnostics channel`);
+            }
+            Object.defineProperty(tracing, event, { value: channels[event], enumerable: true });
+        }
+        Object.defineProperties(tracing, {
+            hasSubscribers: {
+                get() { return tracingEvents.some(event => tracing[event].hasSubscribers); }
+            },
+            subscribe: {
+                value(subscribers) {
+                    if (!subscribers || typeof subscribers !== "object") {
+                        throw new TypeError("subscribers must be an object");
+                    }
+                    for (const event of tracingEvents) {
+                        if (typeof subscribers[event] === "function") tracing[event].subscribe(subscribers[event]);
+                    }
+                }
+            },
+            unsubscribe: {
+                value(subscribers) {
+                    if (!subscribers || typeof subscribers !== "object") return false;
+                    let removed = false;
+                    for (const event of tracingEvents) {
+                        if (typeof subscribers[event] === "function") {
+                            removed = tracing[event].unsubscribe(subscribers[event]) || removed;
+                        }
+                    }
+                    return removed;
+                }
+            },
+            traceSync: {
+                value(fn, context = {}, thisArg, ...args) {
+                    if (typeof fn !== "function") throw new TypeError("fn must be a function");
+                    if (!this.hasSubscribers) return fn.apply(thisArg, args);
+                    return this.start.runStores(context, () => {
+                        this.start.publish(context);
+                        try {
+                            const result = fn.apply(thisArg, args);
+                            context.result = result;
+                            this.end.publish(context);
+                            return result;
+                        } catch (error) {
+                            context.error = error;
+                            this.error.publish(context);
+                            this.end.publish(context);
+                            throw error;
+                        }
+                    });
+                }
+            },
+            tracePromise: {
+                value(fn, context = {}, thisArg, ...args) {
+                    if (typeof fn !== "function") throw new TypeError("fn must be a function");
+                    if (!this.hasSubscribers) return fn.apply(thisArg, args);
+                    let result;
+                    this.start.runStores(context, () => {
+                        this.start.publish(context);
+                        try {
+                            result = fn.apply(thisArg, args);
+                            this.end.publish(context);
+                        } catch (error) {
+                            context.error = error;
+                            this.error.publish(context);
+                            this.end.publish(context);
+                            throw error;
+                        }
+                    });
+                    if (!result || typeof result.then !== "function") return result;
+                    return result.then(
+                        value => {
+                            context.result = value;
+                            return this.asyncStart.runStores(context, () => {
+                                this.asyncStart.publish(context);
+                                try { return value; }
+                                finally { this.asyncEnd.publish(context); }
+                            });
+                        },
+                        error => {
+                            context.error = error;
+                            return this.asyncStart.runStores(context, () => {
+                                this.asyncStart.publish(context);
+                                this.error.publish(context);
+                                try { throw error; }
+                                finally { this.asyncEnd.publish(context); }
+                            });
+                        }
+                    );
+                }
+            },
+            traceCallback: {
+                value(fn, position, context = {}, thisArg, ...args) {
+                    if (typeof fn !== "function") throw new TypeError("fn must be a function");
+                    if (!this.hasSubscribers) return fn.apply(thisArg, args);
+                    const callbackIndex = position === undefined ? args.length - 1 : Number(position);
+                    const callback = args[callbackIndex];
+                    if (typeof callback !== "function") throw new TypeError("callback must be a function");
+                    const tracingChannel = this;
+                    args[callbackIndex] = function (...callbackArgs) {
+                        const callbackThis = this;
+                        const error = callbackArgs[0];
+                        if (error !== null && error !== undefined) context.error = error;
+                        else context.result = callbackArgs[1];
+                        return tracingChannel.asyncStart.runStores(context, () => {
+                            tracingChannel.asyncStart.publish(context);
+                            if (context.error !== undefined) tracingChannel.error.publish(context);
+                            try { return callback.apply(callbackThis, callbackArgs); }
+                            catch (callbackError) {
+                                context.error = callbackError;
+                                tracingChannel.error.publish(context);
+                                throw callbackError;
+                            } finally {
+                                tracingChannel.asyncEnd.publish(context);
+                            }
+                        });
+                    };
+                    return this.start.runStores(context, () => {
+                        this.start.publish(context);
+                        try {
+                            const result = fn.apply(thisArg, args);
+                            this.end.publish(context);
+                            return result;
+                        } catch (error) {
+                            context.error = error;
+                            this.error.publish(context);
+                            this.end.publish(context);
+                            throw error;
+                        }
+                    });
+                }
+            }
+        });
+        return tracing;
+    }
+
     const diagnosticsChannel = {
         channel(name) {
             if (!diagnosticsChannels.has(name)) diagnosticsChannels.set(name, createDiagnosticsChannel(name));
@@ -1071,22 +1217,8 @@
         hasSubscribers(name) { return this.channel(name).hasSubscribers; },
         subscribe(name, subscriber) { this.channel(name).subscribe(subscriber); },
         unsubscribe(name, subscriber) { return this.channel(name).unsubscribe(subscriber); },
-        tracingChannel(name) {
-            const channels = {
-                start: this.channel(`tracing:${name}:start`),
-                end: this.channel(`tracing:${name}:end`),
-                asyncStart: this.channel(`tracing:${name}:asyncStart`),
-                asyncEnd: this.channel(`tracing:${name}:asyncEnd`),
-                error: this.channel(`tracing:${name}:error`)
-            };
-            Object.defineProperty(channels, "hasSubscribers", {
-                get() {
-                    return channels.start.hasSubscribers || channels.end.hasSubscribers ||
-                        channels.asyncStart.hasSubscribers || channels.asyncEnd.hasSubscribers ||
-                        channels.error.hasSubscribers;
-                }
-            });
-            return channels;
+        tracingChannel(nameOrChannels) {
+            return createTracingChannel(nameOrChannels, name => this.channel(name));
         }
     };
 
