@@ -200,7 +200,17 @@
         return { [disposeSymbol]: dispose };
     }
 
-    function EventEmitter() { this._events = Object.create(null); }
+    const captureRejectionSymbol = Symbol.for("nodejs.rejection");
+    const errorMonitor = Symbol("events.errorMonitor");
+    function EventEmitter(options) {
+        this._events = Object.create(null);
+        this._captureRejections = options && Object.prototype.hasOwnProperty.call(options, "captureRejections")
+            ? Boolean(options.captureRejections)
+            : EventEmitter.captureRejections;
+    }
+    EventEmitter.captureRejections = false;
+    EventEmitter.captureRejectionSymbol = captureRejectionSymbol;
+    EventEmitter.errorMonitor = errorMonitor;
     EventEmitter.prototype.on = EventEmitter.prototype.addListener = function (name, listener) {
         if (typeof listener !== "function") throw new TypeError("listener must be a function");
         const events = this._events || (this._events = Object.create(null));
@@ -221,7 +231,7 @@
         const emitter = this;
         function onceListener(...args) {
             emitter.removeListener(name, onceListener);
-            listener.apply(emitter, args);
+            return listener.apply(emitter, args);
         }
         onceListener.listener = listener;
         return this.on(name, onceListener);
@@ -230,20 +240,35 @@
         const emitter = this;
         function onceListener(...args) {
             emitter.removeListener(name, onceListener);
-            listener.apply(emitter, args);
+            return listener.apply(emitter, args);
         }
         onceListener.listener = listener;
         return this.prependListener(name, onceListener);
     };
     EventEmitter.prototype.emit = function (name, ...args) {
         const listeners = this._events && this._events[name];
+        if (name === "error") {
+            const monitors = this._events && this._events[errorMonitor];
+            if (monitors) {
+                for (const monitor of [...monitors]) monitor.apply(this, args);
+            }
+        }
         if (!listeners || listeners.length === 0) {
             if (name === "error") {
                 throw args[0] instanceof Error ? args[0] : new Error(`Unhandled error: ${args[0]}`);
             }
             return false;
         }
-        for (const listener of [...listeners]) listener.apply(this, args);
+        for (const listener of [...listeners]) {
+            const result = listener.apply(this, args);
+            if (this._captureRejections && result && typeof result.then === "function") {
+                Promise.resolve(result).catch(error => {
+                    const handler = this[captureRejectionSymbol];
+                    if (typeof handler === "function") handler.call(this, error, name, ...args);
+                    else this.emit("error", error);
+                });
+            }
+        }
         return true;
     };
     EventEmitter.prototype.removeListener = function (name, listener) {

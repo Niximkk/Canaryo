@@ -273,6 +273,8 @@ fn builtin_source(name: &str) -> Option<String> {
             "setMaxListeners",
             "getMaxListeners",
             "addAbortListener",
+            "captureRejectionSymbol",
+            "errorMonitor",
         ],
         "fs" => &[
             "readFile",

@@ -2864,6 +2864,77 @@ mod tests {
     }
 
     #[test]
+    fn captures_event_listener_rejections() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            context
+                .eval::<(), _>(
+                    r#"
+                    const events = __canaryoBuiltins.events;
+                    globalThis.capturedEventError = "";
+                    const emitter = new events.EventEmitter({ captureRejections: true });
+                    emitter.on("error", error => { capturedEventError = error.message; });
+                    emitter.once("task", async () => { throw new Error("rejected task"); });
+                    emitter.emit("task");
+
+                    globalThis.customCapturedEvent = "";
+                    const custom = new events.EventEmitter({ captureRejections: true });
+                    custom[events.captureRejectionSymbol] = (error, name, value) => {
+                        customCapturedEvent = `${error.message}:${name}:${value}`;
+                    };
+                    custom.on("work", () => Promise.reject(new Error("custom rejection")));
+                    custom.emit("work", 42);
+
+                    globalThis.monitoredErrorOrder = [];
+                    const monitored = new events.EventEmitter();
+                    monitored.on(events.errorMonitor, error => monitoredErrorOrder.push(`monitor:${error.message}`));
+                    monitored.on("error", error => monitoredErrorOrder.push(`listener:${error.message}`));
+                    monitored.emit("error", new Error("observed"));
+
+                    events.captureRejections = true;
+                    globalThis.globalCaptureWorked = false;
+                    const inherited = new events.EventEmitter();
+                    events.captureRejections = false;
+                    inherited.on("error", () => { globalCaptureWorked = true; });
+                    inherited.on("task", () => Promise.reject(new Error("global")));
+                    inherited.emit("task");
+                    "#,
+                )
+                .unwrap();
+
+            while context.execute_pending_job() {}
+
+            assert_eq!(
+                context
+                    .globals()
+                    .get::<_, String>("capturedEventError")
+                    .unwrap(),
+                "rejected task"
+            );
+            assert_eq!(
+                context
+                    .globals()
+                    .get::<_, String>("customCapturedEvent")
+                    .unwrap(),
+                "custom rejection:work:42"
+            );
+            let order: Array = context.globals().get("monitoredErrorOrder").unwrap();
+            assert_eq!(order.get::<String>(0).unwrap(), "monitor:observed");
+            assert_eq!(order.get::<String>(1).unwrap(), "listener:observed");
+            assert!(
+                context
+                    .globals()
+                    .get::<_, bool>("globalCaptureWorked")
+                    .unwrap()
+            );
+        });
+    }
+
+    #[test]
     fn supports_abort_signals_across_events_timers_and_streams() {
         let runtime = Runtime::new().unwrap();
         let context = Context::full(&runtime).unwrap();
