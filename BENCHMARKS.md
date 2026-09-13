@@ -1,6 +1,6 @@
 # Benchmarks
 
-Results collected on September 11 and 13, 2026 with Canaryo 0.1.0. Startup and `node:http` load results were rerun on September 13 after the HTTP lifecycle and backpressure work. Express and Fastify load results remain from September 11.
+Results collected on September 13, 2026 with Canaryo 0.1.0 after the async context, events, streams, Buffer, and HTTP header compatibility work.
 
 ## Environment
 
@@ -18,14 +18,14 @@ Startup is measured from process creation until the first complete valid HTTP re
 
 | Application | Runtime | Median | Minimum | Maximum | Canaryo difference |
 |---|---:|---:|---:|---:|---:|
-| `node:http` | Node.js | 51.35 ms | 40.67 ms | 52.81 ms | |
-| `node:http` | Canaryo | 25.01 ms | 23.00 ms | 31.30 ms | 51.3% lower |
-| Express 5.2.1 | Node.js | 191.96 ms | 186.99 ms | 206.28 ms | |
-| Express 5.2.1 | Canaryo | 153.12 ms | 148.13 ms | 164.43 ms | 20.2% lower |
-| Fastify 5.12.3 | Node.js | 319.57 ms | 315.74 ms | 321.35 ms | |
-| Fastify 5.12.3 | Canaryo | 199.20 ms | 197.59 ms | 206.53 ms | 37.7% lower |
+| `node:http` | Node.js | 53.22 ms | 50.77 ms | 66.85 ms | |
+| `node:http` | Canaryo | 25.47 ms | 24.20 ms | 27.00 ms | 52.1% lower |
+| Express 5.2.1 | Node.js | 195.87 ms | 191.59 ms | 211.00 ms | |
+| Express 5.2.1 | Canaryo | 168.53 ms | 157.42 ms | 173.25 ms | 14.0% lower |
+| Fastify 5.12.3 | Node.js | 331.61 ms | 313.84 ms | 335.06 ms | |
+| Fastify 5.12.3 | Canaryo | 199.67 ms | 196.87 ms | 203.57 ms | 39.8% lower |
 
-The original Express startup result was 342.99 ms. Direct execution, cached CommonJS resolution, lexical path normalization, and subsequent bootstrap work reduced it by 55.4% in the current run.
+The original Express startup result was 342.99 ms. Direct execution, cached CommonJS resolution, lexical path normalization, and subsequent bootstrap work reduced it by 50.9% in the current run.
 
 ## New connection per request
 
@@ -33,23 +33,23 @@ The original Express startup result was 342.99 ms. Direct execution, cached Comm
 
 | Application | Runtime | Requests/s | p50 | p95 | p99 | Errors | RSS | Canaryo throughput difference |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| `node:http` | Node.js | 2,427 | 0.39 ms | 0.54 ms | 0.64 ms | 0 | 37.7 MiB | |
-| `node:http` | Canaryo | 2,555 | 0.37 ms | 0.52 ms | 0.66 ms | 0 | 12.8 MiB | 5.3% higher |
-| Express 5.2.1 | Node.js | 1,582 | 0.60 ms | 0.84 ms | 1.07 ms | 0 | 54.3 MiB | |
-| Express 5.2.1 | Canaryo | 1,832 | 0.50 ms | 0.74 ms | 1.06 ms | 0 | 10.7 MiB | 15.8% higher |
-| Fastify 5.12.3 | Node.js | 2,056 | 0.47 ms | 0.64 ms | 0.78 ms | 0 | 51.5 MiB | |
-| Fastify 5.12.3 | Canaryo | 2,182 | 0.43 ms | 0.61 ms | 0.78 ms | 0 | 13.7 MiB | 6.1% higher |
+| `node:http` | Node.js | 2,402 | 0.40 ms | 0.53 ms | 0.61 ms | 0 | 37.4 MiB | |
+| `node:http` | Canaryo | 2,540 | 0.38 ms | 0.49 ms | 0.61 ms | 0 | 12.7 MiB | 5.7% higher |
+| Express 5.2.1 | Node.js | 1,849 | 0.52 ms | 0.70 ms | 0.87 ms | 0 | 59.6 MiB | |
+| Express 5.2.1 | Canaryo | 1,746 | 0.54 ms | 0.70 ms | 0.86 ms | 0 | 12.9 MiB | 5.6% lower |
+| Fastify 5.12.3 | Node.js | 2,368 | 0.40 ms | 0.55 ms | 0.63 ms | 0 | 52.7 MiB | |
+| Fastify 5.12.3 | Canaryo | 2,153 | 0.44 ms | 0.58 ms | 0.68 ms | 0 | 15.3 MiB | 9.1% lower |
 
 ### Concurrency 16
 
 | Application | Runtime | Requests/s | p50 | p95 | p99 | Errors | RSS | Canaryo throughput difference |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| `node:http` | Node.js | 6,662 | 2.28 ms | 3.29 ms | 3.82 ms | 0 | 40.5 MiB | |
-| `node:http` | Canaryo | 8,156 | 1.91 ms | 2.55 ms | 3.00 ms | 0 | 8.7 MiB | 22.4% higher |
-| Express 5.2.1 | Node.js | 2,279 | 6.49 ms | 11.43 ms | 16.02 ms | 0 | 62.2 MiB | |
-| Express 5.2.1 | Canaryo | 3,211 | 4.86 ms | 7.44 ms | 9.07 ms | 0 | 10.6 MiB | 40.9% higher |
-| Fastify 5.12.3 | Node.js | 4,166 | 3.53 ms | 6.01 ms | 11.60 ms | 0 | 51.9 MiB | |
-| Fastify 5.12.3 | Canaryo | 5,119 | 3.01 ms | 4.23 ms | 6.13 ms | 0 | 12.9 MiB | 22.9% higher |
+| `node:http` | Node.js | 6,998 | 2.27 ms | 2.93 ms | 3.37 ms | 0 | 40.3 MiB | |
+| `node:http` | Canaryo | 8,069 | 1.92 ms | 2.57 ms | 2.95 ms | 0 | 8.8 MiB | 15.3% higher |
+| Express 5.2.1 | Node.js | 3,665 | 4.29 ms | 6.02 ms | 7.43 ms | 0 | 67.5 MiB | |
+| Express 5.2.1 | Canaryo | 3,242 | 4.66 ms | 6.73 ms | 7.42 ms | 0 | 12.7 MiB | 11.5% lower |
+| Fastify 5.12.3 | Node.js | 5,968 | 2.60 ms | 3.81 ms | 4.54 ms | 0 | 53.2 MiB | |
+| Fastify 5.12.3 | Canaryo | 6,040 | 2.53 ms | 3.17 ms | 5.95 ms | 0 | 15.9 MiB | 1.2% higher |
 
 ## Persistent connections
 
@@ -59,29 +59,29 @@ Each benchmark worker opens one HTTP/1.1 connection and reuses it for the comple
 
 | Application | Runtime | Requests/s | p50 | p95 | p99 | Errors | RSS | Canaryo throughput difference |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| `node:http` | Node.js | 14,298 | 0.06 ms | 0.12 ms | 0.22 ms | 0 | 38.5 MiB | |
-| `node:http` | Canaryo | 13,746 | 0.07 ms | 0.11 ms | 0.15 ms | 0 | 9.1 MiB | 3.9% lower |
-| Express 5.2.1 | Node.js | 6,300 | 0.14 ms | 0.24 ms | 0.35 ms | 0 | 76.3 MiB | |
-| Express 5.2.1 | Canaryo | 4,795 | 0.18 ms | 0.28 ms | 0.36 ms | 0 | 10.5 MiB | 23.9% lower |
-| Fastify 5.12.3 | Node.js | 14,237 | 0.07 ms | 0.11 ms | 0.13 ms | 0 | 52.9 MiB | |
-| Fastify 5.12.3 | Canaryo | 7,998 | 0.12 ms | 0.17 ms | 0.21 ms | 0 | 15.3 MiB | 43.8% lower |
+| `node:http` | Node.js | 20,102 | 0.04 ms | 0.09 ms | 0.12 ms | 0 | 39.1 MiB | |
+| `node:http` | Canaryo | 13,852 | 0.07 ms | 0.11 ms | 0.14 ms | 0 | 9.2 MiB | 31.1% lower |
+| Express 5.2.1 | Node.js | 6,357 | 0.14 ms | 0.22 ms | 0.26 ms | 0 | 76.9 MiB | |
+| Express 5.2.1 | Canaryo | 3,748 | 0.24 ms | 0.34 ms | 0.42 ms | 0 | 12.5 MiB | 41.0% lower |
+| Fastify 5.12.3 | Node.js | 17,869 | 0.05 ms | 0.10 ms | 0.12 ms | 0 | 53.0 MiB | |
+| Fastify 5.12.3 | Canaryo | 7,901 | 0.12 ms | 0.18 ms | 0.21 ms | 0 | 16.2 MiB | 55.8% lower |
 
 ### Concurrency 16
 
 | Application | Runtime | Requests/s | p50 | p95 | p99 | Errors | RSS | Canaryo throughput difference |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| `node:http` | Node.js | 21,038 | 0.65 ms | 1.78 ms | 2.90 ms | 0 | 40.9 MiB | |
-| `node:http` | Canaryo | 21,042 | 0.66 ms | 1.12 ms | 1.29 ms | 0 | 8.9 MiB | <0.1% higher |
-| Express 5.2.1 | Node.js | 6,318 | 2.35 ms | 3.74 ms | 4.65 ms | 0 | 90.4 MiB | |
-| Express 5.2.1 | Canaryo | 6,476 | 2.28 ms | 3.86 ms | 4.33 ms | 0 | 10.3 MiB | 2.5% higher |
-| Fastify 5.12.3 | Node.js | 18,148 | 0.77 ms | 1.34 ms | 1.77 ms | 0 | 54.5 MiB | |
-| Fastify 5.12.3 | Canaryo | 10,441 | 1.34 ms | 2.12 ms | 4.39 ms | 0 | 15.1 MiB | 42.5% lower |
+| `node:http` | Node.js | 23,635 | 0.66 ms | 1.22 ms | 1.83 ms | 0 | 40.7 MiB | |
+| `node:http` | Canaryo | 21,175 | 0.69 ms | 1.04 ms | 1.25 ms | 0 | 9.3 MiB | 10.4% lower |
+| Express 5.2.1 | Node.js | 6,651 | 2.21 ms | 3.52 ms | 4.56 ms | 0 | 89.1 MiB | |
+| Express 5.2.1 | Canaryo | 4,262 | 3.52 ms | 5.29 ms | 6.17 ms | 0 | 12.5 MiB | 35.9% lower |
+| Fastify 5.12.3 | Node.js | 20,509 | 0.73 ms | 1.13 ms | 1.58 ms | 0 | 54.6 MiB | |
+| Fastify 5.12.3 | Canaryo | 10,496 | 1.42 ms | 1.81 ms | 4.55 ms | 0 | 15.2 MiB | 48.8% lower |
 
 ## Interpretation
 
-Canaryo starts all three applications faster and uses substantially less resident memory. In the September 13 `node:http` run with a new connection per request, it was 5.3% faster at concurrency 1 and 22.4% faster at concurrency 16 while delivering request bodies incrementally and enforcing socket-level backpressure. The September 11 Express and Fastify runs also favor Canaryo in this mode.
+Canaryo starts all three applications faster and uses substantially less resident memory. With a new connection per request, it leads `node:http` by 5.7% at concurrency 1 and 15.3% at concurrency 16. At concurrency 16, it trails Express by 11.5% and leads Fastify by 1.2%; the differences are small enough that repeated runs are necessary when evaluating optimization work.
 
-With persistent `node:http` connections, Node.js leads the single-connection run by 3.9%, down from the previous 22.6% gap. At concurrency 16 the runtimes are effectively tied at about 21,000 requests per second, while Canaryo uses 8.9 MiB of resident memory against Node.js's 40.9 MiB. In the September 11 framework samples, Canaryo narrowly leads Express at concurrency 16, while Node.js remains faster on Fastify by 42.5%. Canaryo transfers text responses across the Rust/JavaScript boundary as one string and reuses the socket object for every request on a persistent connection. The remaining Fastify workload is dominated by framework JavaScript execution, where V8's optimizing JIT has an advantage over QuickJS-NG.
+Persistent connections expose the main throughput gap. At concurrency 16, Canaryo trails Node.js by 10.4% on `node:http`, 35.9% on Express, and 48.8% on Fastify. It uses between 9.3 and 15.2 MiB of resident memory in those samples, while Node.js uses between 40.7 and 89.1 MiB. Canaryo transfers text responses across the Rust/JavaScript boundary as one string and reuses the socket object for every request; framework-heavy request paths still pay for interpretation in QuickJS-NG while Node.js benefits from V8's optimizing JIT.
 
 ## Methodology
 

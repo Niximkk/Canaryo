@@ -25,8 +25,8 @@ Canaryo 0.1.0 is an experimental runtime. Basic `node:http`, Express 5.2.1, and 
 ## Why Canaryo?
 
 - **Existing code first:** run supported CommonJS applications without rewriting them.
-- **Small memory footprint:** the current Express fixture uses about 10.4 MiB of resident memory with 16 persistent connections.
-- **Fast startup:** native HTTP starts in about 10 ms and the tested Express application starts faster than Node.js on the benchmark machine.
+- **Small memory footprint:** the current Express fixture uses about 12.5 MiB of resident memory with 16 persistent connections.
+- **Fast startup:** native HTTP starts in about 25 ms and the tested Express application starts faster than Node.js on the benchmark machine.
 - **Compatibility report:** inspect an entry point and its dependencies before execution.
 - **Explicit escape hatch:** delegate to the installed Node.js runtime when necessary.
 
@@ -87,9 +87,9 @@ Lower is better.
 
 | Application | Node.js | Canaryo | Canaryo improvement |
 |---|---:|---:|---:|
-| `node:http` | 54.83 ms | **21.55 ms** | **60.7% lower** |
-| Express 5.2.1 | 218.57 ms | **178.58 ms** | **18.3% lower** |
-| Fastify 5.12.3 | 316.42 ms | **199.47 ms** | **37.0% lower** |
+| `node:http` | 53.22 ms | **25.47 ms** | **52.1% lower** |
+| Express 5.2.1 | 195.87 ms | **168.53 ms** | **14.0% lower** |
+| Fastify 5.12.3 | 331.61 ms | **199.67 ms** | **39.8% lower** |
 
 ### Throughput at concurrency 16
 
@@ -97,9 +97,9 @@ Higher is better. “New connection” opens a TCP connection for every request;
 
 | Application | New connection: Node.js | New connection: Canaryo | Difference | Keep-alive: Node.js | Keep-alive: Canaryo | Difference |
 |---|---:|---:|---:|---:|---:|---:|
-| `node:http` | 4,971 req/s | **7,569 req/s** | **+52.3%** | 21,421 req/s | **28,341 req/s** | **+32.3%** |
-| Express 5.2.1 | 2,279 req/s | **3,211 req/s** | **+40.9%** | 6,318 req/s | **6,476 req/s** | **+2.5%** |
-| Fastify 5.12.3 | 4,166 req/s | **5,119 req/s** | **+22.9%** | **18,148 req/s** | 10,441 req/s | **−42.5%** |
+| `node:http` | 6,998 req/s | **8,069 req/s** | **+15.3%** | **23,635 req/s** | 21,175 req/s | **−10.4%** |
+| Express 5.2.1 | **3,665 req/s** | 3,242 req/s | **−11.5%** | **6,651 req/s** | 4,262 req/s | **−35.9%** |
+| Fastify 5.12.3 | 5,968 req/s | **6,040 req/s** | **+1.2%** | **20,509 req/s** | 10,496 req/s | **−48.8%** |
 
 ### Resident memory at concurrency 16
 
@@ -107,11 +107,11 @@ Lower is better. RSS is sampled from the runtime process during the selected thr
 
 | Application | New connection: Node.js | New connection: Canaryo | Reduction | Keep-alive: Node.js | Keep-alive: Canaryo | Reduction |
 |---|---:|---:|---:|---:|---:|---:|
-| `node:http` | 40.2 MiB | **11.7 MiB** | **70.9%** | 39.1 MiB | **7.1 MiB** | **81.8%** |
-| Express 5.2.1 | 62.2 MiB | **10.6 MiB** | **83.0%** | 90.4 MiB | **10.3 MiB** | **88.6%** |
-| Fastify 5.12.3 | 51.9 MiB | **12.9 MiB** | **75.1%** | 54.5 MiB | **15.1 MiB** | **72.3%** |
+| `node:http` | 40.3 MiB | **8.8 MiB** | **78.2%** | 40.7 MiB | **9.3 MiB** | **77.1%** |
+| Express 5.2.1 | 67.5 MiB | **12.7 MiB** | **81.2%** | 89.1 MiB | **12.5 MiB** | **86.0%** |
+| Fastify 5.12.3 | 53.2 MiB | **15.9 MiB** | **70.1%** | 54.6 MiB | **15.2 MiB** | **72.2%** |
 
-Canaryo currently leads startup and memory use in every tested application. It also leads throughput when requests reopen connections, and leads `node:http` and Express with persistent connections at concurrency 16. Persistent Fastify traffic remains the main performance gap because its JavaScript-heavy request path benefits from V8's optimizing JIT.
+Canaryo currently leads startup and memory use in every tested application. With new connections at concurrency 16, it leads `node:http`, is close to Node.js on Fastify, and trails on Express. Persistent connections remain the main optimization target, especially for framework-heavy request paths that benefit from V8's optimizing JIT.
 
 These synthetic loopback results cover the current compatibility surface on one machine. See [BENCHMARKS.md](BENCHMARKS.md) for latency percentiles, concurrency 1 results, methodology, limitations, and reproduction commands.
 
