@@ -927,7 +927,17 @@
         if (!pathname.startsWith("/")) pathname = `/${pathname}`;
         return new URL(`file://${encodeURI(pathname)}`);
     }
-    function Stream() { EventEmitter.call(this); this.destroyed = false; }
+    let defaultByteHighWaterMark = 64 * 1024;
+    let defaultObjectHighWaterMark = 16;
+    function resolveHighWaterMark(options, objectMode) {
+        if (options.highWaterMark === undefined) {
+            return objectMode ? defaultObjectHighWaterMark : defaultByteHighWaterMark;
+        }
+        const value = Number(options.highWaterMark);
+        if (!Number.isInteger(value) || value < 0) throw new RangeError("highWaterMark must be a non-negative integer");
+        return value;
+    }
+    function Stream() { EventEmitter.call(this); this.destroyed = false; this.errored = null; }
     util.inherits(Stream, EventEmitter);
     Stream.prototype.pipe = function (destination, options = {}) {
         const source = this;
@@ -958,6 +968,7 @@
     Stream.prototype.destroy = function (error) {
         if (this.destroyed) return this;
         this.destroyed = true;
+        if (error) this.errored = error;
         if (error) this.emit("error", error);
         this.emit("close");
         return this;
@@ -969,8 +980,9 @@
         this.readableEnded = false;
         this._readableQueue = [];
         this.readableLength = 0;
-        this.readableHighWaterMark = Math.max(1, Number(options.highWaterMark) || (options.objectMode ? 16 : 16 * 1024));
         this._readableObjectMode = Boolean(options.objectMode);
+        this.readableHighWaterMark = resolveHighWaterMark(options, this._readableObjectMode);
+        this._readableDidRead = false;
         this._paused = true;
         this._flowing = false;
         this._readableEndPending = false;
@@ -994,6 +1006,7 @@
         while (this._flowing && !this._paused && this._readableQueue.length) {
             const value = this._readableQueue.shift();
             this.readableLength -= this._chunkLength(value);
+            this._readableDidRead = true;
             this.emit("data", value);
         }
         this._finishReadable();
@@ -1013,7 +1026,10 @@
     };
     Readable.prototype.read = function () {
         const value = this._readableQueue.shift() ?? null;
-        if (value !== null) this.readableLength -= this._chunkLength(value);
+        if (value !== null) {
+            this.readableLength -= this._chunkLength(value);
+            this._readableDidRead = true;
+        }
         this._finishReadable();
         return value;
     };
@@ -1114,9 +1130,9 @@
         stream.writableEnded = false;
         stream.writableFinished = false;
         stream.writableLength = 0;
-        stream.writableHighWaterMark = Math.max(1, Number(options.highWaterMark) || (options.objectMode ? 16 : 16 * 1024));
         stream.writableNeedDrain = false;
         stream._writableObjectMode = Boolean(options.objectMode);
+        stream.writableHighWaterMark = resolveHighWaterMark(options, stream._writableObjectMode);
         stream._writableQueue = [];
         stream._writing = false;
         stream._ending = false;
@@ -1259,6 +1275,36 @@
         if (signal.aborted) stream.destroy(abortApiError(signal.reason));
         return stream;
     }
+    function getDefaultHighWaterMark(objectMode) {
+        return objectMode ? defaultObjectHighWaterMark : defaultByteHighWaterMark;
+    }
+    function setDefaultHighWaterMark(objectMode, value) {
+        const normalized = Number(value);
+        if (!Number.isInteger(normalized) || normalized < 0) {
+            throw new RangeError("value must be a non-negative integer");
+        }
+        if (objectMode) defaultObjectHighWaterMark = normalized;
+        else defaultByteHighWaterMark = normalized;
+    }
+    function isDestroyed(stream) {
+        return stream && typeof stream === "object" ? Boolean(stream.destroyed) : null;
+    }
+    function isDisturbed(stream) {
+        return stream && typeof stream === "object"
+            ? Boolean(stream._readableDidRead || stream.readableEnded)
+            : null;
+    }
+    function isErrored(stream) {
+        return stream && typeof stream === "object" ? stream.errored != null : null;
+    }
+    function isReadable(stream) {
+        if (!stream || typeof stream !== "object" || !("readable" in stream)) return null;
+        return Boolean(stream.readable && !stream.destroyed && !stream.readableEnded);
+    }
+    function isWritable(stream) {
+        if (!stream || typeof stream !== "object" || !("writable" in stream)) return null;
+        return Boolean(stream.writable && !stream.destroyed && !stream.writableEnded);
+    }
     Object.assign(Stream, {
         Stream,
         Readable,
@@ -1268,7 +1314,16 @@
         PassThrough,
         finished,
         pipeline,
-        addAbortSignal
+        addAbortSignal,
+        getDefaultHighWaterMark,
+        setDefaultHighWaterMark,
+        isDestroyed,
+        isDisturbed,
+        isErrored,
+        isReadable,
+        isWritable,
+        _isUint8Array: value => value instanceof Uint8Array,
+        _uint8ArrayToBuffer: value => Buffer.from(value)
     });
 
     const asyncLocalStorages = new Set();

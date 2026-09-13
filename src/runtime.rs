@@ -3450,6 +3450,53 @@ mod tests {
     }
 
     #[test]
+    fn inspects_stream_state_and_configures_watermarks() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            let supported = context
+                .eval::<bool, _>(
+                    r#"
+                    const streams = __canaryoBuiltins.stream;
+                    const originalBytes = streams.getDefaultHighWaterMark(false);
+                    const originalObjects = streams.getDefaultHighWaterMark(true);
+                    streams.setDefaultHighWaterMark(false, 1234);
+                    streams.setDefaultHighWaterMark(true, 7);
+                    const readable = new streams.Readable();
+                    const objects = new streams.Readable({ objectMode: true });
+                    const writable = new streams.Writable();
+                    const byteDefaultsWorked = originalBytes === 65536 &&
+                        originalObjects === 16 && readable.readableHighWaterMark === 1234 &&
+                        objects.readableHighWaterMark === 7 && writable.writableHighWaterMark === 1234;
+                    const initiallyReady = streams.isReadable(readable) &&
+                        streams.isWritable(writable) && !streams.isDisturbed(readable) &&
+                        !streams.isDestroyed(readable) && !streams.isErrored(readable);
+                    readable.push("value");
+                    readable.read();
+                    const disturbed = streams.isDisturbed(readable);
+                    const failure = new Error("destroyed");
+                    readable.on("error", () => {});
+                    readable.destroy(failure);
+                    streams.setDefaultHighWaterMark(false, originalBytes);
+                    streams.setDefaultHighWaterMark(true, originalObjects);
+                    byteDefaultsWorked && initiallyReady && disturbed &&
+                        streams.isDestroyed(readable) && streams.isErrored(readable) &&
+                        !streams.isReadable(readable) &&
+                        streams.isReadable({}) === null &&
+                        streams._isUint8Array(Buffer.from([1])) &&
+                        streams._uint8ArrayToBuffer(new Uint8Array([42]))[0] === 42
+                    "#,
+                )
+                .unwrap();
+
+            assert!(supported);
+        });
+    }
+
+    #[test]
     fn applies_backpressure_to_piped_streams() {
         let runtime = Runtime::new().unwrap();
         let context = Context::full(&runtime).unwrap();
