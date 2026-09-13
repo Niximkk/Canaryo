@@ -867,6 +867,35 @@ fn serves_a_native_express_application() {
 
 #[test]
 #[ignore = "requires npm ci in fixtures/express-basic"]
+fn compresses_express_responses_with_standard_middleware() {
+    let (_server, mut stream) = start_fixture("fixtures/express-basic/compression-server.js");
+    stream
+        .write_all(
+            b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nAccept-Encoding: gzip\r\nConnection: close\r\n\r\n",
+        )
+        .unwrap();
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).unwrap();
+    let body_start = response
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .unwrap()
+        + 4;
+    let headers = String::from_utf8_lossy(&response[..body_start]).to_ascii_lowercase();
+    let mut decoder = flate2::read::GzDecoder::new(&response[body_start..]);
+    let mut body = String::new();
+    decoder.read_to_string(&mut body).unwrap();
+
+    assert!(response.starts_with(b"HTTP/1.1 200 OK"));
+    assert!(headers.contains("content-encoding: gzip"), "{headers}");
+    assert_eq!(
+        body,
+        format!(r#"{{"payload":"{}"}}"#, "canaryo-compression-".repeat(100))
+    );
+}
+
+#[test]
+#[ignore = "requires npm ci in fixtures/express-basic"]
 fn serves_static_files_from_express() {
     let (_server, mut stream) = start_fixture("fixtures/express-static/server.js");
     stream

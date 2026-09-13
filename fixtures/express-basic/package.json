@@ -3,6 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "dependencies": {
+    "compression": "^1.8.2",
     "express": "5.2.1"
   }
 }
