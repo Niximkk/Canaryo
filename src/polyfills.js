@@ -463,7 +463,7 @@
     }
     function encodeString(value, encoding) {
         const normalized = normalizeEncoding(encoding);
-        if (normalized === "utf8") return encodeUtf8(value);
+        if (normalized === "utf8") return __canaryoEncodeUtf8(String(value));
         if (normalized === "hex") {
             const input = String(value).match(/^[0-9a-fA-F]*/)[0];
             const bytes = [];
@@ -487,7 +487,7 @@
     }
     function decodeBytes(bytes, encoding) {
         const normalized = normalizeEncoding(encoding);
-        if (normalized === "utf8") return decodeUtf8(bytes);
+        if (normalized === "utf8") return __canaryoDecodeUtf8(bytes);
         if (normalized === "hex") return [...bytes].map(byte => byte.toString(16).padStart(2, "0")).join("");
         if (normalized === "base64" || normalized === "base64url") return encodeBase64(bytes, normalized === "base64url");
         if (normalized === "utf16le") {
@@ -2758,8 +2758,8 @@
     function cryptoInput(value, encoding) {
         return Buffer.isBuffer(value) ? Buffer.from(value) : Buffer.from(value, encoding);
     }
-    function cryptoOutput(base64, encoding) {
-        const output = Buffer.from(base64, "base64");
+    function cryptoOutput(bytes, encoding) {
+        const output = Buffer.from(bytes);
         return encoding === undefined ? output : output.toString(encoding);
     }
     function createDigest(algorithm, key) {
@@ -2774,10 +2774,10 @@
             digest(encoding) {
                 if (finalized) throw new Error("Digest already called");
                 finalized = true;
-                const contents = Buffer.concat(chunks).toString("base64");
+                const contents = Buffer.concat(chunks);
                 const result = key === undefined
                     ? __canaryoHash(algorithm, contents)
-                    : __canaryoHmac(algorithm, key.toString("base64"), contents);
+                    : __canaryoHmac(algorithm, key, contents);
                 return cryptoOutput(result, encoding);
             }
         };
@@ -2785,7 +2785,7 @@
     function randomBytes(size, callback) {
         const length = Number(size);
         if (!Number.isInteger(length) || length < 0) throw new RangeError("size must be a non-negative integer");
-        const output = Buffer.from(__canaryoRandomBytes(length), "base64");
+        const output = Buffer.from(__canaryoRandomBytes(length));
         if (typeof callback === "function") {
             process.nextTick(callback, null, output);
             return undefined;
@@ -2800,7 +2800,7 @@
         if (!Number.isInteger(start) || !Number.isInteger(length) || start < 0 || length < 0 || start + length > bytes.length) {
             throw new RangeError("offset and size are outside the buffer");
         }
-        bytes.set(Buffer.from(__canaryoRandomBytes(length), "base64"), start);
+        bytes.set(__canaryoRandomBytes(length), start);
         return buffer;
     }
     function randomFill(buffer, offset, size, callback) {
@@ -2839,10 +2839,7 @@
         randomFillSync,
         randomUUID,
         timingSafeEqual(left, right) {
-            return __canaryoTimingSafeEqual(
-                cryptoInput(left).toString("base64"),
-                cryptoInput(right).toString("base64")
-            );
+            return __canaryoTimingSafeEqual(cryptoInput(left), cryptoInput(right));
         },
         getHashes() { return ["sha1", "sha256", "sha384", "sha512"]; },
         webcrypto,

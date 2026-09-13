@@ -9,7 +9,7 @@ use std::{
 use base64::Engine;
 use mio::{Events, Interest, Poll, Token, net::TcpStream};
 use rquickjs::function::This;
-use rquickjs::{Array, Coerced, Ctx, Exception, Function, Object, Result};
+use rquickjs::{Array, Coerced, Ctx, Exception, Function, Object, Result, TypedArray};
 
 const DEFAULT_MAX_REQUEST_SIZE: usize = 1024 * 1024;
 const MAX_HEADER_SIZE: usize = 64 * 1024;
@@ -940,10 +940,7 @@ fn deliver_request_chunk<'js>(
     if body.is_empty() {
         return Ok(());
     }
-    let bytes = Array::new(context.clone())?;
-    for (index, byte) in body.iter().enumerate() {
-        bytes.set(index, *byte)?;
-    }
+    let bytes = TypedArray::<u8>::new_copy(context.clone(), body)?;
     let deliver: Function = request.get("__canaryoDeliverBytes")?;
     deliver.call::<_, ()>((This(request.clone()), bytes))
 }
@@ -1012,10 +1009,14 @@ fn response_from_js(response: &Object<'_>) -> Result<Response> {
     }
     let text_body: String = response.get("__canaryoTextBody")?;
     let body = if text_body.is_empty() {
-        let body_array: Array = response.get("__canaryoBody")?;
-        let mut body = Vec::with_capacity(body_array.len());
-        for byte in body_array.iter::<u8>() {
-            body.push(byte?);
+        let body_chunks: Array = response.get("__canaryoBody")?;
+        let mut body = Vec::new();
+        for chunk in body_chunks.iter::<TypedArray<u8>>() {
+            let chunk = chunk?;
+            let bytes = chunk.as_bytes().ok_or_else(|| {
+                Exception::throw_message(response.ctx(), "response contains a detached buffer")
+            })?;
+            body.extend_from_slice(bytes);
         }
         body
     } else {

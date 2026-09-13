@@ -15,7 +15,9 @@ use std::{
 
 use base64::Engine;
 use ring::rand::SecureRandom;
-use rquickjs::{Array, CatchResultExt, Context, Function, Module, Object, Promise, Runtime};
+use rquickjs::{
+    Array, CatchResultExt, Context, Function, Module, Object, Promise, Runtime, TypedArray,
+};
 use subtle::ConstantTimeEq;
 
 use crate::{esm, http, modules};
@@ -223,12 +225,10 @@ function appendResponseChunk(response, chunk) {
         return;
     }
     if (response.__canaryoTextBody.length > 0) {
-        const textBytes = Buffer.from(response.__canaryoTextBody);
-        for (const byte of textBytes) response.__canaryoBody.push(byte);
+        response.__canaryoBody.push(Buffer.from(response.__canaryoTextBody));
         response.__canaryoTextBody = "";
     }
-    const bytes = Buffer.from(chunk);
-    for (const byte of bytes) response.__canaryoBody.push(byte);
+    response.__canaryoBody.push(Buffer.from(chunk));
 }
 ServerResponse.prototype.write = function(chunk) {
     appendResponseChunk(this, chunk);
@@ -991,6 +991,16 @@ fn install_host_globals<'js>(
         Function::new(context.clone(), byte_length).map_err(|error| error.to_string())?;
     globals
         .set("__canaryoByteLength", byte_length)
+        .map_err(|error| error.to_string())?;
+    let encode_utf8 =
+        Function::new(context.clone(), encode_utf8).map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoEncodeUtf8", encode_utf8)
+        .map_err(|error| error.to_string())?;
+    let decode_utf8 =
+        Function::new(context.clone(), decode_utf8).map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoDecodeUtf8", decode_utf8)
         .map_err(|error| error.to_string())?;
     let is_ip = Function::new(context.clone(), is_ip).map_err(|error| error.to_string())?;
     globals
@@ -2288,13 +2298,36 @@ fn byte_length(value: rquickjs::String<'_>) -> rquickjs::Result<usize> {
     Ok(value.to_cstring()?.len())
 }
 
+fn encode_utf8<'js>(
+    context: rquickjs::Ctx<'js>,
+    value: rquickjs::String<'js>,
+) -> rquickjs::Result<TypedArray<'js, u8>> {
+    TypedArray::new(context, value.to_string()?.into_bytes())
+}
+
+fn decode_utf8(bytes: TypedArray<'_, u8>) -> rquickjs::Result<String> {
+    let bytes = bytes
+        .as_bytes()
+        .ok_or_else(|| rquickjs::Error::new_from_js("detached Uint8Array", "string"))?;
+    Ok(String::from_utf8_lossy(bytes).into_owned())
+}
+
 fn cwd() -> String {
     env::current_dir()
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_else(|_| ".".into())
 }
 
-fn decode_crypto_input<'js>(
+fn typed_array_bytes<'a, 'js>(
+    context: &rquickjs::Ctx<'js>,
+    value: &'a TypedArray<'js, u8>,
+) -> rquickjs::Result<&'a [u8]> {
+    value
+        .as_bytes()
+        .ok_or_else(|| rquickjs::Exception::throw_message(context, "detached Uint8Array"))
+}
+
+fn decode_base64_input<'js>(
     context: &rquickjs::Ctx<'js>,
     contents: &str,
 ) -> rquickjs::Result<Vec<u8>> {
@@ -2326,55 +2359,58 @@ fn hmac_algorithm(name: &str) -> Option<ring::hmac::Algorithm> {
 fn crypto_digest<'js>(
     context: rquickjs::Ctx<'js>,
     algorithm: String,
-    contents: String,
-) -> rquickjs::Result<String> {
+    contents: TypedArray<'js, u8>,
+) -> rquickjs::Result<TypedArray<'js, u8>> {
     let algorithm = digest_algorithm(&algorithm).ok_or_else(|| {
         rquickjs::Exception::throw_message(&context, &format!("unsupported hash: {algorithm}"))
     })?;
-    let contents = decode_crypto_input(&context, &contents)?;
-    let digest = ring::digest::digest(algorithm, &contents);
-    Ok(base64::engine::general_purpose::STANDARD.encode(digest.as_ref()))
+    let contents = typed_array_bytes(&context, &contents)?;
+    let digest = ring::digest::digest(algorithm, contents);
+    TypedArray::new_copy(context, digest.as_ref())
 }
 
 fn crypto_hmac<'js>(
     context: rquickjs::Ctx<'js>,
     algorithm: String,
-    key: String,
-    contents: String,
-) -> rquickjs::Result<String> {
+    key: TypedArray<'js, u8>,
+    contents: TypedArray<'js, u8>,
+) -> rquickjs::Result<TypedArray<'js, u8>> {
     let algorithm = hmac_algorithm(&algorithm).ok_or_else(|| {
         rquickjs::Exception::throw_message(&context, &format!("unsupported hash: {algorithm}"))
     })?;
-    let key = decode_crypto_input(&context, &key)?;
-    let contents = decode_crypto_input(&context, &contents)?;
-    let tag = ring::hmac::sign(&ring::hmac::Key::new(algorithm, &key), &contents);
-    Ok(base64::engine::general_purpose::STANDARD.encode(tag.as_ref()))
+    let key = typed_array_bytes(&context, &key)?;
+    let contents = typed_array_bytes(&context, &contents)?;
+    let tag = ring::hmac::sign(&ring::hmac::Key::new(algorithm, key), contents);
+    TypedArray::new_copy(context, tag.as_ref())
 }
 
-fn crypto_random_bytes<'js>(context: rquickjs::Ctx<'js>, size: u32) -> rquickjs::Result<String> {
+fn crypto_random_bytes<'js>(
+    context: rquickjs::Ctx<'js>,
+    size: u32,
+) -> rquickjs::Result<TypedArray<'js, u8>> {
     let mut bytes = vec![0_u8; size as usize];
     ring::rand::SystemRandom::new()
         .fill(&mut bytes)
         .map_err(|_| {
             rquickjs::Exception::throw_message(&context, "operating system random generator failed")
         })?;
-    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+    TypedArray::new(context, bytes)
 }
 
 fn crypto_timing_safe_equal<'js>(
     context: rquickjs::Ctx<'js>,
-    left: String,
-    right: String,
+    left: TypedArray<'js, u8>,
+    right: TypedArray<'js, u8>,
 ) -> rquickjs::Result<bool> {
-    let left = decode_crypto_input(&context, &left)?;
-    let right = decode_crypto_input(&context, &right)?;
+    let left = typed_array_bytes(&context, &left)?;
+    let right = typed_array_bytes(&context, &right)?;
     if left.len() != right.len() {
         return Err(rquickjs::Exception::throw_message(
             &context,
             "Input buffers must have the same byte length",
         ));
     }
-    Ok(bool::from(left.ct_eq(&right)))
+    Ok(bool::from(left.ct_eq(right)))
 }
 
 fn zlib_transform<'js>(
@@ -2388,7 +2424,7 @@ fn zlib_transform<'js>(
         write::{DeflateEncoder, GzEncoder, ZlibEncoder},
     };
 
-    let input = decode_crypto_input(&context, &contents)?;
+    let input = decode_base64_input(&context, &contents)?;
     let result = match operation.as_str() {
         "gzip" => {
             let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
