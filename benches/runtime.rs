@@ -33,6 +33,7 @@ struct Config {
     startup_runs: usize,
     startup_only: bool,
     keep_alive: bool,
+    body_size: Option<usize>,
     case_filter: Option<String>,
 }
 
@@ -109,6 +110,9 @@ fn main() {
             "new TCP connection per request"
         }
     );
+    if let Some(body_size) = config.body_size {
+        println!("- Request: POST /echo with a {body_size}-byte JSON body\n");
+    }
 
     println!("## Startup\n");
     println!("| Application | Runtime | Median | Minimum | Maximum |");
@@ -149,8 +153,7 @@ fn main() {
                         fixture,
                         &canaryo,
                         concurrency,
-                        config.duration,
-                        config.keep_alive,
+                        &config,
                     ));
                 }
                 samples.sort_by(|a, b| {
@@ -184,6 +187,7 @@ fn parse_config() -> Config {
         startup_runs: 7,
         startup_only: false,
         keep_alive: false,
+        body_size: None,
         case_filter: None,
     };
     let arguments: Vec<String> = env::args().skip(1).collect();
@@ -212,6 +216,7 @@ fn parse_config() -> Config {
             "--runs" => config.runs = parse_number(value),
             "--startup-runs" => config.startup_runs = parse_number(value),
             "--case" => config.case_filter = Some(value.to_ascii_lowercase()),
+            "--body-size" => config.body_size = Some(parse_number(value)),
             option => panic!("unknown option: {option}"),
         }
         index += 2;
@@ -298,15 +303,26 @@ fn measure_load(
     fixture: &str,
     canaryo: &Path,
     concurrency: usize,
-    duration: Duration,
-    keep_alive: bool,
+    config: &Config,
 ) -> Sample {
     let port = free_port();
     let mut server = spawn_server(runtime, root, fixture, canaryo, port);
     wait_until_ready(&mut server, port);
-    let _ = run_load(port, concurrency, Duration::from_millis(500), keep_alive);
+    let _ = run_load(
+        port,
+        concurrency,
+        Duration::from_millis(500),
+        config.keep_alive,
+        config.body_size,
+    );
     let memory_mib = process_rss_mib(server.0.id());
-    let load = run_load(port, concurrency, duration, keep_alive);
+    let load = run_load(
+        port,
+        concurrency,
+        config.duration,
+        config.keep_alive,
+        config.body_size,
+    );
 
     if let Some(status) = server.0.try_wait().unwrap() {
         panic!("{} exited during load: {status}", runtime.name());
@@ -315,12 +331,20 @@ fn measure_load(
     Sample { load, memory_mib }
 }
 
-fn run_load(port: u16, concurrency: usize, duration: Duration, keep_alive: bool) -> LoadResult {
+fn run_load(
+    port: u16,
+    concurrency: usize,
+    duration: Duration,
+    keep_alive: bool,
+    body_size: Option<usize>,
+) -> LoadResult {
     let barrier = Arc::new(Barrier::new(concurrency + 1));
+    let request = Arc::new(load_request(keep_alive, body_size));
     let mut workers = Vec::with_capacity(concurrency);
 
     for _ in 0..concurrency {
         let barrier = Arc::clone(&barrier);
+        let request = Arc::clone(&request);
         workers.push(thread::spawn(move || {
             let mut persistent = keep_alive.then(|| persistent_connection(port));
             barrier.wait();
@@ -331,9 +355,9 @@ fn run_load(port: u16, concurrency: usize, duration: Duration, keep_alive: bool)
             while Instant::now() < deadline {
                 let started = Instant::now();
                 let result = if let Some(stream) = persistent.as_mut() {
-                    persistent_request(stream)
+                    persistent_request(stream, &request)
                 } else {
-                    request(port)
+                    close_request(port, &request)
                 };
                 match result {
                     Ok(()) => latencies.push(started.elapsed()),
@@ -370,23 +394,23 @@ fn run_load(port: u16, concurrency: usize, duration: Duration, keep_alive: bool)
     }
 }
 
-fn request(port: u16) -> Result<(), ()> {
+fn close_request(port: u16, request: &[u8]) -> Result<(), ()> {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).map_err(|_| ())?;
-    exchange_close_request(&mut stream)
+    exchange_close_request(&mut stream, request)
 }
 
 fn readiness_request(port: u16) -> Result<(), ()> {
     let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
     let mut stream =
         TcpStream::connect_timeout(&address, Duration::from_millis(5)).map_err(|_| ())?;
-    exchange_close_request(&mut stream)
+    exchange_close_request(&mut stream, CLOSE_REQUEST)
 }
 
-fn exchange_close_request(stream: &mut TcpStream) -> Result<(), ()> {
+fn exchange_close_request(stream: &mut TcpStream, request: &[u8]) -> Result<(), ()> {
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .map_err(|_| ())?;
-    stream.write_all(CLOSE_REQUEST).map_err(|_| ())?;
+    stream.write_all(request).map_err(|_| ())?;
     let mut response = Vec::new();
     stream.read_to_end(&mut response).map_err(|_| ())?;
 
@@ -408,12 +432,8 @@ fn persistent_connection(port: u16) -> PersistentClient {
     }
 }
 
-fn persistent_request(client: &mut PersistentClient) -> Result<(), ()> {
-    client
-        .stream
-        .get_mut()
-        .write_all(KEEP_ALIVE_REQUEST)
-        .map_err(|_| ())?;
+fn persistent_request(client: &mut PersistentClient, request: &[u8]) -> Result<(), ()> {
+    client.stream.get_mut().write_all(request).map_err(|_| ())?;
     let mut line = String::new();
     client.stream.read_line(&mut line).map_err(|_| ())?;
     if !line.starts_with("HTTP/1.1 200") {
@@ -448,6 +468,24 @@ fn persistent_request(client: &mut PersistentClient) -> Result<(), ()> {
     } else {
         Err(())
     }
+}
+
+fn load_request(keep_alive: bool, body_size: Option<usize>) -> Vec<u8> {
+    let Some(body_size) = body_size else {
+        return if keep_alive {
+            KEEP_ALIVE_REQUEST.to_vec()
+        } else {
+            CLOSE_REQUEST.to_vec()
+        };
+    };
+    let body_size = body_size.max(11);
+    let body = format!("{{\"data\":\"{}\"}}", "x".repeat(body_size - 11));
+    let connection = if keep_alive { "keep-alive" } else { "close" };
+    format!(
+        "POST /echo HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: {connection}\r\n\r\n{body}",
+        body.len()
+    )
+    .into_bytes()
 }
 
 fn read_exact_bytes(reader: &mut impl Read, length: usize) -> Result<(), ()> {
