@@ -93,13 +93,23 @@ Lower is better.
 
 ### Throughput at concurrency 16
 
-Higher is better. “New connection” opens a TCP connection for every request; “keep-alive” reuses one connection per worker.
+Higher is better. "New connection" opens a TCP connection for every request; "keep-alive" reuses one connection per worker.
 
 | Application | New connection: Node.js | New connection: Canaryo | Difference | Keep-alive: Node.js | Keep-alive: Canaryo | Difference |
 |---|---:|---:|---:|---:|---:|---:|
-| `node:http` | 6,998 req/s | **8,069 req/s** | **+15.3%** | **23,635 req/s** | 21,175 req/s | **−10.4%** |
-| Express 5.2.1 | **3,665 req/s** | 3,242 req/s | **−11.5%** | **6,651 req/s** | 4,262 req/s | **−35.9%** |
-| Fastify 5.12.3 | 5,968 req/s | **6,040 req/s** | **+1.2%** | **20,509 req/s** | 10,496 req/s | **−48.8%** |
+| `node:http` | 6,998 req/s | **8,069 req/s** | **+15.3%** | **23,385 req/s** | 21,411 req/s | **-8.4%** |
+| Express 5.2.1 | **3,665 req/s** | 3,242 req/s | **-11.5%** | **6,569 req/s** | 5,848 req/s | **-11.0%** |
+| Fastify 5.12.3 | 5,968 req/s | **6,040 req/s** | **+1.2%** | **20,286 req/s** | 10,377 req/s | **-48.8%** |
+
+### 16 KiB JSON throughput at concurrency 16
+
+This test sends `POST /echo` over persistent connections and includes parsing and returning the request body.
+
+| Application | Node.js | Canaryo | Difference | Node.js RSS | Canaryo RSS |
+|---|---:|---:|---:|---:|---:|
+| `node:http` | **11,308 req/s** | 10,929 req/s | **-3.4%** | 38.9 MiB | **9.3 MiB** |
+| Express 5.2.1 | **3,580 req/s** | 2,124 req/s | **-40.7%** | 86.9 MiB | **12.9 MiB** |
+| Fastify 5.12.3 | **6,168 req/s** | 971 req/s | **-84.3%** | 97.6 MiB | **16.4 MiB** |
 
 ### Resident memory at concurrency 16
 
@@ -107,11 +117,11 @@ Lower is better. RSS is sampled from the runtime process during the selected thr
 
 | Application | New connection: Node.js | New connection: Canaryo | Reduction | Keep-alive: Node.js | Keep-alive: Canaryo | Reduction |
 |---|---:|---:|---:|---:|---:|---:|
-| `node:http` | 40.3 MiB | **8.8 MiB** | **78.2%** | 40.7 MiB | **9.3 MiB** | **77.1%** |
-| Express 5.2.1 | 67.5 MiB | **12.7 MiB** | **81.2%** | 89.1 MiB | **12.5 MiB** | **86.0%** |
-| Fastify 5.12.3 | 53.2 MiB | **15.9 MiB** | **70.1%** | 54.6 MiB | **15.2 MiB** | **72.2%** |
+| `node:http` | 40.3 MiB | **8.8 MiB** | **78.2%** | 36.3 MiB | **9.3 MiB** | **74.4%** |
+| Express 5.2.1 | 67.5 MiB | **12.7 MiB** | **81.2%** | 90.7 MiB | **12.5 MiB** | **86.2%** |
+| Fastify 5.12.3 | 53.2 MiB | **15.9 MiB** | **70.1%** | 54.8 MiB | **15.4 MiB** | **71.9%** |
 
-Canaryo currently leads startup and memory use in every tested application. With new connections at concurrency 16, it leads `node:http`, is close to Node.js on Fastify, and trails on Express. Persistent connections remain the main optimization target, especially for framework-heavy request paths that benefit from V8's optimizing JIT.
+Canaryo currently leads startup and memory use in every tested application. With new connections at concurrency 16, it leads `node:http`, is close to Node.js on Fastify, and trails on Express. Typed-array data transfer brought persistent Express GET within 11.0% and a 16 KiB native HTTP echo within 3.4% of Node.js. Fastify request paths remain the main optimization target because their async framework work benefits strongly from V8's optimizing JIT.
 
 These synthetic loopback results cover the current compatibility surface on one machine. See [BENCHMARKS.md](BENCHMARKS.md) for latency percentiles, concurrency 1 results, methodology, limitations, and reproduction commands.
 
