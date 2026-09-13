@@ -867,15 +867,33 @@
     };
 
     function createDiagnosticsChannel(name) {
+        const subscribers = new Set();
+        const stores = new Map();
         return {
-            name,
-            hasSubscribers: false,
-            publish() {},
-            subscribe() {},
-            unsubscribe() { return false; },
-            bindStore() {},
-            unbindStore() {},
-            runStores(_message, callback, thisArg, ...args) { return callback.apply(thisArg, args); }
+            name: String(name),
+            get hasSubscribers() { return subscribers.size > 0; },
+            publish(message) {
+                for (const subscriber of [...subscribers]) subscriber(message, this.name);
+            },
+            subscribe(subscriber) {
+                if (typeof subscriber !== "function") throw new TypeError("subscriber must be a function");
+                subscribers.add(subscriber);
+            },
+            unsubscribe(subscriber) { return subscribers.delete(subscriber); },
+            bindStore(store, transform = message => message) {
+                if (!store || typeof store.run !== "function") throw new TypeError("store must be an AsyncLocalStorage instance");
+                if (typeof transform !== "function") throw new TypeError("transform must be a function");
+                stores.set(store, transform);
+            },
+            unbindStore(store) { return stores.delete(store); },
+            runStores(message, callback, thisArg, ...args) {
+                if (typeof callback !== "function") throw new TypeError("callback must be a function");
+                const entries = [...stores.entries()];
+                const run = index => index === entries.length
+                    ? callback.apply(thisArg, args)
+                    : entries[index][0].run(entries[index][1](message), () => run(index + 1));
+                return run(0);
+            }
         };
     }
     const diagnosticsChannels = new Map();
@@ -884,9 +902,9 @@
             if (!diagnosticsChannels.has(name)) diagnosticsChannels.set(name, createDiagnosticsChannel(name));
             return diagnosticsChannels.get(name);
         },
-        hasSubscribers() { return false; },
-        subscribe() {},
-        unsubscribe() { return false; },
+        hasSubscribers(name) { return this.channel(name).hasSubscribers; },
+        subscribe(name, subscriber) { this.channel(name).subscribe(subscriber); },
+        unsubscribe(name, subscriber) { return this.channel(name).unsubscribe(subscriber); },
         tracingChannel(name) {
             const channels = {
                 start: this.channel(`tracing:${name}:start`),

@@ -2696,6 +2696,43 @@ mod tests {
     }
 
     #[test]
+    fn publishes_diagnostics_channels_and_binds_stores() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        let supported = context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            context
+                .eval::<bool, _>(
+                    r#"
+                    const diagnostics = __canaryoBuiltins.diagnostics_channel;
+                    const { AsyncLocalStorage } = __canaryoBuiltins.async_hooks;
+                    const channel = diagnostics.channel("canaryo.request");
+                    const storage = new AsyncLocalStorage();
+                    const messages = [];
+                    const subscriber = (message, name) => messages.push(`${name}:${message.id}`);
+                    diagnostics.subscribe("canaryo.request", subscriber);
+                    channel.bindStore(storage, message => ({ requestId: message.id }));
+                    let stored;
+                    channel.runStores({ id: 42 }, () => {
+                        stored = storage.getStore().requestId;
+                        channel.publish({ id: 42 });
+                    });
+                    const removed = diagnostics.unsubscribe("canaryo.request", subscriber);
+                    channel.publish({ id: 0 });
+                    diagnostics.channel("canaryo.request") === channel &&
+                        stored === 42 && messages.join() === "canaryo.request:42" &&
+                        removed && !diagnostics.hasSubscribers("canaryo.request")
+                    "#,
+                )
+                .unwrap()
+        });
+
+        assert!(supported);
+    }
+
+    #[test]
     fn pipes_data_through_node_streams() {
         let runtime = Runtime::new().unwrap();
         let context = Context::full(&runtime).unwrap();
