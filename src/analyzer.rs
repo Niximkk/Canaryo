@@ -248,6 +248,11 @@ fn scan_source(source: &str, path: &Path) -> Vec<Finding> {
             compatibility: Compatibility::Limited,
             message: "usa node:module; os auxiliares principais estão disponíveis",
         },
+        Rule {
+            patterns: &["node:crypto", "require('crypto')", "require(\"crypto\")"],
+            compatibility: Compatibility::Limited,
+            message: "usa crypto; hashes, HMAC e geração aleatória estão disponíveis, mas criptografia avançada ainda não",
+        },
     ];
     let mut findings = Vec::new();
 

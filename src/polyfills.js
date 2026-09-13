@@ -1662,6 +1662,101 @@
         _cache: NodeModule._cache
     });
 
+    function cryptoInput(value, encoding) {
+        return Buffer.isBuffer(value) ? Buffer.from(value) : Buffer.from(value, encoding);
+    }
+    function cryptoOutput(base64, encoding) {
+        const output = Buffer.from(base64, "base64");
+        return encoding === undefined ? output : output.toString(encoding);
+    }
+    function createDigest(algorithm, key) {
+        const chunks = [];
+        let finalized = false;
+        return {
+            update(value, encoding) {
+                if (finalized) throw new Error("Digest already called");
+                chunks.push(cryptoInput(value, encoding));
+                return this;
+            },
+            digest(encoding) {
+                if (finalized) throw new Error("Digest already called");
+                finalized = true;
+                const contents = Buffer.concat(chunks).toString("base64");
+                const result = key === undefined
+                    ? __canaryoHash(algorithm, contents)
+                    : __canaryoHmac(algorithm, key.toString("base64"), contents);
+                return cryptoOutput(result, encoding);
+            }
+        };
+    }
+    function randomBytes(size, callback) {
+        const length = Number(size);
+        if (!Number.isInteger(length) || length < 0) throw new RangeError("size must be a non-negative integer");
+        const output = Buffer.from(__canaryoRandomBytes(length), "base64");
+        if (typeof callback === "function") {
+            process.nextTick(callback, null, output);
+            return undefined;
+        }
+        return output;
+    }
+    function randomFillSync(buffer, offset = 0, size) {
+        if (!ArrayBuffer.isView(buffer)) throw new TypeError("buffer must be an ArrayBuffer view");
+        const bytes = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+        const start = Number(offset);
+        const length = size === undefined ? bytes.length - start : Number(size);
+        if (!Number.isInteger(start) || !Number.isInteger(length) || start < 0 || length < 0 || start + length > bytes.length) {
+            throw new RangeError("offset and size are outside the buffer");
+        }
+        bytes.set(Buffer.from(__canaryoRandomBytes(length), "base64"), start);
+        return buffer;
+    }
+    function randomFill(buffer, offset, size, callback) {
+        if (typeof offset === "function") { callback = offset; offset = 0; size = undefined; }
+        else if (typeof size === "function") { callback = size; size = undefined; }
+        if (typeof callback !== "function") throw new TypeError("callback must be a function");
+        try {
+            randomFillSync(buffer, offset || 0, size);
+            process.nextTick(callback, null, buffer);
+        } catch (error) {
+            process.nextTick(callback, error);
+        }
+    }
+    function randomUUID() {
+        const bytes = randomBytes(16);
+        bytes[6] = bytes[6] & 0x0f | 0x40;
+        bytes[8] = bytes[8] & 0x3f | 0x80;
+        const hex = bytes.toString("hex");
+        return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+    }
+    const webcrypto = {
+        getRandomValues(view) {
+            if (!ArrayBuffer.isView(view)) throw new TypeError("value must be an integer ArrayBuffer view");
+            if (view.byteLength > 65536) throw new RangeError("requested too many random bytes");
+            randomFillSync(new Uint8Array(view.buffer, view.byteOffset, view.byteLength));
+            return view;
+        },
+        randomUUID,
+        subtle: Object.freeze({})
+    };
+    const cryptoModule = {
+        createHash(algorithm) { return createDigest(algorithm); },
+        createHmac(algorithm, key, encoding) { return createDigest(algorithm, cryptoInput(key, encoding)); },
+        randomBytes,
+        randomFill,
+        randomFillSync,
+        randomUUID,
+        timingSafeEqual(left, right) {
+            return __canaryoTimingSafeEqual(
+                cryptoInput(left).toString("base64"),
+                cryptoInput(right).toString("base64")
+            );
+        },
+        getHashes() { return ["sha1", "sha256", "sha384", "sha512"]; },
+        webcrypto,
+        constants: {}
+    };
+    if (typeof globalThis.crypto === "undefined") globalThis.crypto = webcrypto;
+
     globalThis.__canaryoBuiltins = Object.freeze({
         assert,
         async_hooks: { AsyncLocalStorage, AsyncResource, executionAsyncId: () => 0, triggerAsyncId: () => 0 },
@@ -1672,15 +1767,7 @@
             kMaxLength: 0x7fffffff,
             constants: { MAX_LENGTH: 0x7fffffff, MAX_STRING_LENGTH: 0x1fffffe8 }
         },
-        crypto: {
-            createHash(algorithm) {
-                let contents = "";
-                return {
-                    update(value) { contents += String(value); return this; },
-                    digest(encoding = "hex") { return __canaryoHash(algorithm, contents, encoding); }
-                };
-            }
-        },
+        crypto: cryptoModule,
         depd,
         diagnostics_channel: diagnosticsChannel,
         dns: dnsModule,

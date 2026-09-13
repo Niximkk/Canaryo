@@ -1,10 +1,6 @@
-<table align="center">
-  <tr>
-    <td align="center" bgcolor="#0d1117">
-      <img src="assets/canaryo-logo.png" width="220" alt="Canaryo logo">
-    </td>
-  </tr>
-</table>
+<div align="center">
+  <img src="assets/canaryo-logo.png" width="220" alt="Canaryo logo">
+</div>
 
 <h1 align="center">Canaryo</h1>
 
@@ -156,6 +152,7 @@ flowchart LR
 | Path APIs | Partial | Platform-correct default `node:path`, separate Win32/POSIX implementations, normalization, joining, resolution, relative paths, parsing, formatting, and basename/dirname/extension helpers. Namespace and uncommon drive-relative/UNC edge cases remain incomplete. |
 | Worker threads | Partial | Main-thread metadata, environment data, and same-thread `MessageChannel`/`MessagePort` are available for libraries such as Pino. Isolated `Worker` execution and `BroadcastChannel` remain unsupported. |
 | Utility APIs | Partial | Formatting, inspection, inheritance, deprecation/debug shims, type checks, text encoding/decoding, ANSI stripping, `promisify`, and `callbackify`. Advanced inspection, MIME, parsing, and transferable helpers remain incomplete. |
+| Cryptography | Partial | SHA-1, SHA-256, SHA-384, and SHA-512 hashes and HMACs; OS-backed `randomBytes`, `randomFill`, `randomUUID`, Web Crypto random values, and constant-time equality. Ciphers, signatures, key objects, certificates, password derivation, and Web Crypto SubtleCrypto remain incomplete. |
 | Buffers and streams | Partial | Buffer encodings and common binary operations; functional `Readable`, `Writable`, `Duplex`, `Transform`, `PassThrough`, `pipe`, `pipeline`, and `finished`; plus queued asynchronous writes, high-water marks, pause/resume, and drain-based backpressure. Async iteration and advanced Buffer and stream methods remain incomplete. |
 | Filesystem APIs | Partial | Buffer-aware read, write, append, stat, exists, access, mkdir, readdir, and file streams through synchronous, callback, and `fs/promises` APIs. Watches, links, permissions, real file descriptors, and positional writes remain incomplete. |
 | ESM | Partial | Native `.mjs` and `type: module` execution, relative imports, package `import` conditions, JSON loading, named imports from common built-ins, default CommonJS interop, and static detection of `exports.name`. Dynamic CJS exports and some Node resolution rules remain incomplete. |

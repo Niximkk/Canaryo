@@ -13,8 +13,10 @@ use std::{
     time::Duration,
 };
 
+use base64::Engine;
+use ring::rand::SecureRandom;
 use rquickjs::{Array, CatchResultExt, Context, Function, Module, Object, Promise, Runtime};
-use sha1::{Digest, Sha1};
+use subtle::ConstantTimeEq;
 
 use crate::{esm, http, modules};
 
@@ -780,9 +782,23 @@ fn install_host_globals<'js>(
     globals
         .set("__canaryoCwd", cwd)
         .map_err(|error| error.to_string())?;
-    let hash = Function::new(context.clone(), hash).map_err(|error| error.to_string())?;
+    let hash = Function::new(context.clone(), crypto_digest).map_err(|error| error.to_string())?;
     globals
         .set("__canaryoHash", hash)
+        .map_err(|error| error.to_string())?;
+    let hmac = Function::new(context.clone(), crypto_hmac).map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoHmac", hmac)
+        .map_err(|error| error.to_string())?;
+    let random_bytes =
+        Function::new(context.clone(), crypto_random_bytes).map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoRandomBytes", random_bytes)
+        .map_err(|error| error.to_string())?;
+    let timing_safe_equal = Function::new(context.clone(), crypto_timing_safe_equal)
+        .map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoTimingSafeEqual", timing_safe_equal)
         .map_err(|error| error.to_string())?;
     let byte_length =
         Function::new(context.clone(), byte_length).map_err(|error| error.to_string())?;
@@ -2020,31 +2036,87 @@ fn cwd() -> String {
         .unwrap_or_else(|_| ".".into())
 }
 
-fn hash<'js>(
+fn decode_crypto_input<'js>(
+    context: &rquickjs::Ctx<'js>,
+    contents: &str,
+) -> rquickjs::Result<Vec<u8>> {
+    base64::engine::general_purpose::STANDARD
+        .decode(contents)
+        .map_err(|error| rquickjs::Exception::throw_message(context, &error.to_string()))
+}
+
+fn digest_algorithm(name: &str) -> Option<&'static ring::digest::Algorithm> {
+    match name.to_ascii_lowercase().replace('-', "").as_str() {
+        "sha1" => Some(&ring::digest::SHA1_FOR_LEGACY_USE_ONLY),
+        "sha256" => Some(&ring::digest::SHA256),
+        "sha384" => Some(&ring::digest::SHA384),
+        "sha512" => Some(&ring::digest::SHA512),
+        _ => None,
+    }
+}
+
+fn hmac_algorithm(name: &str) -> Option<ring::hmac::Algorithm> {
+    match name.to_ascii_lowercase().replace('-', "").as_str() {
+        "sha1" => Some(ring::hmac::HMAC_SHA1_FOR_LEGACY_USE_ONLY),
+        "sha256" => Some(ring::hmac::HMAC_SHA256),
+        "sha384" => Some(ring::hmac::HMAC_SHA384),
+        "sha512" => Some(ring::hmac::HMAC_SHA512),
+        _ => None,
+    }
+}
+
+fn crypto_digest<'js>(
     context: rquickjs::Ctx<'js>,
     algorithm: String,
     contents: String,
-    encoding: String,
 ) -> rquickjs::Result<String> {
-    if !algorithm.eq_ignore_ascii_case("sha1") {
+    let algorithm = digest_algorithm(&algorithm).ok_or_else(|| {
+        rquickjs::Exception::throw_message(&context, &format!("unsupported hash: {algorithm}"))
+    })?;
+    let contents = decode_crypto_input(&context, &contents)?;
+    let digest = ring::digest::digest(algorithm, &contents);
+    Ok(base64::engine::general_purpose::STANDARD.encode(digest.as_ref()))
+}
+
+fn crypto_hmac<'js>(
+    context: rquickjs::Ctx<'js>,
+    algorithm: String,
+    key: String,
+    contents: String,
+) -> rquickjs::Result<String> {
+    let algorithm = hmac_algorithm(&algorithm).ok_or_else(|| {
+        rquickjs::Exception::throw_message(&context, &format!("unsupported hash: {algorithm}"))
+    })?;
+    let key = decode_crypto_input(&context, &key)?;
+    let contents = decode_crypto_input(&context, &contents)?;
+    let tag = ring::hmac::sign(&ring::hmac::Key::new(algorithm, &key), &contents);
+    Ok(base64::engine::general_purpose::STANDARD.encode(tag.as_ref()))
+}
+
+fn crypto_random_bytes<'js>(context: rquickjs::Ctx<'js>, size: u32) -> rquickjs::Result<String> {
+    let mut bytes = vec![0_u8; size as usize];
+    ring::rand::SystemRandom::new()
+        .fill(&mut bytes)
+        .map_err(|_| {
+            rquickjs::Exception::throw_message(&context, "operating system random generator failed")
+        })?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+fn crypto_timing_safe_equal<'js>(
+    context: rquickjs::Ctx<'js>,
+    left: String,
+    right: String,
+) -> rquickjs::Result<bool> {
+    let left = decode_crypto_input(&context, &left)?;
+    let right = decode_crypto_input(&context, &right)?;
+    if left.len() != right.len() {
         return Err(rquickjs::Exception::throw_message(
             &context,
-            &format!("algoritmo de hash não suportado: {algorithm}"),
+            "Input buffers must have the same byte length",
         ));
     }
-
-    let digest = Sha1::digest(contents.as_bytes());
-    match encoding.as_str() {
-        "hex" => Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect()),
-        "base64" => {
-            use base64::Engine;
-            Ok(base64::engine::general_purpose::STANDARD.encode(digest))
-        }
-        _ => Err(rquickjs::Exception::throw_message(
-            &context,
-            &format!("codificação de hash não suportada: {encoding}"),
-        )),
-    }
+    Ok(bool::from(left.ct_eq(&right)))
 }
 
 #[cfg(test)]
@@ -2108,6 +2180,52 @@ mod tests {
                     Buffer.byteLength(new Uint8Array([1, 2, 3])) === 3 &&
                     Buffer.byteLength(new Uint8Array([1, 2, 3]).subarray(1)) === 2 &&
                     Buffer.byteLength(new ArrayBuffer(4)) === 4
+                    "#,
+                )
+                .unwrap()
+        });
+
+        assert!(matches_node);
+    }
+
+    #[test]
+    fn provides_common_node_crypto_operations() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        let matches_node = context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            context
+                .eval::<bool, _>(
+                    r#"
+                    const crypto = __canaryoBuiltins.crypto;
+                    const digest = crypto.createHash("sha256").update("hello").digest();
+                    const hmac = crypto.createHmac("sha256", "key")
+                        .update("The quick brown fox jumps over the lazy dog")
+                        .digest("hex");
+                    const firstRandom = crypto.randomBytes(32);
+                    const secondRandom = crypto.randomBytes(32);
+                    const partiallyFilled = Buffer.alloc(8, 7);
+                    crypto.randomFillSync(partiallyFilled, 2, 4);
+                    const webRandom = new Uint16Array(8);
+                    crypto.webcrypto.getRandomValues(webRandom);
+                    const uuid = crypto.randomUUID();
+                    let lengthMismatchThrows = false;
+                    try { crypto.timingSafeEqual(Buffer.alloc(1), Buffer.alloc(2)); }
+                    catch { lengthMismatchThrows = true; }
+
+                    Buffer.isBuffer(digest) &&
+                    digest.toString("hex") === "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824" &&
+                    hmac === "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8" &&
+                    firstRandom.length === 32 && !firstRandom.equals(secondRandom) &&
+                    partiallyFilled[0] === 7 && partiallyFilled[1] === 7 &&
+                    partiallyFilled[6] === 7 && partiallyFilled[7] === 7 &&
+                    webRandom.some(value => value !== 0) &&
+                    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(uuid) &&
+                    crypto.timingSafeEqual(Buffer.from("same"), Buffer.from("same")) &&
+                    !crypto.timingSafeEqual(Buffer.from("same"), Buffer.from("diff")) &&
+                    lengthMismatchThrows && globalThis.crypto === crypto.webcrypto
                     "#,
                 )
                 .unwrap()
