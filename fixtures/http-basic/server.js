@@ -3,6 +3,17 @@ const port = Number(process.argv[2] || 3000);
 let listenReturned = false;
 
 http.createServer((request, response) => {
+    if (request.url === "/async-iterate") {
+        (async () => {
+            const chunks = [];
+            for await (const chunk of request) chunks.push(chunk);
+            response.end(Buffer.concat(chunks));
+        })().catch(error => {
+            response.statusCode = 500;
+            response.end(error.message);
+        });
+        return;
+    }
     if (request.url === "/first-chunk") {
         request.once("data", chunk => response.end(`first:${chunk.toString()}`));
         return;

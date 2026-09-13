@@ -267,6 +267,7 @@ fn builtin_source(name: &str) -> Option<String> {
         "events" => &[
             "EventEmitter",
             "once",
+            "on",
             "getEventListeners",
             "listenerCount",
             "setMaxListeners",

@@ -309,6 +309,71 @@
     };
     EventEmitter.getMaxListeners = emitter => emitter.getMaxListeners();
     EventEmitter.addAbortListener = addAbortListener;
+    EventEmitter.on = function (emitter, name, options = {}) {
+        const values = [];
+        const waiting = [];
+        let stopped = false;
+        let failure;
+        let abortDisposable;
+        const eventTarget = typeof emitter.on !== "function" &&
+            typeof emitter.addEventListener === "function";
+        const add = (event, listener) => eventTarget
+            ? emitter.addEventListener(event, listener)
+            : emitter.on(event, listener);
+        const remove = (event, listener) => eventTarget
+            ? emitter.removeEventListener(event, listener)
+            : emitter.removeListener(event, listener);
+        const cleanup = () => {
+            remove(name, onEvent);
+            if (!eventTarget && name !== "error") remove("error", onError);
+            for (const closeEvent of options.close || []) remove(closeEvent, onClose);
+            abortDisposable?.[disposeSymbol]();
+        };
+        const finish = error => {
+            if (stopped) return;
+            stopped = true;
+            failure = error;
+            cleanup();
+            while (waiting.length > 0) {
+                const waiter = waiting.shift();
+                if (error) waiter.reject(error);
+                else waiter.resolve({ value: undefined, done: true });
+            }
+        };
+        const onEvent = (...args) => {
+            const waiter = waiting.shift();
+            if (waiter) waiter.resolve({ value: args, done: false });
+            else values.push(args);
+        };
+        const onError = error => finish(error);
+        const onClose = () => finish();
+        add(name, onEvent);
+        if (!eventTarget && name !== "error") add("error", onError);
+        for (const closeEvent of options.close || []) add(closeEvent, onClose);
+        if (options.signal?.aborted) finish(abortApiError(options.signal.reason));
+        else if (options.signal) {
+            abortDisposable = addAbortListener(options.signal, () => {
+                finish(abortApiError(options.signal.reason));
+            });
+        }
+        return {
+            next() {
+                if (values.length > 0) return Promise.resolve({ value: values.shift(), done: false });
+                if (failure) return Promise.reject(failure);
+                if (stopped) return Promise.resolve({ value: undefined, done: true });
+                return new Promise((resolve, reject) => waiting.push({ resolve, reject }));
+            },
+            return() {
+                finish();
+                return Promise.resolve({ value: undefined, done: true });
+            },
+            throw(error) {
+                finish(error);
+                return Promise.reject(error);
+            },
+            [Symbol.asyncIterator]() { return this; }
+        };
+    };
 
     function encodeUtf8(value) {
         const bytes = [];
@@ -914,11 +979,76 @@
         if (name === "data") this.resume();
         return this;
     };
+    Readable.prototype.iterator = function (options = {}) {
+        const stream = this;
+        const waiting = [];
+        let stopped = false;
+        let failure;
+        const cleanup = () => {
+            stream.removeListener("readable", flush);
+            stream.removeListener("end", onEnd);
+            stream.removeListener("error", onError);
+            stream.removeListener("close", onClose);
+        };
+        const finish = error => {
+            if (stopped) return;
+            stopped = true;
+            failure = error;
+            cleanup();
+            while (waiting.length > 0) {
+                const waiter = waiting.shift();
+                if (error) waiter.reject(error);
+                else waiter.resolve({ value: undefined, done: true });
+            }
+        };
+        const flush = () => {
+            while (waiting.length > 0) {
+                const value = stream.read();
+                if (value === null) break;
+                waiting.shift().resolve({ value, done: false });
+            }
+            if (stream.readableEnded) finish();
+        };
+        const onEnd = () => finish();
+        const onClose = () => finish();
+        const onError = error => finish(error);
+        stream.on("readable", flush);
+        stream.once("end", onEnd);
+        stream.once("error", onError);
+        stream.once("close", onClose);
+        return {
+            next() {
+                if (failure) return Promise.reject(failure);
+                const value = stream.read();
+                if (value !== null) return Promise.resolve({ value, done: false });
+                if (stopped || stream.readableEnded) {
+                    return Promise.resolve({ value: undefined, done: true });
+                }
+                return new Promise((resolve, reject) => waiting.push({ resolve, reject }));
+            },
+            return() {
+                finish();
+                if (options.destroyOnReturn !== false) stream.destroy();
+                return Promise.resolve({ value: undefined, done: true });
+            },
+            throw(error) {
+                finish(error);
+                stream.destroy(error);
+                return Promise.reject(error);
+            },
+            [Symbol.asyncIterator]() { return this; }
+        };
+    };
+    Readable.prototype[Symbol.asyncIterator] = function () { return this.iterator(); };
     Readable.from = function (iterable) {
         const readable = new Readable();
-        setImmediate(() => {
-            for (const chunk of iterable) readable.push(chunk);
-            readable.push(null);
+        setImmediate(async () => {
+            try {
+                for await (const chunk of iterable) readable.push(chunk);
+                readable.push(null);
+            } catch (error) {
+                readable.destroy(error);
+            }
         });
         return readable;
     };

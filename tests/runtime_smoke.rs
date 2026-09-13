@@ -986,6 +986,23 @@ fn dispatches_inbound_body_chunks_before_the_request_ends() {
 }
 
 #[test]
+fn iterates_inbound_request_bodies_asynchronously() {
+    let (_server, mut stream) = start_fixture("fixtures/http-basic/server.js");
+    stream
+        .write_all(
+            b"POST /async-iterate HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 11\r\nConnection: close\r\n\r\nhello ",
+        )
+        .unwrap();
+    thread::sleep(Duration::from_millis(20));
+    stream.write_all(b"world").unwrap();
+
+    let response = read_response(&mut stream);
+
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+    assert!(response.ends_with("hello world"), "{response}");
+}
+
+#[test]
 fn stops_reading_the_socket_while_an_inbound_request_is_paused() {
     let (_server, mut stream) = start_fixture("fixtures/http-backpressure/server.js");
     let body = vec![b'x'; 64 * 1024];

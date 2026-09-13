@@ -208,6 +208,22 @@ function ensureHttpEventPrototypes() {
             Object.setPrototypeOf(constructor.prototype, EventEmitter.prototype);
         }
     }
+    if (!IncomingMessage.prototype[Symbol.asyncIterator]) {
+        IncomingMessage.prototype.iterator = function() {
+            const events = EventEmitter.on(this, "data", { close: ["end", "close"] });
+            return {
+                next() {
+                    return events.next().then(result => result.done
+                        ? result
+                        : { value: result.value[0], done: false });
+                },
+                return() { return events.return(); },
+                throw(error) { return events.throw(error); },
+                [Symbol.asyncIterator]() { return this; }
+            };
+        };
+        IncomingMessage.prototype[Symbol.asyncIterator] = function() { return this.iterator(); };
+    }
     return EventEmitter;
 }
 
@@ -578,10 +594,7 @@ const httpModule = Object.freeze({
             closeAllConnections() { this.__canaryoCloseAllConnectionsRequested = true; },
             closeIdleConnections() { this.__canaryoCloseIdleConnectionsRequested = true; }
         };
-        const EventEmitter = __canaryoBuiltins.events.EventEmitter;
-        Object.setPrototypeOf(IncomingMessage.prototype, EventEmitter.prototype);
-        Object.setPrototypeOf(ServerResponse.prototype, EventEmitter.prototype);
-        Object.setPrototypeOf(Socket.prototype, EventEmitter.prototype);
+        const EventEmitter = ensureHttpEventPrototypes();
         EventEmitter.call(server);
         Object.setPrototypeOf(server, EventEmitter.prototype);
         return server;
@@ -3203,6 +3216,82 @@ mod tests {
         });
 
         assert!(streamed);
+    }
+
+    #[test]
+    fn iterates_readable_streams_and_event_emitters_asynchronously() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            context
+                .eval::<(), _>(
+                    r#"
+                    const streams = __canaryoBuiltins.stream;
+                    const events = __canaryoBuiltins.events;
+                    globalThis.asyncStreamOutput = "";
+                    globalThis.asyncStreamDone = false;
+                    (async () => {
+                        for await (const chunk of streams.Readable.from(["can", "aryo"])) {
+                            asyncStreamOutput += chunk.toString();
+                        }
+                        asyncStreamDone = true;
+                    })();
+
+                    const earlyStream = new streams.Readable();
+                    const earlyIterator = earlyStream.iterator();
+                    globalThis.earlyIteratorDone = false;
+                    earlyIterator.return().then(result => {
+                        earlyIteratorDone = result.done && earlyStream.destroyed;
+                    });
+
+                    const emitter = new events.EventEmitter();
+                    const controller = new AbortController();
+                    const eventIterator = events.on(emitter, "value", { signal: controller.signal });
+                    globalThis.asyncEventValue = "";
+                    globalThis.asyncEventAborted = false;
+                    eventIterator.next().then(result => {
+                        asyncEventValue = result.value.join(":");
+                    });
+                    emitter.emit("value", 42, "answer");
+                    eventIterator.next().catch(error => {
+                        asyncEventAborted = error.name === "AbortError" && error.cause === "stop";
+                    });
+                    controller.abort("stop");
+                    "#,
+                )
+                .unwrap();
+
+            let run_timers: Function = context.globals().get("__canaryoRunTimers").unwrap();
+            for _ in 0..6 {
+                run_timers.call::<_, i64>(()).unwrap();
+                while context.execute_pending_job() {}
+            }
+
+            assert_eq!(
+                context
+                    .globals()
+                    .get::<_, String>("asyncStreamOutput")
+                    .unwrap(),
+                "canaryo"
+            );
+            for name in [
+                "asyncStreamDone",
+                "earlyIteratorDone",
+                "asyncEventAborted",
+            ] {
+                assert!(context.globals().get::<_, bool>(name).unwrap(), "{name}");
+            }
+            assert_eq!(
+                context
+                    .globals()
+                    .get::<_, String>("asyncEventValue")
+                    .unwrap(),
+                "42:answer"
+            );
+        });
     }
 
     #[test]
