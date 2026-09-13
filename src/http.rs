@@ -87,7 +87,10 @@ struct Connection<'js> {
     reader: ConnectionReader,
     outgoing: Vec<u8>,
     written: usize,
+    registered: bool,
+    readable_interest: bool,
     writable_interest: bool,
+    read_paused: bool,
     close_after_write: bool,
     read_closed: bool,
     tls_shutdown_started: bool,
@@ -407,6 +410,7 @@ fn listen_with_config<'js>(
             if event.is_readable()
                 && !remove
                 && let Some(connection) = connections.get_mut(&token)
+                && !connection.request_paused()?
             {
                 let read_closed = read_and_dispatch_requests(
                     &context,
@@ -416,6 +420,7 @@ fn listen_with_config<'js>(
                     connection,
                 )?;
                 connection.read_closed |= read_closed || event.is_read_closed();
+                connection.read_paused = connection.request_paused()?;
                 if connection.flush().is_err() {
                     remove = true;
                 }
@@ -436,25 +441,12 @@ fn listen_with_config<'js>(
                     && (connection.close_after_write || connection.read_closed)
                 {
                     remove = connection.begin_shutdown().unwrap_or(true);
-                } else if !remove {
-                    let wants_write =
-                        !connection.outgoing.is_empty() || connection.stream.wants_write();
-                    if wants_write != connection.writable_interest {
-                        let interest = if wants_write {
-                            Interest::READABLE | Interest::WRITABLE
-                        } else {
-                            Interest::READABLE
-                        };
-                        if poll
-                            .registry()
-                            .reregister(connection.stream.raw_mut(), token, interest)
-                            .is_err()
-                        {
-                            remove = true;
-                        } else {
-                            connection.writable_interest = wants_write;
-                        }
-                    }
+                } else if !remove
+                    && connection
+                        .sync_registration(poll.registry(), token)
+                        .is_err()
+                {
+                    remove = true;
                 }
             }
 
@@ -547,7 +539,10 @@ fn accept_connections<'js>(
                             reader: ConnectionReader::new(bindings.options.max_request_size),
                             outgoing: Vec::with_capacity(512),
                             written: 0,
+                            registered: true,
+                            readable_interest: true,
                             writable_interest: false,
+                            read_paused: false,
                             close_after_write: false,
                             read_closed: false,
                             tls_shutdown_started: false,
@@ -562,6 +557,41 @@ fn accept_connections<'js>(
 }
 
 impl Connection<'_> {
+    fn request_paused(&self) -> Result<bool> {
+        self.incoming_request
+            .as_ref()
+            .map(|request| request.get("__canaryoPaused"))
+            .transpose()
+            .map(Option::unwrap_or_default)
+    }
+
+    fn sync_registration(&mut self, registry: &mio::Registry, token: Token) -> std::io::Result<()> {
+        let wants_read = !self.read_paused && !self.read_closed;
+        let wants_write = !self.outgoing.is_empty() || self.stream.wants_write();
+        let interest = match (wants_read, wants_write) {
+            (true, true) => Some(Interest::READABLE | Interest::WRITABLE),
+            (true, false) => Some(Interest::READABLE),
+            (false, true) => Some(Interest::WRITABLE),
+            (false, false) => None,
+        };
+
+        match (self.registered, interest) {
+            (true, None) => registry.deregister(self.stream.raw_mut())?,
+            (false, Some(interest)) => registry.register(self.stream.raw_mut(), token, interest)?,
+            (true, Some(interest))
+                if wants_read != self.readable_interest
+                    || wants_write != self.writable_interest =>
+            {
+                registry.reregister(self.stream.raw_mut(), token, interest)?;
+            }
+            _ => {}
+        }
+        self.registered = interest.is_some();
+        self.readable_interest = wants_read;
+        self.writable_interest = wants_write;
+        Ok(())
+    }
+
     fn next_inbound(&mut self) -> std::io::Result<ConnectionRead> {
         let events = self.reader.parse_events()?;
         if !events.is_empty() {
@@ -683,6 +713,9 @@ fn read_and_dispatch_requests<'js>(
                     while context.execute_pending_job() {}
                     collect_completed_responses(connection)?;
                 }
+                if connection.request_paused()? {
+                    return Ok(false);
+                }
             }
             ConnectionRead::Progress => {}
             ConnectionRead::WouldBlock => return Ok(false),
@@ -771,6 +804,9 @@ fn progress_connections<'js>(
     for token in tokens {
         let mut remove = false;
         if let Some(connection) = connections.get_mut(&token) {
+            if connection.read_paused && !connection.request_paused()? {
+                connection.read_paused = false;
+            }
             collect_completed_responses(connection)?;
 
             let flush_failed = connection.flush().is_err();
@@ -778,26 +814,8 @@ fn progress_connections<'js>(
                 && connection.pending_responses.is_empty()
                 && (connection.close_after_write || connection.read_closed);
             let closed = should_close && connection.begin_shutdown().unwrap_or(true);
-            if flush_failed || closed {
+            if flush_failed || closed || connection.sync_registration(registry, token).is_err() {
                 remove = true;
-            } else {
-                let wants_write =
-                    !connection.outgoing.is_empty() || connection.stream.wants_write();
-                if wants_write != connection.writable_interest {
-                    let interest = if wants_write {
-                        Interest::READABLE | Interest::WRITABLE
-                    } else {
-                        Interest::READABLE
-                    };
-                    if registry
-                        .reregister(connection.stream.raw_mut(), token, interest)
-                        .is_err()
-                    {
-                        remove = true;
-                    } else {
-                        connection.writable_interest = wants_write;
-                    }
-                }
             }
         }
         if remove && let Some(mut connection) = connections.remove(&token) {
@@ -900,6 +918,7 @@ fn request_to_js<'js>(
     object.set("destroyed", false)?;
     object.set("readable", true)?;
     object.set("readableEnded", false)?;
+    object.set("__canaryoPaused", false)?;
     object.set("socket", socket.clone())?;
     object.set("connection", socket.clone())?;
     object.set_prototype(Some(prototype))?;

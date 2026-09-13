@@ -224,7 +224,12 @@ fn read_response(stream: &mut impl Read) -> String {
         .unwrap();
     let header_length = response.len();
     response.resize(header_length + content_length, 0);
-    stream.read_exact(&mut response[header_length..]).unwrap();
+    if let Err(error) = stream.read_exact(&mut response[header_length..]) {
+        panic!(
+            "failed to read HTTP response body: {error}; response so far: {:?}",
+            String::from_utf8_lossy(&response)
+        );
+    }
     String::from_utf8(response).unwrap()
 }
 
@@ -872,17 +877,44 @@ fn dispatches_inbound_body_chunks_before_the_request_ends() {
     let started = Instant::now();
     stream
         .write_all(
-            b"POST /first-chunk HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 10\r\nConnection: close\r\n\r\nhello",
+            b"POST /first-chunk HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 10\r\n\r\nhello",
         )
         .unwrap();
 
-    let mut response = String::new();
-    stream
-        .read_to_string(&mut response)
-        .expect("server buffered the incomplete request body");
+    let response = read_response(&mut stream);
 
     assert!(started.elapsed() < Duration::from_millis(500));
     assert!(response.ends_with("first:hello"), "{response}");
+}
+
+#[test]
+fn stops_reading_the_socket_while_an_inbound_request_is_paused() {
+    let (_server, mut stream) = start_fixture("fixtures/http-backpressure/server.js");
+    let body = vec![b'x'; 64 * 1024];
+    let request = format!(
+        "POST /inspect HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    stream.write_all(request.as_bytes()).unwrap();
+    stream.write_all(&body).unwrap();
+    let response = read_response(&mut stream);
+
+    assert!(response.ends_with('0'), "{response}");
+}
+
+#[test]
+fn resumes_reading_a_paused_inbound_request() {
+    let (_server, mut stream) = start_fixture("fixtures/http-backpressure/server.js");
+    let body = vec![b'x'; 64 * 1024];
+    let request = format!(
+        "POST /resume HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    stream.write_all(request.as_bytes()).unwrap();
+    stream.write_all(&body).unwrap();
+    let response = read_response(&mut stream);
+
+    assert!(response.ends_with(&body.len().to_string()), "{response}");
 }
 
 #[test]
