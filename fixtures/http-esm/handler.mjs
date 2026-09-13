@@ -9,6 +9,7 @@ import {
 } from "node:async_hooks";
 import consoleModule, { Console } from "node:console";
 import processModule, { platform } from "node:process";
+import { text as consumeText } from "node:stream/consumers";
 import { pipeline as pipelinePromise } from "node:stream/promises";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -20,7 +21,8 @@ const asyncHooksReady = typeof AsyncResource === "function" &&
     typeof executionAsyncResource() === "object";
 const builtinAliasesReady = consoleModule === console && typeof Console === "function" &&
     processModule === process && platform === process.platform &&
-    typeof pipelinePromise === "function" && typeof delay === "function";
+    typeof consumeText === "function" && typeof pipelinePromise === "function" &&
+    typeof delay === "function";
 
 export function handleRequest(_request, response, ready) {
     storage.run({ runtime: "canaryo" }, () => {

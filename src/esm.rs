@@ -167,6 +167,7 @@ fn is_builtin(name: &str) -> bool {
             | "process"
             | "querystring"
             | "stream"
+            | "stream/consumers"
             | "stream/promises"
             | "string_decoder"
             | "timers"
@@ -421,6 +422,7 @@ fn builtin_source(name: &str) -> Option<String> {
             "promises",
         ],
         "stream/promises" => &["finished", "pipeline"],
+        "stream/consumers" => &["arrayBuffer", "blob", "buffer", "json", "text"],
         "string_decoder" => &["StringDecoder"],
         "timers" => &[
             "setTimeout",

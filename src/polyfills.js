@@ -587,6 +587,37 @@
         Object.defineProperty(Buffer, method, { enumerable: true });
     }
 
+    class Blob {
+        constructor(sources = [], options = {}) {
+            const chunks = [];
+            for (const source of sources) {
+                if (source instanceof Blob) chunks.push(source._buffer);
+                else if (typeof source === "string") chunks.push(Buffer.from(source));
+                else if (source instanceof ArrayBuffer || ArrayBuffer.isView(source)) {
+                    chunks.push(Buffer.from(source));
+                } else chunks.push(Buffer.from(String(source)));
+            }
+            this._buffer = Buffer.concat(chunks);
+            const type = String(options.type || "").toLowerCase();
+            this.type = /^[\x20-\x7e]*$/.test(type) ? type : "";
+        }
+        get size() { return this._buffer.length; }
+        arrayBuffer() {
+            const bytes = new Uint8Array(this._buffer);
+            return Promise.resolve(bytes.buffer);
+        }
+        bytes() { return Promise.resolve(new Uint8Array(this._buffer)); }
+        text() { return Promise.resolve(this._buffer.toString()); }
+        slice(start = 0, end = this.size, type = "") {
+            const normalize = value => value < 0
+                ? Math.max(this.size + Math.trunc(value), 0)
+                : Math.min(Math.trunc(value), this.size);
+            const first = normalize(Number(start) || 0);
+            const last = normalize(end === undefined ? this.size : Number(end) || 0);
+            return new Blob([this._buffer.subarray(first, Math.max(first, last))], { type });
+        }
+    }
+
     class TextEncoder {
         encode(value) { return new Uint8Array(encodeUtf8(value)); }
     }
@@ -1818,6 +1849,7 @@
     };
 
     globalThis.Buffer = Buffer;
+    globalThis.Blob = Blob;
     globalThis.DOMException = DOMException;
     globalThis.Event = Event;
     globalThis.EventTarget = EventTarget;
@@ -1956,6 +1988,26 @@
         }
     };
     Stream.promises = streamPromises;
+
+    async function consumeStream(stream) {
+        const chunks = [];
+        for await (const chunk of stream) {
+            if (typeof chunk === "string") chunks.push(Buffer.from(chunk));
+            else if (chunk instanceof ArrayBuffer || ArrayBuffer.isView(chunk)) chunks.push(Buffer.from(chunk));
+            else chunks.push(Buffer.from(String(chunk)));
+        }
+        return Buffer.concat(chunks);
+    }
+    const streamConsumers = {
+        async arrayBuffer(stream) {
+            const contents = await consumeStream(stream);
+            return new Uint8Array(contents).buffer;
+        },
+        async blob(stream) { return new Blob([await consumeStream(stream)]); },
+        buffer: consumeStream,
+        async json(stream) { return JSON.parse((await consumeStream(stream)).toString()); },
+        async text(stream) { return (await consumeStream(stream)).toString(); }
+    };
 
     function Stats(values) {
         Object.assign(this, values);
@@ -2576,7 +2628,7 @@
     const builtinModules = [
         "assert", "async_hooks", "buffer", "console", "crypto", "diagnostics_channel", "dns",
         "dns/promises", "events", "fs", "fs/promises", "http", "https", "module", "net", "os",
-        "path", "perf_hooks", "process", "querystring", "stream", "stream/promises", "string_decoder",
+        "path", "perf_hooks", "process", "querystring", "stream", "stream/consumers", "stream/promises", "string_decoder",
         "timers", "timers/promises", "tty",
         "url", "util", "worker_threads", "zlib"
     ];
@@ -2859,6 +2911,7 @@
         process,
         querystring: { parse(value) { return Object.fromEntries(String(value).split("&").filter(Boolean).map(item => item.split("=").map(decodeURIComponent))); }, stringify(value) { return Object.entries(value).map(([key, item]) => `${encodeURIComponent(key)}=${encodeURIComponent(item)}`).join("&"); }, escape: encodeURIComponent, unescape: decodeURIComponent },
         stream: Stream,
+        "stream/consumers": streamConsumers,
         "stream/promises": streamPromises,
         string_decoder: { StringDecoder },
         timers: { setImmediate, clearImmediate: clearTimer, setTimeout, clearTimeout: clearTimer, setInterval, clearInterval: clearTimer },

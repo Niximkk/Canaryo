@@ -3404,6 +3404,52 @@ mod tests {
     }
 
     #[test]
+    fn consumes_streams_into_common_value_types() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            context
+                .eval::<(), _>(
+                    r#"
+                    const { Readable } = __canaryoBuiltins.stream;
+                    const consumers = __canaryoBuiltins["stream/consumers"];
+                    globalThis.streamConsumersWorked = false;
+                    Promise.all([
+                        consumers.text(Readable.from(["can", "aryo"])),
+                        consumers.json(Readable.from(['{"answer":', "42}"])),
+                        consumers.buffer(Readable.from([new Uint8Array([1, 2]), Buffer.from([3])])),
+                        consumers.arrayBuffer(Readable.from([Buffer.from("bytes")])),
+                        consumers.blob(Readable.from(["blob", Buffer.from(" data")]))
+                    ]).then(async ([text, json, buffer, arrayBuffer, blob]) => {
+                        streamConsumersWorked = text === "canaryo" && json.answer === 42 &&
+                            buffer.equals(Buffer.from([1, 2, 3])) &&
+                            Buffer.from(arrayBuffer).toString() === "bytes" &&
+                            blob instanceof Blob && blob.size === 9 &&
+                            await blob.text() === "blob data";
+                    });
+                    "#,
+                )
+                .unwrap();
+
+            let run_timers: Function = context.globals().get("__canaryoRunTimers").unwrap();
+            for _ in 0..12 {
+                run_timers.call::<_, i64>(()).unwrap();
+                while context.execute_pending_job() {}
+            }
+
+            assert!(
+                context
+                    .globals()
+                    .get::<_, bool>("streamConsumersWorked")
+                    .unwrap()
+            );
+        });
+    }
+
+    #[test]
     fn applies_backpressure_to_piped_streams() {
         let runtime = Runtime::new().unwrap();
         let context = Context::full(&runtime).unwrap();

@@ -31,6 +31,7 @@ const NODE_BUILTINS: &[&str] = &[
     "process",
     "querystring",
     "stream",
+    "stream/consumers",
     "stream/promises",
     "string_decoder",
     "timers",
