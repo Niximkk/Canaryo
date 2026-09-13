@@ -763,6 +763,10 @@ fn drain_event_loop(context: &rquickjs::Ctx<'_>) -> Result<(), String> {
         .globals()
         .get("__canaryoRunTimers")
         .map_err(|error| error.to_string())?;
+    let restore_timer_context: Function = context
+        .globals()
+        .get("__canaryoRestoreTimerContext")
+        .map_err(|error| error.to_string())?;
     let has_referenced_timers: Function = context
         .globals()
         .get("__canaryoHasReferencedTimers")
@@ -772,11 +776,22 @@ fn drain_event_loop(context: &rquickjs::Ctx<'_>) -> Result<(), String> {
             .call::<_, usize>(())
             .catch(context)
             .map_err(|error| error.to_string())?;
-        let timer_delay = run_timers
-            .call::<_, Option<u64>>(())
+        let timer_result = run_timers
+            .call::<_, i64>(())
             .catch(context)
             .map_err(|error| error.to_string())?;
+        let timer_delay = match timer_result {
+            -1 | -2 => None,
+            value if value < -2 => Some((-value - 3) as u64),
+            value => Some(value as u64),
+        };
         while context.execute_pending_job() {}
+        if timer_result < -1 {
+            restore_timer_context
+                .call::<_, ()>(())
+                .catch(context)
+                .map_err(|error| error.to_string())?;
+        }
         let timers_keep_alive = has_referenced_timers
             .call::<_, bool>(())
             .catch(context)
@@ -2495,7 +2510,7 @@ mod tests {
             assert!(timer_created);
 
             let run_timers: Function = context.globals().get("__canaryoRunTimers").unwrap();
-            assert_eq!(run_timers.call::<_, Option<u64>>(()).unwrap(), None);
+            assert_eq!(run_timers.call::<_, i64>(()).unwrap(), -1);
             assert_eq!(context.globals().get::<_, i32>("timerResult").unwrap(), 42);
         });
     }
@@ -2557,7 +2572,7 @@ mod tests {
             while context.execute_pending_job() {}
             let run_timers: Function = context.globals().get("__canaryoRunTimers").unwrap();
             for _ in 0..4 {
-                run_timers.call::<_, Option<u64>>(()).unwrap();
+                run_timers.call::<_, i64>(()).unwrap();
                 while context.execute_pending_job() {}
             }
 
@@ -2733,6 +2748,65 @@ mod tests {
     }
 
     #[test]
+    fn binds_async_local_storage_snapshots_to_resources() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        let supported = context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            context
+                .eval::<bool, _>(
+                    r#"
+                    const { AsyncLocalStorage, AsyncResource } = __canaryoBuiltins.async_hooks;
+                    const storage = new AsyncLocalStorage();
+                    let bound;
+                    let snapshot;
+                    let resource;
+                    storage.run({ value: 42 }, () => {
+                        bound = AsyncLocalStorage.bind(() => storage.getStore()?.value);
+                        snapshot = AsyncLocalStorage.snapshot();
+                        resource = new AsyncResource("canaryo.test");
+                    });
+                    storage.getStore() === undefined &&
+                        bound() === 42 &&
+                        snapshot(() => storage.getStore()?.value) === 42 &&
+                        resource.runInAsyncScope(() => storage.getStore()?.value) === 42
+                    "#,
+                )
+                .unwrap()
+        });
+
+        assert!(supported);
+    }
+
+    #[test]
+    fn preserves_async_local_storage_in_promise_callbacks() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            context
+                .eval::<(), _>(
+                    r#"
+                    const { AsyncLocalStorage } = __canaryoBuiltins.async_hooks;
+                    const storage = new AsyncLocalStorage();
+                    globalThis.promiseStore = 0;
+                    storage.run({ value: 42 }, () => {
+                        Promise.resolve().then(() => promiseStore = storage.getStore()?.value);
+                    });
+                    "#,
+                )
+                .unwrap();
+            while context.execute_pending_job() {}
+
+            assert_eq!(context.globals().get::<_, i32>("promiseStore").unwrap(), 42);
+        });
+    }
+
+    #[test]
     fn pipes_data_through_node_streams() {
         let runtime = Runtime::new().unwrap();
         let context = Context::full(&runtime).unwrap();
@@ -2817,7 +2891,7 @@ mod tests {
 
             let run_timers: Function = context.globals().get("__canaryoRunTimers").unwrap();
             for _ in 0..6 {
-                run_timers.call::<_, Option<u64>>(()).unwrap();
+                run_timers.call::<_, i64>(()).unwrap();
                 while context.execute_pending_job() {}
             }
 
@@ -2863,7 +2937,7 @@ mod tests {
             assert!(initialized);
 
             let run_timers: Function = context.globals().get("__canaryoRunTimers").unwrap();
-            run_timers.call::<_, Option<u64>>(()).unwrap();
+            run_timers.call::<_, i64>(()).unwrap();
 
             assert!(
                 context

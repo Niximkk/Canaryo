@@ -295,6 +295,41 @@ fn serves_a_native_esm_http_application() {
 }
 
 #[test]
+fn preserves_async_local_storage_across_http_async_boundaries() {
+    let (_server, mut stream) = start_fixture("fixtures/async-context/server.js");
+    stream
+        .write_all(b"GET /request-42 HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let response = read_response(&mut stream);
+
+    assert!(
+        response.ends_with("/request-42:/request-42:/request-42:/request-42"),
+        "{response}"
+    );
+}
+
+#[test]
+fn isolates_async_local_storage_between_concurrent_requests() {
+    let (_server, mut slow) = start_fixture("fixtures/async-context/server.js");
+    let mut fast = TcpStream::connect(slow.peer_addr().unwrap()).unwrap();
+    slow.write_all(b"GET /slow HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    fast.write_all(b"GET /fast HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap();
+
+    let fast_response = read_response(&mut fast);
+    let slow_response = read_response(&mut slow);
+    assert!(
+        fast_response.ends_with("/fast:/fast:/fast:/fast"),
+        "{fast_response}"
+    );
+    assert!(
+        slow_response.ends_with("/slow:/slow:/slow:/slow"),
+        "{slow_response}"
+    );
+}
+
+#[test]
 fn serves_a_native_node_https_application() {
     let (_server, probe) = start_fixture("fixtures/https-basic/server.js");
     let address = probe.peer_addr().unwrap();

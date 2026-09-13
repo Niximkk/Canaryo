@@ -342,6 +342,7 @@ fn listen_with_config<'js>(
     let mut connections = HashMap::new();
     let mut next_token = 1;
     let run_timers: Function = context.globals().get("__canaryoRunTimers")?;
+    let restore_timer_context: Function = context.globals().get("__canaryoRestoreTimerContext")?;
     let poll_http_requests: Function = context.globals().get("__canaryoPollHttpRequests")?;
     let server_control: Function = context.globals().get("__canaryoServerControl")?;
     let mut closing = false;
@@ -351,10 +352,16 @@ fn listen_with_config<'js>(
         while context.execute_pending_job() {}
         let pending_http_requests = poll_http_requests.call::<_, usize>(())?;
         while context.execute_pending_job() {}
-        let timer_delay = run_timers
-            .call::<_, Option<u64>>(())?
-            .map(Duration::from_millis);
+        let timer_result = run_timers.call::<_, i64>(())?;
+        let timer_delay = match timer_result {
+            -1 | -2 => None,
+            value if value < -2 => Some(Duration::from_millis((-value - 3) as u64)),
+            value => Some(Duration::from_millis(value as u64)),
+        };
         while context.execute_pending_job() {}
+        if timer_result < -1 {
+            restore_timer_context.call::<_, ()>(())?;
+        }
         progress_connections(poll.registry(), &mut connections)?;
         let control = server_control.call::<_, u8>(())?;
         if apply_connection_action(control, &mut connections)? {

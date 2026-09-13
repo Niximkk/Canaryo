@@ -843,15 +843,98 @@
     }
     Object.assign(Stream, { Stream, Readable, Writable, Duplex, Transform, PassThrough, finished, pipeline });
 
-    function AsyncLocalStorage() { this.store = undefined; }
-    AsyncLocalStorage.prototype.run = function (store, callback, ...args) { const previous = this.store; this.store = store; try { return callback(...args); } finally { this.store = previous; } };
-    AsyncLocalStorage.prototype.getStore = function () { return this.store; };
-    AsyncLocalStorage.prototype.enterWith = function (store) { this.store = store; };
-    AsyncLocalStorage.prototype.disable = function () { this.store = undefined; };
+    const asyncLocalStorages = new Set();
+    let asyncContextEnabled = false;
+    function captureAsyncContext() {
+        if (!asyncContextEnabled) return;
+        let snapshot;
+        for (const storage of asyncLocalStorages) {
+            if (storage.enabled && storage.active) {
+                (snapshot || (snapshot = [])).push([storage, storage.store]);
+            }
+        }
+        return snapshot;
+    }
+    function enterAsyncContext(snapshot) {
+        const previous = [];
+        for (const storage of asyncLocalStorages) {
+            previous.push([storage, storage.enabled, storage.active, storage.store]);
+            storage.active = false;
+            storage.store = storage.defaultValue;
+        }
+        for (const [storage, store] of snapshot) {
+            storage.enabled = true;
+            storage.active = true;
+            storage.store = store;
+        }
+        return previous;
+    }
+    function restoreAsyncContext(snapshot) {
+        for (const storage of asyncLocalStorages) {
+            storage.active = false;
+            storage.store = storage.defaultValue;
+        }
+        for (const [storage, enabled, active, store] of snapshot) {
+            storage.enabled = enabled;
+            storage.active = active;
+            storage.store = store;
+        }
+    }
+    function runInAsyncContext(snapshot, callback, thisArg, args) {
+        if (!snapshot) return callback.apply(thisArg, args);
+        const previous = enterAsyncContext(snapshot);
+        try { return callback.apply(thisArg, args); }
+        finally { restoreAsyncContext(previous); }
+    }
 
-    function AsyncResource(type) { this.type = String(type); }
+    function AsyncLocalStorage(options = {}) {
+        asyncContextEnabled = true;
+        ensurePromiseContextPropagation();
+        this.defaultValue = options.defaultValue;
+        this.name = options.name;
+        this.store = this.defaultValue;
+        this.enabled = true;
+        this.active = false;
+        asyncLocalStorages.add(this);
+    }
+    AsyncLocalStorage.prototype.run = function (store, callback, ...args) {
+        if (typeof callback !== "function") throw new TypeError("callback must be a function");
+        const previous = [this.enabled, this.active, this.store];
+        this.enabled = true;
+        this.active = true;
+        this.store = store;
+        try { return callback(...args); }
+        finally { [this.enabled, this.active, this.store] = previous; }
+    };
+    AsyncLocalStorage.prototype.getStore = function () {
+        return this.enabled && this.active ? this.store : this.defaultValue;
+    };
+    AsyncLocalStorage.prototype.enterWith = function (store) {
+        this.enabled = true;
+        this.active = true;
+        this.store = store;
+    };
+    AsyncLocalStorage.prototype.disable = function () {
+        this.enabled = false;
+        this.active = false;
+        this.store = this.defaultValue;
+    };
+    AsyncLocalStorage.bind = function (callback) {
+        const snapshot = captureAsyncContext();
+        return function (...args) { return runInAsyncContext(snapshot, callback, this, args); };
+    };
+    AsyncLocalStorage.snapshot = function () {
+        const snapshot = captureAsyncContext();
+        return (callback, ...args) => runInAsyncContext(snapshot, callback, undefined, args);
+    };
+
+    function AsyncResource(type) {
+        this.type = String(type);
+        if (asyncContextEnabled) this.context = captureAsyncContext();
+    }
     AsyncResource.prototype.runInAsyncScope = function (fn, thisArg, ...args) {
-        return fn.apply(thisArg, args);
+        if (!this.context) return fn.apply(thisArg, args);
+        return runInAsyncContext(this.context, fn, thisArg, args);
     };
     AsyncResource.prototype.bind = function (fn, thisArg) {
         const resource = this;
@@ -865,6 +948,21 @@
     AsyncResource.bind = function (fn, type, thisArg) {
         return new AsyncResource(type || fn.name || "bound-anonymous-fn").bind(fn, thisArg);
     };
+
+    const originalPromiseThen = Promise.prototype.then;
+    let promiseContextPatched = false;
+    function ensurePromiseContextPropagation() {
+        if (promiseContextPatched) return;
+        promiseContextPatched = true;
+        Promise.prototype.then = function (onFulfilled, onRejected) {
+            const snapshot = captureAsyncContext();
+            if (!snapshot) return originalPromiseThen.call(this, onFulfilled, onRejected);
+            const wrap = callback => typeof callback === "function"
+                ? function (...args) { return runInAsyncContext(snapshot, callback, this, args); }
+                : callback;
+            return originalPromiseThen.call(this, wrap(onFulfilled), wrap(onRejected));
+        };
+    }
 
     function createDiagnosticsChannel(name) {
         const subscribers = new Set();
@@ -962,7 +1060,19 @@
     process.config = { variables: {} };
     process.moduleLoadList = [];
     process.exitCode = undefined;
-    process.nextTick = (callback, ...args) => Promise.resolve().then(() => callback(...args));
+    process.nextTick = (callback, ...args) => {
+        if (!asyncContextEnabled) {
+            Promise.resolve().then(() => callback(...args));
+            return;
+        }
+        const snapshot = captureAsyncContext();
+        originalPromiseThen.call(
+            Promise.resolve(),
+            snapshot
+                ? () => runInAsyncContext(snapshot, callback, undefined, args)
+                : () => callback(...args)
+        );
+    };
     process.uptime = () => (Date.now() - processStartedAt) / 1000;
     process.hrtime = previous => {
         const nanoseconds = BigInt(Date.now() - processStartedAt) * 1000000n;
@@ -995,6 +1105,7 @@
     const performance = { now: () => Date.now(), timeOrigin: Date.now() };
     const scheduledTimers = new Map();
     let nextTimerId = 1;
+    let pendingTimerContext;
 
     function scheduleTimer(callback, delay, repeat, args) {
         if (typeof callback !== "function") throw new TypeError("callback must be a function");
@@ -1007,7 +1118,8 @@
             delay: timeout,
             repeat,
             due: Date.now() + timeout,
-            referenced: true
+            referenced: true,
+            context: asyncContextEnabled ? captureAsyncContext() : undefined
         };
         const handle = {
             id,
@@ -1043,6 +1155,16 @@
             if (timer.due > now || !scheduledTimers.has(timer.id)) continue;
             if (timer.repeat) timer.due = now + timer.delay;
             else scheduledTimers.delete(timer.id);
+            if (timer.context) {
+                pendingTimerContext = enterAsyncContext(timer.context);
+                try { timer.callback(...timer.args); }
+                catch (error) {
+                    restoreAsyncContext(pendingTimerContext);
+                    pendingTimerContext = undefined;
+                    throw error;
+                }
+                break;
+            }
             timer.callback(...timer.args);
         }
 
@@ -1052,7 +1174,13 @@
             const delay = Math.max(0, timer.due - updatedNow);
             if (nextDelay === undefined || delay < nextDelay) nextDelay = delay;
         }
-        return nextDelay;
+        if (!pendingTimerContext) return nextDelay === undefined ? -1 : nextDelay;
+        return nextDelay === undefined ? -2 : -nextDelay - 3;
+    };
+    globalThis.__canaryoRestoreTimerContext = () => {
+        if (!pendingTimerContext) return;
+        restoreAsyncContext(pendingTimerContext);
+        pendingTimerContext = undefined;
     };
     globalThis.__canaryoHasReferencedTimers = () => {
         for (const timer of scheduledTimers.values()) {
@@ -1073,7 +1201,19 @@
     globalThis.clearTimeout = clearTimer;
     globalThis.setInterval = setInterval;
     globalThis.clearInterval = clearTimer;
-    globalThis.queueMicrotask = callback => Promise.resolve().then(callback);
+    globalThis.queueMicrotask = callback => {
+        if (!asyncContextEnabled) {
+            Promise.resolve().then(callback);
+            return;
+        }
+        const snapshot = captureAsyncContext();
+        originalPromiseThen.call(
+            Promise.resolve(),
+            snapshot
+                ? () => runInAsyncContext(snapshot, callback, undefined, [])
+                : callback
+        );
+    };
 
     function Stats(values) {
         Object.assign(this, values);

@@ -50,6 +50,7 @@ pub fn listen<'js>(
     let mut next_token = 1_usize;
     let mut closing = false;
     let run_timers: Function = context.globals().get("__canaryoRunTimers")?;
+    let restore_timer_context: Function = context.globals().get("__canaryoRestoreTimerContext")?;
     let poll_async_io: Function = context.globals().get("__canaryoPollHttpRequests")?;
     let should_close: Function = context.globals().get("__canaryoServerShouldClose")?;
     on_listening.call::<_, ()>((
@@ -66,10 +67,16 @@ pub fn listen<'js>(
         while context.execute_pending_job() {}
         let pending_async_io = poll_async_io.call::<_, usize>(())?;
         while context.execute_pending_job() {}
-        let timer_delay = run_timers
-            .call::<_, Option<u64>>(())?
-            .map(Duration::from_millis);
+        let timer_result = run_timers.call::<_, i64>(())?;
+        let timer_delay = match timer_result {
+            -1 | -2 => None,
+            value if value < -2 => Some(Duration::from_millis((-value - 3) as u64)),
+            value => Some(Duration::from_millis(value as u64)),
+        };
         while context.execute_pending_job() {}
+        if timer_result < -1 {
+            restore_timer_context.call::<_, ()>(())?;
+        }
         progress_connections(&context, poll.registry(), &mut connections)?;
 
         if !closing && should_close.call::<_, bool>(())? {
