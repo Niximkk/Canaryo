@@ -464,6 +464,8 @@ const httpModule = Object.freeze({
         const server = {
             listening: false,
             __canaryoCloseRequested: false,
+            __canaryoCloseAllConnectionsRequested: false,
+            __canaryoCloseIdleConnectionsRequested: false,
             __canaryoCloseCallbacks: [],
             maxConnections: Infinity,
             maxRequestSize: Number(optionsOrListener?.maxRequestSize) || 1024 * 1024,
@@ -482,6 +484,8 @@ const httpModule = Object.freeze({
                 this.__canaryoAddress = { address: listenHost || "127.0.0.1", family: "IPv4", port: listenPort };
                 const currentServer = this;
                 currentServer.__canaryoCloseRequested = false;
+                currentServer.__canaryoCloseAllConnectionsRequested = false;
+                currentServer.__canaryoCloseIdleConnectionsRequested = false;
                 globalThis.__canaryoActiveServer = currentServer;
                 globalThis.__canaryoPendingServerStart = () => {
                     const listenArguments = [
@@ -529,8 +533,8 @@ const httpModule = Object.freeze({
                 this.__canaryoCloseRequested = true;
                 return this;
             },
-            closeAllConnections() { this.__canaryoCloseRequested = true; },
-            closeIdleConnections() { this.__canaryoCloseRequested = true; }
+            closeAllConnections() { this.__canaryoCloseAllConnectionsRequested = true; },
+            closeIdleConnections() { this.__canaryoCloseIdleConnectionsRequested = true; }
         };
         const EventEmitter = __canaryoBuiltins.events.EventEmitter;
         Object.setPrototypeOf(IncomingMessage.prototype, EventEmitter.prototype);
@@ -652,13 +656,13 @@ globalThis.__canaryoStartPendingServer = () => {
     globalThis.__canaryoPendingServerStart = null;
     if (start) start();
 };
-globalThis.__canaryoServerShouldClose = () => Boolean(
-    globalThis.__canaryoActiveServer && globalThis.__canaryoActiveServer.__canaryoCloseRequested
-);
 globalThis.__canaryoServerMaxConnections = () => {
     const value = Number(globalThis.__canaryoActiveServer?.maxConnections);
     return Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : null;
 };
+globalThis.__canaryoServerShouldClose = () => Boolean(
+    globalThis.__canaryoActiveServer && globalThis.__canaryoActiveServer.__canaryoCloseRequested
+);
 globalThis.__canaryoServerConnectionDropped = (remoteAddress, remotePort, localAddress, localPort) => {
     globalThis.__canaryoActiveServer?.emit("drop", {
         localAddress,
@@ -668,6 +672,21 @@ globalThis.__canaryoServerConnectionDropped = (remoteAddress, remotePort, localA
         remotePort,
         remoteFamily: "IPv4"
     });
+};
+globalThis.__canaryoServerControl = () => {
+    const server = globalThis.__canaryoActiveServer;
+    if (!server) return 0;
+    let control = server.__canaryoCloseRequested ? 1 : 0;
+    if (server.__canaryoCloseAllConnectionsRequested) {
+        server.__canaryoCloseAllConnectionsRequested = false;
+        server.__canaryoCloseIdleConnectionsRequested = false;
+        control |= 4;
+    }
+    if (!(control & 4) && server.__canaryoCloseIdleConnectionsRequested) {
+        server.__canaryoCloseIdleConnectionsRequested = false;
+        control |= 2;
+    }
+    return control;
 };
 })();
 "#;

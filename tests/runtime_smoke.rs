@@ -124,6 +124,86 @@ fn closes_the_native_http_server_and_exits() {
     }
 }
 
+#[test]
+fn waits_for_active_responses_during_graceful_http_close() {
+    let (mut server, mut stream) =
+        start_fixture_with_stdout("fixtures/http-close/graceful.js", Stdio::piped());
+    stream
+        .write_all(b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+        .unwrap();
+    let response = read_response(&mut stream);
+
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+    assert!(response.ends_with("finished"), "{response}");
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(status) = server.0.try_wait().unwrap() {
+            let mut stdout = String::new();
+            server
+                .0
+                .stdout
+                .take()
+                .unwrap()
+                .read_to_string(&mut stdout)
+                .unwrap();
+            assert!(status.success());
+            assert_eq!(stdout, "closed");
+            break;
+        }
+        if Instant::now() >= deadline {
+            panic!("HTTP server did not finish its graceful close");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn closes_idle_connections_without_stopping_the_http_server() {
+    let (_server, mut idle) = start_fixture("fixtures/http-close/connections.js");
+    let address = idle.peer_addr().unwrap();
+    let mut control = TcpStream::connect(address).unwrap();
+    control
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    control
+        .write_all(b"GET /close-idle HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+        .unwrap();
+    assert!(read_response(&mut control).ends_with("alive"));
+
+    let mut closed = Vec::new();
+    idle.read_to_end(&mut closed).unwrap();
+    assert!(closed.is_empty());
+
+    let mut next = TcpStream::connect(address).unwrap();
+    next.write_all(b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    assert!(read_response(&mut next).ends_with("alive"));
+}
+
+#[test]
+fn closes_all_connections_without_stopping_the_http_server() {
+    let (_server, mut existing) = start_fixture("fixtures/http-close/connections.js");
+    let address = existing.peer_addr().unwrap();
+    let mut control = TcpStream::connect(address).unwrap();
+    control
+        .write_all(b"GET /close-all HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+        .unwrap();
+    assert!(read_response(&mut control).ends_with("alive"));
+
+    existing
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let mut closed = Vec::new();
+    existing.read_to_end(&mut closed).unwrap();
+    assert!(closed.is_empty());
+
+    let mut next = TcpStream::connect(address).unwrap();
+    next.write_all(b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    assert!(read_response(&mut next).ends_with("alive"));
+}
+
 fn read_response(stream: &mut impl Read) -> String {
     let mut response = Vec::new();
 

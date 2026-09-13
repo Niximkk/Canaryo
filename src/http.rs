@@ -334,12 +334,14 @@ fn listen_with_config<'js>(
     poll.registry()
         .register(&mut listener, LISTENER, Interest::READABLE)
         .map_err(|error| Exception::throw_message(&context, &error.to_string()))?;
+    let mut listener = Some(listener);
     let mut events = Events::with_capacity(1024);
     let mut connections = HashMap::new();
     let mut next_token = 1;
     let run_timers: Function = context.globals().get("__canaryoRunTimers")?;
     let poll_http_requests: Function = context.globals().get("__canaryoPollHttpRequests")?;
-    let should_close: Function = context.globals().get("__canaryoServerShouldClose")?;
+    let server_control: Function = context.globals().get("__canaryoServerControl")?;
+    let mut closing = false;
     bindings.on_listening.call::<_, ()>(())?;
 
     loop {
@@ -351,7 +353,19 @@ fn listen_with_config<'js>(
             .map(Duration::from_millis);
         while context.execute_pending_job() {}
         progress_connections(poll.registry(), &mut connections)?;
-        if should_close.call::<_, bool>(())? {
+        let control = server_control.call::<_, u8>(())?;
+        if apply_connection_action(control, &mut connections)? {
+            progress_connections(poll.registry(), &mut connections)?;
+        }
+        if !closing && control & 1 != 0 {
+            closing = true;
+            drop(listener.take());
+            for connection in connections.values_mut() {
+                connection.close_after_write = true;
+            }
+            progress_connections(poll.registry(), &mut connections)?;
+        }
+        if closing && connections.is_empty() {
             break;
         }
         let response_delay = next_response_deadline(&connections);
@@ -374,15 +388,17 @@ fn listen_with_config<'js>(
 
         for event in &events {
             if event.token() == LISTENER {
-                accept_connections(
-                    &context,
-                    &mut listener,
-                    poll.registry(),
-                    &mut connections,
-                    &mut next_token,
-                    tls_config.as_ref(),
-                    &bindings,
-                )?;
+                if let Some(listener) = listener.as_mut() {
+                    accept_connections(
+                        &context,
+                        listener,
+                        poll.registry(),
+                        &mut connections,
+                        &mut next_token,
+                        tls_config.as_ref(),
+                        &bindings,
+                    )?;
+                }
                 continue;
             }
 
@@ -449,6 +465,28 @@ fn listen_with_config<'js>(
     }
 
     Ok(())
+}
+
+fn apply_connection_action<'js>(
+    action: u8,
+    connections: &mut HashMap<Token, Connection<'js>>,
+) -> Result<bool> {
+    let applied = if action & 4 != 0 {
+        for (_, mut connection) in connections.drain() {
+            close_connection_objects(&mut connection)?;
+        }
+        true
+    } else if action & 2 != 0 {
+        for connection in connections.values_mut() {
+            if connection.incoming_request.is_none() && connection.pending_responses.is_empty() {
+                connection.close_after_write = true;
+            }
+        }
+        true
+    } else {
+        false
+    };
+    Ok(applied)
 }
 
 fn accept_connections<'js>(
@@ -762,8 +800,8 @@ fn progress_connections<'js>(
                 }
             }
         }
-        if remove {
-            connections.remove(&token);
+        if remove && let Some(mut connection) = connections.remove(&token) {
+            close_connection_objects(&mut connection)?;
         }
     }
     Ok(())
