@@ -167,6 +167,15 @@ fn visit(path: &Path, report: &mut Report, visited: &mut HashSet<PathBuf>) -> io
     }
 
     for specifier in extract_specifiers(&analyzed_source) {
+        if let Some(message) = unsupported_node_builtin(&specifier) {
+            report.add(Finding {
+                file: path.clone(),
+                compatibility: Compatibility::Incompatible,
+                message,
+            });
+            continue;
+        }
+
         if is_node_builtin(&specifier) {
             continue;
         }
@@ -216,15 +225,6 @@ fn scan_source(source: &str, path: &Path) -> Vec<Finding> {
             patterns: &["node:net", "require('net')", "require(\"net\")"],
             compatibility: Compatibility::Limited,
             message: "usa net; TCP está disponível, mas IPC e opções avançadas de socket ainda não",
-        },
-        Rule {
-            patterns: &[
-                "node:child_process",
-                "require('child_process')",
-                "require(\"child_process\")",
-            ],
-            compatibility: Compatibility::Incompatible,
-            message: "usa child_process, que ainda não é suportado",
         },
         Rule {
             patterns: &[
@@ -379,6 +379,12 @@ fn is_node_builtin(specifier: &str) -> bool {
     NODE_BUILTINS.contains(&name)
 }
 
+fn unsupported_node_builtin(specifier: &str) -> Option<String> {
+    let name = specifier.strip_prefix("node:").unwrap_or(specifier);
+    matches!(name, "child_process" | "http2")
+        .then(|| format!("usa {name}, que ainda não é suportado"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -442,6 +448,33 @@ mod tests {
 
         assert_eq!(report.compatibility, Compatibility::Limited);
         assert!(report.findings[0].message.contains("missing-package"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_unsupported_builtins_in_commonjs_and_esm() {
+        let root = fixture();
+        fs::write(
+            root.join("main.js"),
+            "import http2 from 'node:http2'; require('child_process');",
+        )
+        .unwrap();
+
+        let report = analyze_file(root.join("main.js").to_str().unwrap()).unwrap();
+
+        assert_eq!(report.compatibility, Compatibility::Incompatible);
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.message.contains("http2"))
+        );
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.message.contains("child_process"))
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
