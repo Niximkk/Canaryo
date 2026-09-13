@@ -270,6 +270,8 @@ fn builtin_source(name: &str) -> Option<String> {
             "getEventListeners",
             "listenerCount",
             "setMaxListeners",
+            "getMaxListeners",
+            "addAbortListener",
         ],
         "fs" => &[
             "readFile",
@@ -411,6 +413,7 @@ fn builtin_source(name: &str) -> Option<String> {
             "PassThrough",
             "finished",
             "pipeline",
+            "addAbortSignal",
             "promises",
         ],
         "stream/promises" => &["finished", "pipeline"],

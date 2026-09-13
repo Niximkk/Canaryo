@@ -238,7 +238,8 @@ function normalizeClientRequest(input, options, defaultProtocol) {
         path,
         headers: Object.assign({}, values.headers || {}),
         timeout: Number(values.timeout) || 0,
-        agent: values.agent
+        agent: values.agent,
+        signal: values.signal
     };
 }
 
@@ -269,6 +270,20 @@ function ClientRequest(input, options, callback, defaultProtocol = "http:", defa
     this._headers = Object.create(null);
     for (const [name, value] of Object.entries(normalized.headers)) this.setHeader(name, value);
     if (typeof callback === "function") this.once("response", callback);
+    if (normalized.signal) {
+        const abortRequest = () => {
+            const error = new Error("The operation was aborted");
+            error.name = "AbortError";
+            error.code = "ABORT_ERR";
+            error.cause = normalized.signal.reason;
+            this.destroy(error);
+        };
+        if (normalized.signal.aborted) process.nextTick(abortRequest);
+        else this._abortDisposable = __canaryoBuiltins.events.addAbortListener(
+            normalized.signal,
+            abortRequest
+        );
+    }
 }
 ClientRequest.prototype.setHeader = function(name, value) {
     if (this.headersSent) throw new Error("Cannot set headers after they are sent");
@@ -347,6 +362,7 @@ ClientRequest.prototype.destroy = function(error) {
         __canaryoHttpRequestAbort(this._requestId);
     }
     if (this._timeoutHandle) clearTimeout(this._timeoutHandle);
+    this._abortDisposable?.[Symbol.dispose || Symbol.for("nodejs.dispose")]();
     if (error) this.emit("error", error);
     this.emit("close");
     return this;
@@ -414,6 +430,7 @@ const pendingClientRequests = new Map();
 function finishClientRequest(request) {
     pendingClientRequests.delete(request._requestId);
     if (request._timeoutHandle) clearTimeout(request._timeoutHandle);
+    request._abortDisposable?.[Symbol.dispose || Symbol.for("nodejs.dispose")]();
     request.emit("close");
 }
 
@@ -2830,6 +2847,100 @@ mod tests {
                     .get::<_, bool>("eventPromiseResolved")
                     .unwrap()
             );
+        });
+    }
+
+    #[test]
+    fn supports_abort_signals_across_events_timers_and_streams() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            let synchronous = context
+                .eval::<bool, _>(
+                    r#"
+                    const events = __canaryoBuiltins.events;
+                    const timers = __canaryoBuiltins["timers/promises"];
+                    const streams = __canaryoBuiltins.stream;
+
+                    const target = new EventTarget();
+                    let eventCalls = 0;
+                    target.addEventListener("value", () => eventCalls++, { once: true });
+                    target.dispatchEvent(new Event("value"));
+                    target.dispatchEvent(new Event("value"));
+                    const cancelable = new Event("cancel", { cancelable: true });
+                    target.addEventListener("cancel", event => event.preventDefault());
+                    const dispatchResult = target.dispatchEvent(cancelable);
+
+                    const listenerController = new AbortController();
+                    let removedListenerCalled = false;
+                    target.addEventListener("removed", () => { removedListenerCalled = true; }, {
+                        signal: listenerController.signal
+                    });
+                    listenerController.abort("remove-listener");
+                    target.dispatchEvent(new Event("removed"));
+
+                    const combinedLeft = new AbortController();
+                    const combinedRight = new AbortController();
+                    const combined = AbortSignal.any([combinedLeft.signal, combinedRight.signal]);
+                    combinedRight.abort("combined-reason");
+
+                    globalThis.eventAbortRejected = false;
+                    const emitter = new events.EventEmitter();
+                    const eventController = new AbortController();
+                    events.once(emitter, "done", { signal: eventController.signal }).catch(error => {
+                        eventAbortRejected = error.name === "AbortError" &&
+                            error.code === "ABORT_ERR" && error.cause === "event-reason";
+                    });
+                    eventController.abort("event-reason");
+
+                    globalThis.timerAbortRejected = false;
+                    const timerController = new AbortController();
+                    timers.setTimeout(100, 42, { signal: timerController.signal }).catch(error => {
+                        timerAbortRejected = error.name === "AbortError" &&
+                            error.code === "ABORT_ERR" && error.cause === "timer-reason";
+                    });
+                    timerController.abort("timer-reason");
+
+                    globalThis.streamAbortObserved = false;
+                    const readable = new streams.Readable();
+                    readable.on("error", error => {
+                        streamAbortObserved = error.name === "AbortError" && error.code === "ABORT_ERR";
+                    });
+                    const streamController = new AbortController();
+                    streams.addAbortSignal(streamController.signal, readable);
+                    streamController.abort("stream-reason");
+
+                    globalThis.timeoutSignalAborted = false;
+                    const timeoutSignal = AbortSignal.timeout(0);
+                    timeoutSignal.addEventListener("abort", () => {
+                        timeoutSignalAborted = timeoutSignal.reason.name === "TimeoutError";
+                    });
+
+                    eventCalls === 1 && !dispatchResult && cancelable.defaultPrevented &&
+                        !removedListenerCalled && combined.aborted &&
+                        combined.reason === "combined-reason" && readable.destroyed &&
+                        AbortSignal.abort().reason.name === "AbortError"
+                    "#,
+                )
+                .unwrap();
+
+            while context.execute_pending_job() {}
+            let run_timers: Function = context.globals().get("__canaryoRunTimers").unwrap();
+            run_timers.call::<_, i64>(()).unwrap();
+            while context.execute_pending_job() {}
+
+            assert!(synchronous);
+            for name in [
+                "eventAbortRejected",
+                "timerAbortRejected",
+                "streamAbortObserved",
+                "timeoutSignalAborted",
+            ] {
+                assert!(context.globals().get::<_, bool>(name).unwrap(), "{name}");
+            }
         });
     }
 

@@ -29,6 +29,20 @@ http.createServer((incomingRequest, response) => {
         response.end("healthy");
         return;
     }
+    if (incomingRequest.url === "/signal") {
+        const controller = new AbortController();
+        const outbound = http.get({
+            hostname: "127.0.0.1",
+            port: upstreamPort,
+            path: "/signal",
+            signal: controller.signal
+        });
+        outbound.on("error", error => {
+            response.end(`${error.name}:${error.code}:${error.cause}`);
+        });
+        controller.abort("request-reason");
+        return;
+    }
     if (incomingRequest.url === "/agent") {
         pooledAgent ||= new http.Agent({ keepAlive: true, maxFreeSockets: 1 });
         separateAgent ||= new http.Agent({ keepAlive: true, maxFreeSockets: 1 });

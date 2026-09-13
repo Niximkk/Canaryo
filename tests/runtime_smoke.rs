@@ -910,6 +910,28 @@ fn times_out_and_aborts_outbound_requests() {
 }
 
 #[test]
+fn aborts_outbound_requests_with_a_signal() {
+    let upstream = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let upstream_port = upstream.local_addr().unwrap().port();
+    let (_server, mut stream) = start_fixture_with_args(
+        "fixtures/http-client/server.js",
+        &[upstream_port.to_string()],
+        Stdio::null(),
+    );
+
+    stream
+        .write_all(b"GET /signal HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+
+    assert!(
+        response.ends_with("AbortError:ABORT_ERR:request-reason"),
+        "{response}"
+    );
+}
+
+#[test]
 fn serves_multiple_requests_on_a_persistent_connection() {
     let (_server, mut stream) = start_fixture("fixtures/http-basic/server.js");
 

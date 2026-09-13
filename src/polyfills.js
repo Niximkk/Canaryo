@@ -1,4 +1,205 @@
 (() => {
+    const disposeSymbol = Symbol.dispose || Symbol.for("nodejs.dispose");
+
+    function DOMException(message = "", name = "Error") {
+        const error = new Error(String(message));
+        Object.setPrototypeOf(error, DOMException.prototype);
+        error.name = String(name);
+        error.code = error.name === "AbortError" ? 20 : 0;
+        return error;
+    }
+    DOMException.prototype = Object.create(Error.prototype, {
+        constructor: { value: DOMException, writable: true, configurable: true }
+    });
+
+    function Event(type, options = {}) {
+        if (arguments.length === 0) throw new TypeError("event type is required");
+        this.type = String(type);
+        this.bubbles = Boolean(options.bubbles);
+        this.cancelable = Boolean(options.cancelable);
+        this.composed = Boolean(options.composed);
+        this.defaultPrevented = false;
+        this.target = null;
+        this.currentTarget = null;
+        this.eventPhase = 0;
+        this.timeStamp = Date.now();
+        this._stopped = false;
+        this._immediateStopped = false;
+    }
+    Event.NONE = 0;
+    Event.CAPTURING_PHASE = 1;
+    Event.AT_TARGET = 2;
+    Event.BUBBLING_PHASE = 3;
+    Event.prototype.preventDefault = function () {
+        if (this.cancelable) this.defaultPrevented = true;
+    };
+    Event.prototype.stopPropagation = function () { this._stopped = true; };
+    Event.prototype.stopImmediatePropagation = function () {
+        this._stopped = true;
+        this._immediateStopped = true;
+    };
+    Event.prototype.composedPath = function () { return this.target ? [this.target] : []; };
+
+    function EventTarget() { this._eventTargetListeners = new Map(); }
+    EventTarget.prototype.addEventListener = function (type, callback, options = {}) {
+        if (callback === null || callback === undefined) return;
+        if (typeof callback !== "function" && typeof callback.handleEvent !== "function") {
+            throw new TypeError("callback must be a function or EventListener object");
+        }
+        const name = String(type);
+        const capture = typeof options === "boolean" ? options : Boolean(options.capture);
+        const once = typeof options === "object" && Boolean(options.once);
+        const signal = typeof options === "object" ? options.signal : undefined;
+        if (signal?.aborted) return;
+        const listeners = this._eventTargetListeners.get(name) || [];
+        if (listeners.some(listener => listener.callback === callback && listener.capture === capture)) return;
+        const entry = { callback, capture, once, signal, abortDisposable: undefined };
+        listeners.push(entry);
+        this._eventTargetListeners.set(name, listeners);
+        if (signal) {
+            entry.abortDisposable = addAbortListener(signal, () => {
+                this.removeEventListener(name, callback, capture);
+            });
+        }
+    };
+    EventTarget.prototype.removeEventListener = function (type, callback, options = {}) {
+        const name = String(type);
+        const capture = typeof options === "boolean" ? options : Boolean(options.capture);
+        const listeners = this._eventTargetListeners.get(name);
+        if (!listeners) return;
+        const index = listeners.findIndex(listener => listener.callback === callback && listener.capture === capture);
+        if (index < 0) return;
+        const [entry] = listeners.splice(index, 1);
+        entry.abortDisposable?.[disposeSymbol]();
+        if (listeners.length === 0) this._eventTargetListeners.delete(name);
+    };
+    EventTarget.prototype.dispatchEvent = function (event) {
+        if (!(event instanceof Event)) throw new TypeError("event must be an Event");
+        event.target = this;
+        event.currentTarget = this;
+        event.eventPhase = Event.AT_TARGET;
+        const listeners = [...(this._eventTargetListeners.get(event.type) || [])];
+        for (const entry of listeners) {
+            if (event._immediateStopped) break;
+            if (entry.once) this.removeEventListener(event.type, entry.callback, entry.capture);
+            if (typeof entry.callback === "function") entry.callback.call(this, event);
+            else entry.callback.handleEvent(event);
+        }
+        if (!event._immediateStopped) {
+            const handler = this[`on${event.type}`];
+            if (typeof handler === "function") handler.call(this, event);
+        }
+        event.currentTarget = null;
+        event.eventPhase = Event.NONE;
+        return !event.defaultPrevented;
+    };
+    EventTarget.prototype.setMaxListeners = function (value) {
+        this._maxListeners = Number(value);
+        return this;
+    };
+    EventTarget.prototype.getMaxListeners = function () { return this._maxListeners ?? 10; };
+    EventTarget.prototype.listeners = function (type) {
+        return (this._eventTargetListeners.get(String(type)) || []).map(entry => entry.callback);
+    };
+    EventTarget.prototype.listenerCount = function (type) { return this.listeners(type).length; };
+
+    const abortSignalToken = {};
+    function AbortSignal(token) {
+        if (token !== abortSignalToken) throw new TypeError("Illegal constructor");
+        EventTarget.call(this);
+        this.aborted = false;
+        this.reason = undefined;
+        this.onabort = null;
+        this._safeAbortListeners = new Set();
+    }
+    AbortSignal.prototype = Object.create(EventTarget.prototype, {
+        constructor: { value: AbortSignal, writable: true, configurable: true }
+    });
+    AbortSignal.prototype.throwIfAborted = function () {
+        if (this.aborted) throw this.reason;
+    };
+    AbortSignal.prototype._abort = function (reason) {
+        if (this.aborted) return;
+        this.aborted = true;
+        this.reason = reason === undefined
+            ? new DOMException("This operation was aborted", "AbortError")
+            : reason;
+        try { this.dispatchEvent(new Event("abort")); }
+        finally {
+            for (const listener of [...this._safeAbortListeners]) listener();
+            this._safeAbortListeners.clear();
+        }
+    };
+    AbortSignal.abort = function (reason) {
+        const signal = new AbortSignal(abortSignalToken);
+        signal._abort(reason);
+        return signal;
+    };
+    AbortSignal.timeout = function (delay) {
+        const signal = new AbortSignal(abortSignalToken);
+        const handle = setTimeout(() => signal._abort(
+            new DOMException("The operation was aborted due to timeout", "TimeoutError")
+        ), Math.max(0, Number(delay)));
+        handle.unref();
+        return signal;
+    };
+    AbortSignal.any = function (signals) {
+        const signal = new AbortSignal(abortSignalToken);
+        const disposables = [];
+        const abort = source => {
+            if (signal.aborted) return;
+            signal._abort(source.reason);
+            for (const disposable of disposables) disposable[disposeSymbol]();
+        };
+        for (const source of signals) {
+            if (!source || typeof source.addEventListener !== "function") {
+                throw new TypeError("signals must contain AbortSignal instances");
+            }
+            if (source.aborted) {
+                abort(source);
+                break;
+            }
+            disposables.push(addAbortListener(source, () => abort(source)));
+        }
+        return signal;
+    };
+
+    function AbortController() {
+        this.signal = new AbortSignal(abortSignalToken);
+    }
+    AbortController.prototype.abort = function (reason) { this.signal._abort(reason); };
+
+    function abortApiError(reason) {
+        const error = new Error("The operation was aborted");
+        error.name = "AbortError";
+        error.code = "ABORT_ERR";
+        error.cause = reason;
+        return error;
+    }
+
+    function addAbortListener(signal, listener) {
+        if (!signal || typeof signal.addEventListener !== "function") {
+            throw new TypeError("signal must be an AbortSignal");
+        }
+        if (typeof listener !== "function") throw new TypeError("listener must be a function");
+        let active = true;
+        const wrapped = () => {
+            if (!active) return;
+            active = false;
+            listener();
+        };
+        if (signal.aborted) queueMicrotask(wrapped);
+        else if (signal._safeAbortListeners) signal._safeAbortListeners.add(wrapped);
+        else signal.addEventListener("abort", wrapped, { once: true });
+        const dispose = () => {
+            if (!active) return;
+            active = false;
+            if (signal._safeAbortListeners) signal._safeAbortListeners.delete(wrapped);
+            else signal.removeEventListener("abort", wrapped);
+        };
+        return { [disposeSymbol]: dispose };
+    }
+
     function EventEmitter() { this._events = Object.create(null); }
     EventEmitter.prototype.on = EventEmitter.prototype.addListener = function (name, listener) {
         if (typeof listener !== "function") throw new TypeError("listener must be a function");
@@ -73,16 +274,32 @@
     EventEmitter.prototype.eventNames = function () { return Reflect.ownKeys(this._events || {}); };
     EventEmitter.prototype.setMaxListeners = function (value) { this._maxListeners = Number(value); return this; };
     EventEmitter.prototype.getMaxListeners = function () { return this._maxListeners ?? 10; };
-    EventEmitter.once = function (emitter, name) {
+    EventEmitter.once = function (emitter, name, options = {}) {
         return new Promise((resolve, reject) => {
+            let abortDisposable;
+            const eventTarget = typeof emitter.once !== "function" &&
+                typeof emitter.addEventListener === "function";
             function cleanup() {
-                emitter.removeListener(name, onEvent);
-                if (name !== "error") emitter.removeListener("error", onError);
+                if (eventTarget) emitter.removeEventListener(name, onEvent);
+                else {
+                    emitter.removeListener(name, onEvent);
+                    if (name !== "error") emitter.removeListener("error", onError);
+                }
+                abortDisposable?.[disposeSymbol]();
             }
             function onEvent(...args) { cleanup(); resolve(args); }
             function onError(error) { cleanup(); reject(error); }
-            emitter.once(name, onEvent);
-            if (name !== "error") emitter.once("error", onError);
+            function onAbort() { cleanup(); reject(abortApiError(options.signal.reason)); }
+            if (options.signal?.aborted) {
+                onAbort();
+                return;
+            }
+            if (eventTarget) emitter.addEventListener(name, onEvent, { once: true });
+            else {
+                emitter.once(name, onEvent);
+                if (name !== "error") emitter.once("error", onError);
+            }
+            if (options.signal) abortDisposable = addAbortListener(options.signal, onAbort);
         });
     };
     EventEmitter.getEventListeners = (emitter, name) => emitter.listeners(name);
@@ -90,6 +307,8 @@
     EventEmitter.setMaxListeners = (value, ...emitters) => {
         for (const emitter of emitters) emitter.setMaxListeners(value);
     };
+    EventEmitter.getMaxListeners = emitter => emitter.getMaxListeners();
+    EventEmitter.addAbortListener = addAbortListener;
 
     function encodeUtf8(value) {
         const bytes = [];
@@ -831,9 +1050,15 @@
 
     function finished(stream, callback) {
         const event = stream.writable ? "finish" : "end";
-        stream.once(event, () => callback());
-        stream.once("error", callback);
-        return () => stream.removeListener(event, callback);
+        const cleanup = () => {
+            stream.removeListener(event, onComplete);
+            stream.removeListener("error", onError);
+        };
+        const onComplete = () => { cleanup(); callback(); };
+        const onError = error => { cleanup(); callback(error); };
+        stream.once(event, onComplete);
+        stream.once("error", onError);
+        return cleanup;
     }
     function pipeline(...streams) {
         const callback = typeof streams[streams.length - 1] === "function" ? streams.pop() : () => {};
@@ -841,7 +1066,24 @@
         finished(streams[streams.length - 1], callback);
         return streams[streams.length - 1];
     }
-    Object.assign(Stream, { Stream, Readable, Writable, Duplex, Transform, PassThrough, finished, pipeline });
+    function addAbortSignal(signal, stream) {
+        if (!stream || typeof stream.destroy !== "function") throw new TypeError("stream must be a Stream");
+        const disposable = addAbortListener(signal, () => stream.destroy(abortApiError(signal.reason)));
+        stream.once("close", () => disposable[disposeSymbol]());
+        if (signal.aborted) stream.destroy(abortApiError(signal.reason));
+        return stream;
+    }
+    Object.assign(Stream, {
+        Stream,
+        Readable,
+        Writable,
+        Duplex,
+        Transform,
+        PassThrough,
+        finished,
+        pipeline,
+        addAbortSignal
+    });
 
     const asyncLocalStorages = new Set();
     let asyncContextEnabled = false;
@@ -1390,6 +1632,11 @@
     };
 
     globalThis.Buffer = Buffer;
+    globalThis.DOMException = DOMException;
+    globalThis.Event = Event;
+    globalThis.EventTarget = EventTarget;
+    globalThis.AbortController = AbortController;
+    globalThis.AbortSignal = AbortSignal;
     globalThis.TextEncoder = TextEncoder;
     globalThis.TextDecoder = TextDecoder;
     globalThis.URL = URL;
@@ -1415,22 +1662,16 @@
         );
     };
 
-    function timerAbortError() {
-        const error = new Error("The operation was aborted");
-        error.name = "AbortError";
-        error.code = "ABORT_ERR";
-        return error;
-    }
     function schedulePromiseTimer(schedule, delay, value, options = {}) {
         return new Promise((resolve, reject) => {
             if (options.signal?.aborted) {
-                reject(timerAbortError());
+                reject(abortApiError(options.signal.reason));
                 return;
             }
             let handle;
             const onAbort = () => {
                 clearTimer(handle);
-                reject(timerAbortError());
+                reject(abortApiError(options.signal.reason));
             };
             const complete = () => {
                 options.signal?.removeEventListener?.("abort", onAbort);
@@ -1460,7 +1701,7 @@
             }, delay);
             if (options.ref === false) handle.unref();
             const onAbort = () => {
-                failure = timerAbortError();
+                failure = abortApiError(options.signal.reason);
                 stopped = true;
                 clearTimer(handle);
                 while (waiting.length > 0) waiting.shift().reject(failure);
@@ -1494,21 +1735,37 @@
     };
 
     const streamPromises = {
-        finished(stream, _options) {
+        finished(stream, options = {}) {
             return new Promise((resolve, reject) => {
-                finished(stream, error => error ? reject(error) : resolve());
+                let abortDisposable;
+                const cleanup = finished(stream, error => {
+                    abortDisposable?.[disposeSymbol]();
+                    if (error) reject(error);
+                    else resolve();
+                });
+                if (options.signal) {
+                    abortDisposable = addAbortListener(options.signal, () => {
+                        cleanup();
+                        reject(abortApiError(options.signal.reason));
+                    });
+                }
             });
         },
         pipeline(...streams) {
+            let options = {};
             if (streams.length > 0) {
-                const options = streams[streams.length - 1];
-                if (options && typeof options === "object" &&
-                    typeof options.pipe !== "function" && typeof options.on !== "function") {
+                const candidate = streams[streams.length - 1];
+                if (candidate && typeof candidate === "object" &&
+                    typeof candidate.pipe !== "function" && typeof candidate.on !== "function") {
+                    options = candidate;
                     streams.pop();
                 }
             }
             return new Promise((resolve, reject) => {
                 pipeline(...streams, error => error ? reject(error) : resolve());
+                if (options.signal) {
+                    for (const stream of streams) addAbortSignal(options.signal, stream);
+                }
             });
         }
     };
