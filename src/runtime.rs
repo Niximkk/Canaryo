@@ -800,6 +800,11 @@ fn install_host_globals<'js>(
     globals
         .set("__canaryoTimingSafeEqual", timing_safe_equal)
         .map_err(|error| error.to_string())?;
+    let zlib_transform =
+        Function::new(context.clone(), zlib_transform).map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoZlibTransform", zlib_transform)
+        .map_err(|error| error.to_string())?;
     let byte_length =
         Function::new(context.clone(), byte_length).map_err(|error| error.to_string())?;
     globals
@@ -2119,6 +2124,66 @@ fn crypto_timing_safe_equal<'js>(
     Ok(bool::from(left.ct_eq(&right)))
 }
 
+fn zlib_transform<'js>(
+    context: rquickjs::Ctx<'js>,
+    operation: String,
+    contents: String,
+) -> rquickjs::Result<String> {
+    use flate2::{
+        Compression,
+        read::{DeflateDecoder, GzDecoder, ZlibDecoder},
+        write::{DeflateEncoder, GzEncoder, ZlibEncoder},
+    };
+
+    let input = decode_crypto_input(&context, &contents)?;
+    let result = match operation.as_str() {
+        "gzip" => {
+            let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+            encoder.write_all(&input).and_then(|_| encoder.finish())
+        }
+        "gunzip" => read_compressed(GzDecoder::new(input.as_slice())),
+        "deflate" => {
+            let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+            encoder.write_all(&input).and_then(|_| encoder.finish())
+        }
+        "inflate" => read_compressed(ZlibDecoder::new(input.as_slice())),
+        "deflateRaw" => {
+            let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
+            encoder.write_all(&input).and_then(|_| encoder.finish())
+        }
+        "inflateRaw" => read_compressed(DeflateDecoder::new(input.as_slice())),
+        "unzip" if input.starts_with(&[0x1f, 0x8b]) => {
+            read_compressed(GzDecoder::new(input.as_slice()))
+        }
+        "unzip" => read_compressed(ZlibDecoder::new(input.as_slice())),
+        "brotliCompress" => {
+            let mut reader = input.as_slice();
+            let mut output = Vec::new();
+            let params = brotli::enc::BrotliEncoderParams::default();
+            brotli::BrotliCompress(&mut reader, &mut output, &params).map(|_| output)
+        }
+        "brotliDecompress" => {
+            let mut output = Vec::new();
+            brotli::BrotliDecompress(&mut input.as_slice(), &mut output).map(|_| output)
+        }
+        _ => {
+            return Err(rquickjs::Exception::throw_message(
+                &context,
+                &format!("unsupported zlib operation: {operation}"),
+            ));
+        }
+    };
+    let output =
+        result.map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(output))
+}
+
+fn read_compressed(mut reader: impl Read) -> io::Result<Vec<u8>> {
+    let mut output = Vec::new();
+    reader.read_to_end(&mut output)?;
+    Ok(output)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2232,6 +2297,56 @@ mod tests {
         });
 
         assert!(matches_node);
+    }
+
+    #[test]
+    fn compresses_with_common_node_zlib_apis() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            let synchronous = context
+                .eval::<bool, _>(
+                    r#"
+                    const zlib = __canaryoBuiltins.zlib;
+                    const source = Buffer.from("Canaryo compression: 🐤 ".repeat(20));
+                    const gzip = zlib.gzipSync(source);
+                    const deflate = zlib.deflateSync(source);
+                    const raw = zlib.deflateRawSync(source);
+                    const brotli = zlib.brotliCompressSync(source);
+                    const streamed = [];
+                    const gzipStream = zlib.createGzip();
+                    gzipStream.on("data", chunk => streamed.push(chunk));
+                    gzipStream.write(source.subarray(0, 40));
+                    gzipStream.end(source.subarray(40));
+                    globalThis.zlibCallbackPassed = false;
+                    zlib.gzip(source, (error, compressed) => {
+                        zlibCallbackPassed = !error && zlib.gunzipSync(compressed).equals(source);
+                    });
+
+                    gzip[0] === 0x1f && gzip[1] === 0x8b &&
+                    zlib.gunzipSync(gzip).equals(source) &&
+                    zlib.unzipSync(gzip).equals(source) &&
+                    zlib.inflateSync(deflate).equals(source) &&
+                    zlib.unzipSync(deflate).equals(source) &&
+                    zlib.inflateRawSync(raw).equals(source) &&
+                    zlib.brotliDecompressSync(brotli).equals(source) &&
+                    zlib.gunzipSync(Buffer.concat(streamed)).equals(source)
+                    "#,
+                )
+                .unwrap();
+            assert!(synchronous);
+
+            while context.execute_pending_job() {}
+            assert!(
+                context
+                    .globals()
+                    .get::<_, bool>("zlibCallbackPassed")
+                    .unwrap()
+            );
+        });
     }
 
     #[test]

@@ -253,6 +253,11 @@ fn scan_source(source: &str, path: &Path) -> Vec<Finding> {
             compatibility: Compatibility::Limited,
             message: "usa crypto; hashes, HMAC e geração aleatória estão disponíveis, mas criptografia avançada ainda não",
         },
+        Rule {
+            patterns: &["node:zlib", "require('zlib')", "require(\"zlib\")"],
+            compatibility: Compatibility::Limited,
+            message: "usa zlib; gzip, deflate e Brotli estão disponíveis, mas opções avançadas ainda não",
+        },
     ];
     let mut findings = Vec::new();
 

@@ -1757,6 +1757,96 @@
     };
     if (typeof globalThis.crypto === "undefined") globalThis.crypto = webcrypto;
 
+    function zlibSync(operation, input) {
+        const contents = Buffer.from(input).toString("base64");
+        return Buffer.from(__canaryoZlibTransform(operation, contents), "base64");
+    }
+    function zlibAsync(operation, input, options, callback) {
+        if (typeof options === "function") { callback = options; options = undefined; }
+        if (typeof callback !== "function") throw new TypeError("callback must be a function");
+        process.nextTick(() => {
+            try { callback(null, zlibSync(operation, input)); }
+            catch (error) { callback(error); }
+        });
+    }
+    function zlibConstructor(operation) {
+        function Codec(_options = {}) {
+            const chunks = [];
+            Transform.call(this, {
+                transform(chunk, encoding, callback) {
+                    chunks.push(Buffer.isBuffer(chunk) ? Buffer.from(chunk) : Buffer.from(chunk, encoding));
+                    callback();
+                },
+                final(callback) {
+                    try { this.push(zlibSync(operation, Buffer.concat(chunks))); callback(); }
+                    catch (error) { callback(error); }
+                }
+            });
+        }
+        util.inherits(Codec, Transform);
+        return Codec;
+    }
+    const Gzip = zlibConstructor("gzip");
+    const Gunzip = zlibConstructor("gunzip");
+    const Deflate = zlibConstructor("deflate");
+    const Inflate = zlibConstructor("inflate");
+    const DeflateRaw = zlibConstructor("deflateRaw");
+    const InflateRaw = zlibConstructor("inflateRaw");
+    const Unzip = zlibConstructor("unzip");
+    const BrotliCompress = zlibConstructor("brotliCompress");
+    const BrotliDecompress = zlibConstructor("brotliDecompress");
+    const zlibModule = {
+        gzipSync: input => zlibSync("gzip", input),
+        gunzipSync: input => zlibSync("gunzip", input),
+        deflateSync: input => zlibSync("deflate", input),
+        inflateSync: input => zlibSync("inflate", input),
+        deflateRawSync: input => zlibSync("deflateRaw", input),
+        inflateRawSync: input => zlibSync("inflateRaw", input),
+        unzipSync: input => zlibSync("unzip", input),
+        brotliCompressSync: input => zlibSync("brotliCompress", input),
+        brotliDecompressSync: input => zlibSync("brotliDecompress", input),
+        gzip(input, options, callback) { zlibAsync("gzip", input, options, callback); },
+        gunzip(input, options, callback) { zlibAsync("gunzip", input, options, callback); },
+        deflate(input, options, callback) { zlibAsync("deflate", input, options, callback); },
+        inflate(input, options, callback) { zlibAsync("inflate", input, options, callback); },
+        deflateRaw(input, options, callback) { zlibAsync("deflateRaw", input, options, callback); },
+        inflateRaw(input, options, callback) { zlibAsync("inflateRaw", input, options, callback); },
+        unzip(input, options, callback) { zlibAsync("unzip", input, options, callback); },
+        brotliCompress(input, options, callback) { zlibAsync("brotliCompress", input, options, callback); },
+        brotliDecompress(input, options, callback) { zlibAsync("brotliDecompress", input, options, callback); },
+        createGzip: options => new Gzip(options),
+        createGunzip: options => new Gunzip(options),
+        createDeflate: options => new Deflate(options),
+        createInflate: options => new Inflate(options),
+        createDeflateRaw: options => new DeflateRaw(options),
+        createInflateRaw: options => new InflateRaw(options),
+        createUnzip: options => new Unzip(options),
+        createBrotliCompress: options => new BrotliCompress(options),
+        createBrotliDecompress: options => new BrotliDecompress(options),
+        Gzip,
+        Gunzip,
+        Deflate,
+        Inflate,
+        DeflateRaw,
+        InflateRaw,
+        Unzip,
+        BrotliCompress,
+        BrotliDecompress,
+        constants: {
+            Z_NO_FLUSH: 0,
+            Z_SYNC_FLUSH: 2,
+            Z_FULL_FLUSH: 3,
+            Z_FINISH: 4,
+            Z_DEFAULT_COMPRESSION: -1,
+            Z_BEST_SPEED: 1,
+            Z_BEST_COMPRESSION: 9,
+            Z_DEFAULT_STRATEGY: 0,
+            BROTLI_OPERATION_PROCESS: 0,
+            BROTLI_OPERATION_FLUSH: 1,
+            BROTLI_OPERATION_FINISH: 2
+        }
+    };
+
     globalThis.__canaryoBuiltins = Object.freeze({
         assert,
         async_hooks: { AsyncLocalStorage, AsyncResource, executionAsyncId: () => 0, triggerAsyncId: () => 0 },
@@ -1831,6 +1921,6 @@
         },
         util,
         worker_threads: workerThreads,
-        zlib: { constants: {} }
+        zlib: zlibModule
     });
 })();
