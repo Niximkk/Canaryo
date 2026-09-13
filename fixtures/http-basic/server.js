@@ -38,8 +38,13 @@ http.createServer((request, response) => {
         response.setHeader("X-Removed", "yes");
         response.removeHeader("X-Removed");
         response.setHeader("X-Present", "yes");
+        response.appendHeader("X-Present", "again");
+        response.setHeaders(new Map([["X-Map", "ready"]]));
         response.flushHeaders();
-        response.end(String(response.getHeaderNames().includes("x-present")));
+        response.end(String(
+            response.getHeaderNames().includes("x-present") &&
+            response.getHeader("x-present").join(",") === "yes,again"
+        ));
         return;
     }
 

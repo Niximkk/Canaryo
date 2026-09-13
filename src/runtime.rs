@@ -155,7 +155,27 @@ function validateHeaderValue(name, value) {
 ServerResponse.prototype.setHeader = function(name, value) {
     validateHeaderName(name);
     validateHeaderValue(name, value);
-    this.__canaryoHeaders[String(name).toLowerCase()] = String(value);
+    this.__canaryoHeaders[String(name).toLowerCase()] = Array.isArray(value)
+        ? value.map(String)
+        : String(value);
+    return this;
+};
+ServerResponse.prototype.appendHeader = function(name, value) {
+    validateHeaderName(name);
+    validateHeaderValue(name, value);
+    const key = String(name).toLowerCase();
+    const incoming = Array.isArray(value) ? value.map(String) : [String(value)];
+    const current = this.__canaryoHeaders[key];
+    this.__canaryoHeaders[key] = current === undefined
+        ? incoming
+        : (Array.isArray(current) ? current : [current]).concat(incoming);
+    return this;
+};
+ServerResponse.prototype.setHeaders = function(headers) {
+    if (!headers || typeof headers.entries !== "function") {
+        throw new TypeError("headers must be a Map or Headers object");
+    }
+    for (const [name, value] of headers.entries()) this.setHeader(name, value);
     return this;
 };
 ServerResponse.prototype.getHeader = function(name) {
@@ -331,6 +351,17 @@ ClientRequest.prototype.setHeader = function(name, value) {
     validateHeaderName(name);
     validateHeaderValue(name, value);
     this._headers[String(name).toLowerCase()] = Array.isArray(value) ? value.join(", ") : String(value);
+};
+ClientRequest.prototype.appendHeader = function(name, value) {
+    if (this.headersSent) throw new Error("Cannot append headers after they are sent");
+    validateHeaderName(name);
+    validateHeaderValue(name, value);
+    const key = String(name).toLowerCase();
+    const incoming = Array.isArray(value) ? value.join(", ") : String(value);
+    this._headers[key] = this._headers[key] === undefined
+        ? incoming
+        : `${this._headers[key]}, ${incoming}`;
+    return this;
 };
 ClientRequest.prototype.getHeader = function(name) { return this._headers[String(name).toLowerCase()]; };
 ClientRequest.prototype.hasHeader = function(name) {
