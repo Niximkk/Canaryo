@@ -9,6 +9,7 @@ use crate::modules;
 const MAX_ANALYZED_FILES: usize = 10_000;
 const NODE_BUILTINS: &[&str] = &[
     "assert",
+    "assert/strict",
     "async_hooks",
     "buffer",
     "child_process",
@@ -27,6 +28,8 @@ const NODE_BUILTINS: &[&str] = &[
     "net",
     "os",
     "path",
+    "path/posix",
+    "path/win32",
     "perf_hooks",
     "process",
     "querystring",
@@ -39,6 +42,7 @@ const NODE_BUILTINS: &[&str] = &[
     "tty",
     "url",
     "util",
+    "util/types",
     "worker_threads",
     "zlib",
 ];

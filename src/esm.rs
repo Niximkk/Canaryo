@@ -149,6 +149,7 @@ fn is_builtin(name: &str) -> bool {
     matches!(
         name.strip_prefix("node:").unwrap_or(name),
         "assert"
+            | "assert/strict"
             | "async_hooks"
             | "buffer"
             | "console"
@@ -163,6 +164,8 @@ fn is_builtin(name: &str) -> bool {
             | "net"
             | "os"
             | "path"
+            | "path/posix"
+            | "path/win32"
             | "perf_hooks"
             | "process"
             | "querystring"
@@ -175,6 +178,7 @@ fn is_builtin(name: &str) -> bool {
             | "tty"
             | "url"
             | "util"
+            | "util/types"
             | "worker_threads"
             | "zlib"
     )
@@ -189,6 +193,14 @@ fn builtin_source(name: &str) -> Option<String> {
         "globalThis.__canaryoHttpModule".to_string()
     } else if normalized == "https" {
         "globalThis.__canaryoHttpsModule".to_string()
+    } else if normalized == "assert/strict" {
+        "globalThis.__canaryoBuiltins.assert".to_string()
+    } else if normalized == "path/posix" {
+        "globalThis.__canaryoBuiltins.path.posix".to_string()
+    } else if normalized == "path/win32" {
+        "globalThis.__canaryoBuiltins.path.win32".to_string()
+    } else if normalized == "util/types" {
+        "globalThis.__canaryoBuiltins.util.types".to_string()
     } else {
         format!(
             "globalThis.__canaryoBuiltins[{}]",
@@ -196,6 +208,14 @@ fn builtin_source(name: &str) -> Option<String> {
         )
     };
     let names: &[&str] = match normalized {
+        "assert" | "assert/strict" => &[
+            "ok",
+            "equal",
+            "strictEqual",
+            "notStrictEqual",
+            "fail",
+            "AssertionError",
+        ],
         "async_hooks" => &[
             "AsyncLocalStorage",
             "AsyncResource",
@@ -367,7 +387,7 @@ fn builtin_source(name: &str) -> Option<String> {
             "userInfo",
             "networkInterfaces",
         ],
-        "path" => &[
+        "path" | "path/posix" | "path/win32" => &[
             "resolve",
             "join",
             "normalize",
@@ -489,6 +509,18 @@ fn builtin_source(name: &str) -> Option<String> {
             "TextEncoder",
             "TextDecoder",
             "types",
+        ],
+        "util/types" => &[
+            "isDate",
+            "isRegExp",
+            "isNativeError",
+            "isArrayBuffer",
+            "isArrayBufferView",
+            "isTypedArray",
+            "isUint8Array",
+            "isPromise",
+            "isMap",
+            "isSet",
         ],
         "zlib" => &[
             "gzip",

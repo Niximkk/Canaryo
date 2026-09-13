@@ -681,6 +681,18 @@
             );
         };
     }
+    const utilTypes = {
+        isDate: value => value instanceof Date,
+        isRegExp: value => value instanceof RegExp,
+        isNativeError: value => value instanceof Error,
+        isArrayBuffer: value => value instanceof ArrayBuffer,
+        isArrayBufferView: value => ArrayBuffer.isView(value),
+        isTypedArray: value => ArrayBuffer.isView(value) && !(value instanceof DataView),
+        isUint8Array: value => value instanceof Uint8Array,
+        isPromise: value => value instanceof Promise,
+        isMap: value => value instanceof Map,
+        isSet: value => value instanceof Set
+    };
     const util = {
         inherits(constructor, parent) {
             constructor.super_ = parent;
@@ -696,7 +708,7 @@
         stripVTControlCharacters(value) { return String(value).replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, ""); },
         TextEncoder,
         TextDecoder,
-        types: { isDate: value => value instanceof Date, isRegExp: value => value instanceof RegExp, isNativeError: value => value instanceof Error }
+        types: utilTypes
     };
 
     function createPathApi(separator, delimiter, windows) {
@@ -1758,6 +1770,7 @@
     assert.notStrictEqual = (actual, expected, message) => { if (actual === expected) throw assertionError(message); };
     assert.fail = message => { throw assertionError(message); };
     assert.AssertionError = function AssertionError(options = {}) { return assertionError(options.message); };
+    assert.strict = assert;
 
     const processStartedAt = Date.now();
     EventEmitter.call(process);
@@ -2681,11 +2694,11 @@
     };
 
     const builtinModules = [
-        "assert", "async_hooks", "buffer", "console", "crypto", "diagnostics_channel", "dns",
+        "assert", "assert/strict", "async_hooks", "buffer", "console", "crypto", "diagnostics_channel", "dns",
         "dns/promises", "events", "fs", "fs/promises", "http", "https", "module", "net", "os",
-        "path", "perf_hooks", "process", "querystring", "stream", "stream/consumers", "stream/promises", "string_decoder",
+        "path", "path/posix", "path/win32", "perf_hooks", "process", "querystring", "stream", "stream/consumers", "stream/promises", "string_decoder",
         "timers", "timers/promises", "tty",
-        "url", "util", "worker_threads", "zlib"
+        "url", "util", "util/types", "worker_threads", "zlib"
     ];
     function isBuiltin(name) {
         return builtinModules.includes(String(name).replace(/^node:/, ""));
@@ -2905,6 +2918,7 @@
 
     globalThis.__canaryoBuiltins = Object.freeze({
         assert,
+        "assert/strict": assert,
         async_hooks: {
             AsyncLocalStorage,
             AsyncResource,
@@ -2962,6 +2976,8 @@
             networkInterfaces: () => ({})
         },
         path,
+        "path/posix": posixPath,
+        "path/win32": win32Path,
         perf_hooks: { performance },
         process,
         querystring: { parse(value) { return Object.fromEntries(String(value).split("&").filter(Boolean).map(item => item.split("=").map(decodeURIComponent))); }, stringify(value) { return Object.entries(value).map(([key, item]) => `${encodeURIComponent(key)}=${encodeURIComponent(item)}`).join("&"); }, escape: encodeURIComponent, unescape: decodeURIComponent },
@@ -2988,6 +3004,7 @@
             }
         },
         util,
+        "util/types": utilTypes,
         worker_threads: workerThreads,
         zlib: zlibModule
     });
