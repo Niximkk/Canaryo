@@ -1058,6 +1058,27 @@ fn install_host_globals<'js>(
     globals
         .set("__canaryoFsReaddir", fs_readdir)
         .map_err(|error| error.to_string())?;
+    let fs_unlink = Function::new(context.clone(), fs_unlink).map_err(|error| error.to_string())?;
+    let fs_rename = Function::new(context.clone(), fs_rename).map_err(|error| error.to_string())?;
+    let fs_copy = Function::new(context.clone(), fs_copy).map_err(|error| error.to_string())?;
+    let fs_remove = Function::new(context.clone(), fs_remove).map_err(|error| error.to_string())?;
+    let fs_realpath =
+        Function::new(context.clone(), fs_realpath).map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoFsUnlink", fs_unlink)
+        .map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoFsRename", fs_rename)
+        .map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoFsCopy", fs_copy)
+        .map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoFsRemove", fs_remove)
+        .map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoFsRealpath", fs_realpath)
+        .map_err(|error| error.to_string())?;
 
     let process = Object::new(context.clone()).map_err(|error| error.to_string())?;
     let argv = Array::new(context.clone()).map_err(|error| error.to_string())?;
@@ -2014,6 +2035,56 @@ fn fs_readdir<'js>(context: rquickjs::Ctx<'js>, path: String) -> rquickjs::Resul
     Ok(result)
 }
 
+fn fs_unlink<'js>(context: rquickjs::Ctx<'js>, path: String) -> rquickjs::Result<()> {
+    fs::remove_file(path)
+        .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))
+}
+
+fn fs_rename<'js>(context: rquickjs::Ctx<'js>, from: String, to: String) -> rquickjs::Result<()> {
+    fs::rename(from, to)
+        .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))
+}
+
+fn fs_copy<'js>(context: rquickjs::Ctx<'js>, from: String, to: String) -> rquickjs::Result<f64> {
+    fs::copy(from, to)
+        .map(|bytes| bytes as f64)
+        .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))
+}
+
+fn fs_remove<'js>(
+    context: rquickjs::Ctx<'js>,
+    path: String,
+    recursive: bool,
+    force: bool,
+) -> rquickjs::Result<()> {
+    let metadata = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if force && error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(rquickjs::Exception::throw_message(
+                &context,
+                &error.to_string(),
+            ));
+        }
+    };
+    let result = if metadata.is_dir() {
+        if recursive {
+            fs::remove_dir_all(path)
+        } else {
+            fs::remove_dir(path)
+        }
+    } else {
+        fs::remove_file(path)
+    };
+    result.map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))
+}
+
+fn fs_realpath<'js>(context: rquickjs::Ctx<'js>, path: String) -> rquickjs::Result<String> {
+    fs::canonicalize(path)
+        .map(|path| path.to_string_lossy().into_owned())
+        .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))
+}
+
 fn resolve<'js>(
     context: rquickjs::Ctx<'js>,
     parent: String,
@@ -2445,6 +2516,86 @@ mod tests {
         });
 
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn manages_files_through_sync_callback_and_promise_apis() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let id = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory =
+            env::temp_dir().join(format!("canaryo-fs-manage-{}-{id}", std::process::id()));
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context
+                .globals()
+                .set("fixtureDirectory", directory.to_string_lossy().as_ref())
+                .unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            let synchronous = context
+                .eval::<bool, _>(
+                    r#"
+                    const fs = __canaryoBuiltins.fs;
+                    const path = __canaryoBuiltins.path;
+                    const nested = path.join(fixtureDirectory, "nested");
+                    const original = path.join(nested, "original.txt");
+                    const copied = path.join(nested, "copied.txt");
+                    const renamed = path.join(nested, "renamed.txt");
+                    const promised = path.join(nested, "promised.txt");
+                    const callbackCopy = path.join(nested, "callback.txt");
+                    fs.mkdirSync(nested, { recursive: true });
+                    fs.writeFileSync(original, "managed");
+                    fs.copyFileSync(original, copied);
+                    fs.renameSync(copied, renamed);
+                    const real = fs.realpathSync(renamed);
+                    fs.unlinkSync(original);
+                    fs.rmSync(path.join(nested, "missing.txt"), { force: true });
+                    globalThis.fsManagementPromise = false;
+                    globalThis.fsManagementCallback = false;
+                    fs.copyFile(renamed, callbackCopy, error => {
+                        if (error) throw error;
+                        fs.unlink(callbackCopy, unlinkError => {
+                            if (unlinkError) throw unlinkError;
+                            fsManagementCallback = true;
+                            fs.promises.copyFile(renamed, promised)
+                                .then(() => fs.promises.unlink(promised))
+                                .then(() => fs.promises.rm(fixtureDirectory, { recursive: true }))
+                                .then(() => { fsManagementPromise = !fs.existsSync(fixtureDirectory); });
+                        });
+                    });
+
+                    !fs.existsSync(original) && fs.readFileSync(renamed, "utf8") === "managed" &&
+                        typeof real === "string" && real.length > 0 &&
+                        fs.realpath.native === fs.realpath && fs.realpathSync.native === fs.realpathSync
+                    "#,
+                )
+                .unwrap();
+            while context.execute_pending_job() {}
+
+            assert!(synchronous);
+            assert!(
+                context
+                    .globals()
+                    .get::<_, bool>("fsManagementCallback")
+                    .unwrap()
+            );
+            assert!(
+                context
+                    .globals()
+                    .get::<_, bool>("fsManagementPromise")
+                    .unwrap()
+            );
+        });
+
+        if directory.exists() {
+            fs::remove_dir_all(directory).unwrap();
+        }
     }
 
     #[test]

@@ -1087,6 +1087,17 @@
         __canaryoFsMkdir(normalizeFsPath(filename), recursive);
     }
     function readdirSync(filename, _options) { return [...__canaryoFsReaddir(normalizeFsPath(filename))]; }
+    function unlinkSync(filename) { __canaryoFsUnlink(normalizeFsPath(filename)); }
+    function renameSync(from, to) { __canaryoFsRename(normalizeFsPath(from), normalizeFsPath(to)); }
+    function copyFileSync(from, to, _mode) { __canaryoFsCopy(normalizeFsPath(from), normalizeFsPath(to)); }
+    function rmSync(filename, options = {}) {
+        __canaryoFsRemove(normalizeFsPath(filename), Boolean(options.recursive), Boolean(options.force));
+    }
+    function rmdirSync(filename, options = {}) {
+        __canaryoFsRemove(normalizeFsPath(filename), Boolean(options.recursive), false);
+    }
+    function realpathSync(filename, _options) { return __canaryoFsRealpath(normalizeFsPath(filename)); }
+    realpathSync.native = realpathSync;
     function callbackOperation(callback, operation) {
         queueMicrotask(() => {
             try { callback(null, operation()); }
@@ -1215,7 +1226,13 @@
         stat(filename) { return Promise.resolve().then(() => statSync(filename)); },
         access(filename) { return Promise.resolve().then(() => accessSync(filename)); },
         mkdir(filename, options) { return Promise.resolve().then(() => mkdirSync(filename, options)); },
-        readdir(filename, options) { return Promise.resolve().then(() => readdirSync(filename, options)); }
+        readdir(filename, options) { return Promise.resolve().then(() => readdirSync(filename, options)); },
+        unlink(filename) { return Promise.resolve().then(() => unlinkSync(filename)); },
+        rename(from, to) { return Promise.resolve().then(() => renameSync(from, to)); },
+        copyFile(from, to, mode) { return Promise.resolve().then(() => copyFileSync(from, to, mode)); },
+        rm(filename, options) { return Promise.resolve().then(() => rmSync(filename, options)); },
+        rmdir(filename, options) { return Promise.resolve().then(() => rmdirSync(filename, options)); },
+        realpath(filename, options) { return Promise.resolve().then(() => realpathSync(filename, options)); }
     };
     const fsModule = {
         Stats,
@@ -1231,6 +1248,12 @@
         accessSync,
         mkdirSync,
         readdirSync,
+        unlinkSync,
+        renameSync,
+        copyFileSync,
+        rmSync,
+        rmdirSync,
+        realpathSync,
         readFile(filename, options, callback) {
             if (typeof options === "function") { callback = options; options = undefined; }
             callbackOperation(callback, () => readFileSync(filename, options));
@@ -1252,9 +1275,28 @@
             if (typeof options === "function") { callback = options; options = undefined; }
             callbackOperation(callback, () => readdirSync(filename, options));
         },
+        unlink(filename, callback) { callbackOperation(callback, () => unlinkSync(filename)); },
+        rename(from, to, callback) { callbackOperation(callback, () => renameSync(from, to)); },
+        copyFile(from, to, mode, callback) {
+            if (typeof mode === "function") { callback = mode; mode = 0; }
+            callbackOperation(callback, () => copyFileSync(from, to, mode));
+        },
+        rm(filename, options, callback) {
+            if (typeof options === "function") { callback = options; options = undefined; }
+            callbackOperation(callback, () => rmSync(filename, options));
+        },
+        rmdir(filename, options, callback) {
+            if (typeof options === "function") { callback = options; options = undefined; }
+            callbackOperation(callback, () => rmdirSync(filename, options));
+        },
+        realpath(filename, options, callback) {
+            if (typeof options === "function") { callback = options; options = undefined; }
+            callbackOperation(callback, () => realpathSync(filename, options));
+        },
         createReadStream(filename, options) { return new ReadStream(filename, options); },
         createWriteStream(filename, options) { return new WriteStream(filename, options); }
     };
+    fsModule.realpath.native = fsModule.realpath;
 
     const dnsModule = (() => {
         let defaultResultOrder = "verbatim";
