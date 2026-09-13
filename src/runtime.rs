@@ -2935,6 +2935,44 @@ mod tests {
     }
 
     #[test]
+    fn emits_events_in_their_async_resource_scope() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            let supported = context
+                .eval::<bool, _>(
+                    r#"
+                    const events = __canaryoBuiltins.events;
+                    const hooks = __canaryoBuiltins.async_hooks;
+                    const storage = new hooks.AsyncLocalStorage();
+                    let emitter;
+                    storage.run("creation context", () => {
+                        emitter = new events.EventEmitterAsyncResource({ name: "canaryo:event" });
+                    });
+                    let observedStore;
+                    let observedAsyncId;
+                    emitter.on("value", () => {
+                        observedStore = storage.getStore();
+                        observedAsyncId = hooks.executionAsyncId();
+                    });
+                    storage.run("calling context", () => emitter.emit("value"));
+                    const resourceId = emitter.asyncId;
+                    emitter.emitDestroy();
+                    observedStore === "creation context" &&
+                        observedAsyncId === resourceId &&
+                        resourceId > 1 && emitter.triggerAsyncId >= 1
+                    "#,
+                )
+                .unwrap();
+
+            assert!(supported);
+        });
+    }
+
+    #[test]
     fn supports_abort_signals_across_events_timers_and_streams() {
         let runtime = Runtime::new().unwrap();
         let context = Context::full(&runtime).unwrap();

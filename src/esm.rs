@@ -266,6 +266,7 @@ fn builtin_source(name: &str) -> Option<String> {
         "dns/promises" => &["lookup", "resolve"],
         "events" => &[
             "EventEmitter",
+            "EventEmitterAsyncResource",
             "once",
             "on",
             "getEventListeners",

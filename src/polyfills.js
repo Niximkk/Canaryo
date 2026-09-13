@@ -1414,6 +1414,37 @@
         return new AsyncResource(type || fn.name || "bound-anonymous-fn").bind(fn, thisArg);
     };
 
+    function EventEmitterAsyncResource(options = {}) {
+        if (typeof options === "string") options = { name: options };
+        if (!options || typeof options.name !== "string") {
+            throw new TypeError("options.name must be a string");
+        }
+        EventEmitter.call(this, options);
+        Object.defineProperty(this, "asyncResource", {
+            value: new AsyncResource(options.name, options),
+            enumerable: true
+        });
+    }
+    EventEmitterAsyncResource.prototype = Object.create(EventEmitter.prototype, {
+        constructor: { value: EventEmitterAsyncResource, writable: true, configurable: true }
+    });
+    EventEmitterAsyncResource.prototype.emit = function (name, ...args) {
+        return this.asyncResource.runInAsyncScope(
+            EventEmitter.prototype.emit,
+            this,
+            name,
+            ...args
+        );
+    };
+    EventEmitterAsyncResource.prototype.emitDestroy = function () {
+        this.asyncResource.emitDestroy();
+    };
+    Object.defineProperties(EventEmitterAsyncResource.prototype, {
+        asyncId: { get() { return this.asyncResource.asyncId(); } },
+        triggerAsyncId: { get() { return this.asyncResource.triggerAsyncId(); } }
+    });
+    EventEmitter.EventEmitterAsyncResource = EventEmitterAsyncResource;
+
     const originalPromiseThen = Promise.prototype.then;
     let promiseContextPatched = false;
     function ensurePromiseContextPropagation() {
