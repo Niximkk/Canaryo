@@ -1036,6 +1036,12 @@
         }
         return nextDelay;
     };
+    globalThis.__canaryoHasReferencedTimers = () => {
+        for (const timer of scheduledTimers.values()) {
+            if (timer.referenced) return true;
+        }
+        return false;
+    };
 
     globalThis.Buffer = Buffer;
     globalThis.TextEncoder = TextEncoder;

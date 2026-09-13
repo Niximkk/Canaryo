@@ -142,7 +142,7 @@ flowchart LR
 | `node:http` | Partial | Non-blocking servers, persistent HTTP/1.1 connections, pipelining, incrementally delivered request bodies with socket backpressure, chunk extensions and trailers, binary payloads, `HEAD`, response lifecycle and headers, connection admission limits, graceful close, idle/forced connection closing, configurable request limits, plus outbound `request` and `get`. Outbound uploads and responses stream through bounded queues and support pause/resume, timeouts and aborts. `Agent` provides isolated pools, keep-alive, socket limits, `maxFreeSockets`, `agent: false`, `getName`, and pool destruction. Responses with redirects are delivered as 3xx, matching Node. Advanced socket creation and live pool introspection remain incomplete. |
 | Express | Partial | Express 5.2.1 startup, basic routing, JSON request parsing, and JSON responses. |
 | Fastify | Partial | Fastify 5.12.3 startup, parameterized routes, query strings, request/response hooks, JSON request parsing, async and timed handlers, JSON responses, and built-in Pino request logging. Plugin compatibility varies with the Node.js APIs each plugin uses. |
-| Promises and timers | Partial | Promise jobs, `AsyncResource`, `process.nextTick`, `queueMicrotask`, `setImmediate`, `setTimeout`, and `setInterval` in the native HTTP event loop. Standalone event-loop lifetime and timer handle behavior remain incomplete. |
+| Promises and timers | Partial | Promise jobs, `AsyncResource`, `process.nextTick`, `queueMicrotask`, `setImmediate`, `setTimeout`, and `setInterval`; referenced timers keep standalone scripts alive, while `unref()` permits exit. Precise Node scheduling phases and uncommon timer edge cases remain incomplete. |
 | Process | Partial | Arguments, environment, cwd, executable path, PID, platform/architecture/version metadata, process events, warnings, uptime, `hrtime`, resource-shape methods, and built-in module lookup. Signals, IPC, privilege APIs, and exact resource accounting remain incomplete. |
 | Events | Partial | Listener ordering, one-time and prepended listeners, removal, introspection, unhandled errors, and Promise-based `events.once`. AbortSignal integration and rejection capture remain incomplete. |
 | URLs | Partial | Global and `node:url` `URL`/`URLSearchParams`, repeated query parameters, relative HTTP URLs, and basic file URL conversion. IDNA, complete percent-encoding rules, and every legacy URL edge case remain incomplete. |
@@ -200,7 +200,7 @@ cargo bench --bench runtime -- --startup-only --startup-runs 15
 
 ## Roadmap
 
-- Additional asynchronous I/O sources and complete timer lifecycle behavior.
+- Additional asynchronous I/O sources.
 - Wider Buffer, stream, filesystem, crypto, and networking support.
 - Complete ESM/CommonJS interop and the remaining Node package-resolution rules.
 - A larger Express, Fastify, and plugin compatibility suite.

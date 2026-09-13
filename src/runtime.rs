@@ -749,12 +749,12 @@ pub fn execute(path: &str, arguments: &[String]) -> Result<(), String> {
                 .map_err(|error| error.to_string())?;
         }
         while context.execute_pending_job() {}
-        drain_outbound_http_requests(&context)?;
+        drain_event_loop(&context)?;
         Ok(())
     })
 }
 
-fn drain_outbound_http_requests(context: &rquickjs::Ctx<'_>) -> Result<(), String> {
+fn drain_event_loop(context: &rquickjs::Ctx<'_>) -> Result<(), String> {
     let poll_http: Function = context
         .globals()
         .get("__canaryoPollHttpRequests")
@@ -763,7 +763,10 @@ fn drain_outbound_http_requests(context: &rquickjs::Ctx<'_>) -> Result<(), Strin
         .globals()
         .get("__canaryoRunTimers")
         .map_err(|error| error.to_string())?;
-    let deadline = std::time::Instant::now() + Duration::from_secs(31);
+    let has_referenced_timers: Function = context
+        .globals()
+        .get("__canaryoHasReferencedTimers")
+        .map_err(|error| error.to_string())?;
     loop {
         let pending_http = poll_http
             .call::<_, usize>(())
@@ -774,13 +777,21 @@ fn drain_outbound_http_requests(context: &rquickjs::Ctx<'_>) -> Result<(), Strin
             .catch(context)
             .map_err(|error| error.to_string())?;
         while context.execute_pending_job() {}
-        if pending_http == 0 && timer_delay.is_none() {
+        let timers_keep_alive = has_referenced_timers
+            .call::<_, bool>(())
+            .catch(context)
+            .map_err(|error| error.to_string())?;
+        if pending_http == 0 && !timers_keep_alive {
             return Ok(());
         }
-        if std::time::Instant::now() >= deadline {
-            return Err("outbound HTTP requests did not finish within 31 seconds".into());
+        let delay = if pending_http > 0 {
+            timer_delay.unwrap_or(2).min(2)
+        } else {
+            timer_delay.unwrap_or_default()
+        };
+        if delay > 0 {
+            thread::sleep(Duration::from_millis(delay));
         }
-        thread::sleep(Duration::from_millis(timer_delay.unwrap_or(2).min(2)));
     }
 }
 

@@ -88,6 +88,47 @@ fn request_fixture(fixture: &str) -> String {
     response
 }
 
+fn run_fixture_to_completion(fixture: &str) -> (String, Duration) {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let started = Instant::now();
+    let output = Command::new(env!("CARGO_BIN_EXE_canaryo"))
+        .current_dir(root)
+        .arg(fixture)
+        .output()
+        .unwrap();
+    let elapsed = started.elapsed();
+
+    assert!(
+        output.status.success(),
+        "fixture failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    (String::from_utf8(output.stdout).unwrap(), elapsed)
+}
+
+#[test]
+fn keeps_standalone_scripts_alive_for_referenced_timers() {
+    let (stdout, elapsed) = run_fixture_to_completion("fixtures/timers/referenced.js");
+
+    assert_eq!(stdout, "done");
+    assert!(elapsed >= Duration::from_millis(20));
+}
+
+#[test]
+fn lets_standalone_scripts_exit_with_only_unreferenced_timers() {
+    let (stdout, elapsed) = run_fixture_to_completion("fixtures/timers/unreferenced.js");
+
+    assert_eq!(stdout, "done");
+    assert!(elapsed < Duration::from_millis(500));
+}
+
+#[test]
+fn keeps_intervals_alive_until_they_are_cleared() {
+    let (stdout, _elapsed) = run_fixture_to_completion("fixtures/timers/interval.js");
+
+    assert_eq!(stdout, "3");
+}
+
 #[test]
 fn closes_the_native_http_server_and_exits() {
     let port = free_port();
