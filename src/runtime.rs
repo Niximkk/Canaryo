@@ -2620,6 +2620,64 @@ mod tests {
     }
 
     #[test]
+    fn provides_web_crypto_digests_and_hmac_keys() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            context
+                .eval::<(), _>(
+                    r#"
+                    globalThis.webCryptoPassed = false;
+                    (async () => {
+                        const nodeCrypto = __canaryoBuiltins.crypto;
+                        const data = new TextEncoder().encode("hello");
+                        const digest = Buffer.from(await crypto.subtle.digest("SHA-256", data));
+                        const key = await crypto.subtle.importKey(
+                            "raw",
+                            new TextEncoder().encode("secret"),
+                            { name: "HMAC", hash: "SHA-256" },
+                            true,
+                            ["sign", "verify"]
+                        );
+                        const signature = await crypto.subtle.sign("HMAC", key, data);
+                        const verified = await crypto.subtle.verify("HMAC", key, signature, data);
+                        const exported = Buffer.from(await crypto.subtle.exportKey("raw", key));
+                        const generated = await crypto.subtle.generateKey(
+                            { name: "HMAC", hash: "SHA-256", length: 128 },
+                            true,
+                            ["sign"]
+                        );
+                        const integer = nodeCrypto.randomInt(10, 20);
+                        const floating = nodeCrypto.randomFloat();
+                        webCryptoPassed = digest.toString("hex") ===
+                            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824" &&
+                            verified && exported.toString() === "secret" && key instanceof CryptoKey &&
+                            generated.algorithm.length === 128 && nodeCrypto.subtle === crypto.subtle &&
+                            nodeCrypto.hash("sha256", "hello", "hex") === digest.toString("hex") &&
+                            integer >= 10 && integer < 20 && floating >= 0 && floating < 1 &&
+                            crypto instanceof Crypto && crypto.subtle instanceof SubtleCrypto;
+                    })();
+                    "#,
+                )
+                .unwrap();
+
+            for _ in 0..20 {
+                while context.execute_pending_job() {}
+            }
+
+            assert!(
+                context
+                    .globals()
+                    .get::<_, bool>("webCryptoPassed")
+                    .unwrap()
+            );
+        });
+    }
+
+    #[test]
     fn compresses_with_common_node_zlib_apis() {
         let runtime = Runtime::new().unwrap();
         let context = Context::full(&runtime).unwrap();

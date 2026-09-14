@@ -4129,31 +4129,133 @@
         const hex = bytes.toString("hex");
         return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
     }
-    const webcrypto = {
+    function randomInt(min, max, callback) {
+        if (typeof max === "function") { callback = max; max = min; min = 0; }
+        else if (max === undefined) { max = min; min = 0; }
+        const lower = Number(min);
+        const upper = Number(max);
+        const range = upper - lower;
+        if (!Number.isSafeInteger(lower) || !Number.isSafeInteger(upper) || range <= 0 || range > 281474976710656) {
+            throw new RangeError("min and max must define a safe positive range no larger than 2^48");
+        }
+        const limit = Math.floor(281474976710656 / range) * range;
+        let sample;
+        do {
+            const bytes = randomBytes(6);
+            sample = bytes[0] * 1099511627776 + bytes[1] * 4294967296 + bytes[2] * 16777216 +
+                bytes[3] * 65536 + bytes[4] * 256 + bytes[5];
+        } while (sample >= limit);
+        const result = lower + sample % range;
+        if (typeof callback === "function") { process.nextTick(callback, null, result); return undefined; }
+        return result;
+    }
+    function randomFloat() {
+        const bytes = randomBytes(7);
+        const high = (bytes[0] & 0x1f) * 281474976710656 + bytes[1] * 1099511627776 +
+            bytes[2] * 4294967296 + bytes[3] * 16777216 + bytes[4] * 65536 + bytes[5] * 256 + bytes[6];
+        return high / 9007199254740992;
+    }
+    function webCryptoBytes(value) {
+        if (value instanceof ArrayBuffer) return new Uint8Array(value);
+        if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+        throw new TypeError("value must be a BufferSource");
+    }
+    function webCryptoAlgorithm(value) {
+        const name = typeof value === "string" ? value : value?.name;
+        if (!name) throw new TypeError("algorithm name is required");
+        return String(name).toUpperCase().replace(/_/g, "-");
+    }
+    function cryptoArrayBuffer(value) {
+        const bytes = Buffer.from(value);
+        return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    }
+    const cryptoKeyToken = {};
+    class CryptoKey {
+        constructor(token, type, algorithm, extractable, usages, bytes) {
+            if (token !== cryptoKeyToken) throw new TypeError("Illegal constructor");
+            this.type = type;
+            this.algorithm = Object.freeze(algorithm);
+            this.extractable = Boolean(extractable);
+            this.usages = Object.freeze([...usages]);
+            this._bytes = Buffer.from(bytes);
+        }
+        get [Symbol.toStringTag]() { return "CryptoKey"; }
+    }
+    const subtleCryptoToken = {};
+    class SubtleCrypto {
+        constructor(token) { if (token !== subtleCryptoToken) throw new TypeError("Illegal constructor"); }
+        async digest(algorithm, data) {
+            const name = webCryptoAlgorithm(algorithm);
+            return cryptoArrayBuffer(__canaryoHash(name, webCryptoBytes(data)));
+        }
+        async importKey(format, keyData, algorithm, extractable, keyUsages) {
+            if (String(format) !== "raw") throw new TypeError("only raw keys are supported");
+            if (webCryptoAlgorithm(algorithm) !== "HMAC") throw new TypeError("only HMAC keys are supported");
+            const hash = webCryptoAlgorithm(algorithm.hash);
+            return new CryptoKey(cryptoKeyToken, "secret", { name: "HMAC", hash: { name: hash }, length: webCryptoBytes(keyData).byteLength * 8 }, extractable, keyUsages, webCryptoBytes(keyData));
+        }
+        async exportKey(format, key) {
+            if (String(format) !== "raw" || !(key instanceof CryptoKey)) throw new TypeError("only raw CryptoKey export is supported");
+            if (!key.extractable) throw new DOMException("key is not extractable", "InvalidAccessError");
+            return cryptoArrayBuffer(key._bytes);
+        }
+        async generateKey(algorithm, extractable, keyUsages) {
+            if (webCryptoAlgorithm(algorithm) !== "HMAC") throw new TypeError("only HMAC keys are supported");
+            const hash = webCryptoAlgorithm(algorithm.hash);
+            const length = algorithm.length === undefined ? 256 : Number(algorithm.length);
+            if (!Number.isInteger(length) || length <= 0 || length % 8 !== 0) throw new RangeError("HMAC key length must be a positive multiple of 8");
+            return new CryptoKey(cryptoKeyToken, "secret", { name: "HMAC", hash: { name: hash }, length }, extractable, keyUsages, randomBytes(length / 8));
+        }
+        async sign(algorithm, key, data) {
+            if (webCryptoAlgorithm(algorithm) !== "HMAC" || !(key instanceof CryptoKey) || key.algorithm.name !== "HMAC") {
+                throw new DOMException("key and algorithm must use HMAC", "InvalidAccessError");
+            }
+            return cryptoArrayBuffer(__canaryoHmac(key.algorithm.hash.name, key._bytes, webCryptoBytes(data)));
+        }
+        async verify(algorithm, key, signature, data) {
+            const expected = new Uint8Array(await this.sign(algorithm, key, data));
+            const actual = webCryptoBytes(signature);
+            return expected.byteLength === actual.byteLength && __canaryoTimingSafeEqual(expected, actual);
+        }
+    }
+    const cryptoToken = {};
+    class Crypto {
+        constructor(token) {
+            if (token !== cryptoToken) throw new TypeError("Illegal constructor");
+            this.subtle = new SubtleCrypto(subtleCryptoToken);
+        }
         getRandomValues(view) {
             if (!ArrayBuffer.isView(view)) throw new TypeError("value must be an integer ArrayBuffer view");
             if (view.byteLength > 65536) throw new RangeError("requested too many random bytes");
             randomFillSync(new Uint8Array(view.buffer, view.byteOffset, view.byteLength));
             return view;
-        },
-        randomUUID,
-        subtle: Object.freeze({})
-    };
+        }
+        randomUUID() { return randomUUID(); }
+        get [Symbol.toStringTag]() { return "Crypto"; }
+    }
+    const webcrypto = new Crypto(cryptoToken);
     const cryptoModule = {
         createHash(algorithm) { return createDigest(algorithm); },
         createHmac(algorithm, key, encoding) { return createDigest(algorithm, cryptoInput(key, encoding)); },
+        hash(algorithm, data, outputEncoding) { return cryptoOutput(__canaryoHash(algorithm, cryptoInput(data)), outputEncoding); },
         randomBytes,
         randomFill,
         randomFillSync,
+        randomInt,
+        randomFloat,
         randomUUID,
         timingSafeEqual(left, right) {
             return __canaryoTimingSafeEqual(cryptoInput(left), cryptoInput(right));
         },
         getHashes() { return ["sha1", "sha256", "sha384", "sha512"]; },
         webcrypto,
+        subtle: webcrypto.subtle,
+        Crypto,
+        CryptoKey,
+        SubtleCrypto,
         constants: {}
     };
-    if (typeof globalThis.crypto === "undefined") globalThis.crypto = webcrypto;
+    Object.assign(globalThis, { crypto: webcrypto, Crypto, CryptoKey, SubtleCrypto });
 
     function zlibSync(operation, input) {
         return Buffer.from(__canaryoZlibTransform(operation, Buffer.from(input)));
