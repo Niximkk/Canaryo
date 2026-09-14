@@ -59,7 +59,16 @@ fn resolve_with_conditions(
         return resolve_candidate(&parent.join(requested));
     }
 
+    if specifier.starts_with('#') {
+        return resolve_package_import(parent, specifier, conditions);
+    }
+
     let (package, subpath) = split_package_specifier(specifier);
+    if let Some((package_directory, package_json)) = find_package_scope(parent)
+        && package_json.get("name").and_then(serde_json::Value::as_str) == Some(package)
+    {
+        return resolve_package(&package_directory, subpath, conditions);
+    }
     for directory in parent.ancestors() {
         let package_directory = directory.join("node_modules").join(package);
         if package_directory.is_dir() {
@@ -71,6 +80,102 @@ fn resolve_with_conditions(
         io::ErrorKind::NotFound,
         format!("módulo '{specifier}' não encontrado a partir de {parent_file}"),
     ))
+}
+
+fn find_package_scope(start: &Path) -> Option<(PathBuf, serde_json::Value)> {
+    for directory in start.ancestors() {
+        let package_file = directory.join("package.json");
+        if !package_file.is_file() {
+            continue;
+        }
+        let contents = fs::read_to_string(package_file).ok()?;
+        let package = serde_json::from_str(&contents).ok()?;
+        return Some((directory.to_path_buf(), package));
+    }
+    None
+}
+
+fn resolve_package_import(
+    parent: &Path,
+    specifier: &str,
+    conditions: &[&str],
+) -> io::Result<PathBuf> {
+    if matches!(specifier, "#" | "#/") {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("package import specifier '{specifier}' is invalid"),
+        ));
+    }
+    let (package_directory, package) = find_package_scope(parent).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("package import '{specifier}' has no package scope"),
+        )
+    })?;
+    let imports = package.get("imports").ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("package import '{specifier}' is not defined"),
+        )
+    })?;
+    let target =
+        resolve_package_import_target(imports, specifier, conditions).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("package import '{specifier}' is not defined"),
+            )
+        })?;
+    if let Some(relative) = target.strip_prefix("./") {
+        let candidate = normalize(&package_directory.join(relative));
+        let package_root = normalize(&package_directory);
+        if !candidate.starts_with(&package_root) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("package import target escapes its package: '{target}'"),
+            ));
+        }
+        return resolve_candidate(&candidate);
+    }
+    if target.starts_with("../") || target.starts_with('/') || target.starts_with('#') {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid package import target: '{target}'"),
+        ));
+    }
+    resolve_with_conditions(
+        package_directory
+            .join("package.json")
+            .to_string_lossy()
+            .as_ref(),
+        &target,
+        conditions,
+    )
+}
+
+fn resolve_package_import_target(
+    imports: &serde_json::Value,
+    key: &str,
+    conditions: &[&str],
+) -> Option<String> {
+    let entries = imports.as_object()?;
+    if let Some(target) = entries.get(key) {
+        return resolve_export_target(target, None, conditions);
+    }
+    let mut patterns = entries
+        .iter()
+        .filter_map(|(pattern, target)| pattern.contains('*').then_some((pattern, target)))
+        .collect::<Vec<_>>();
+    patterns.sort_by_key(|(pattern, _)| std::cmp::Reverse(pattern.len()));
+    for (pattern, target) in patterns {
+        let (prefix, suffix) = pattern.split_once('*')?;
+        if key.starts_with(prefix) && key.ends_with(suffix) {
+            let matched = &key[prefix.len()..key.len() - suffix.len()];
+            if let Some(target) = resolve_export_target(target, Some(matched), conditions) {
+                return Some(target);
+            }
+        }
+    }
+    None
 }
 
 fn resolve_package(
@@ -345,6 +450,64 @@ mod tests {
             normalize(&package.join("esm.js"))
         );
         assert_eq!(feature, normalize(&package.join("lib/feature.js")));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn resolves_package_imports_and_self_references() {
+        let root = fixture();
+        let entry = root.join("src/server.mjs");
+        fs::create_dir_all(root.join("src/features")).unwrap();
+        fs::write(&entry, "").unwrap();
+        fs::write(
+            root.join("package.json"),
+            r##"{
+                "name":"canaryo-app",
+                "imports":{
+                    "#config":{"import":"./config.mjs","require":"./config.cjs"},
+                    "#features/*":"./src/features/*.js"
+                },
+                "exports":{"./feature":"./src/features/http.js"}
+            }"##,
+        )
+        .unwrap();
+        fs::write(root.join("config.mjs"), "").unwrap();
+        fs::write(root.join("config.cjs"), "").unwrap();
+        fs::write(root.join("src/features/http.js"), "").unwrap();
+
+        assert_eq!(
+            resolve(entry.to_str().unwrap(), "#config").unwrap(),
+            normalize(&root.join("config.cjs"))
+        );
+        assert_eq!(
+            resolve_import(entry.to_str().unwrap(), "#config").unwrap(),
+            normalize(&root.join("config.mjs"))
+        );
+        assert_eq!(
+            resolve_import(entry.to_str().unwrap(), "#features/http").unwrap(),
+            normalize(&root.join("src/features/http.js"))
+        );
+        assert_eq!(
+            resolve_import(entry.to_str().unwrap(), "canaryo-app/feature").unwrap(),
+            normalize(&root.join("src/features/http.js"))
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_invalid_package_import_targets() {
+        let root = fixture();
+        let entry = root.join("server.js");
+        fs::write(&entry, "").unwrap();
+        fs::write(
+            root.join("package.json"),
+            r##"{"imports":{"#outside":"../outside.js"}}"##,
+        )
+        .unwrap();
+
+        let error = resolve(entry.to_str().unwrap(), "#outside").unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -1,5 +1,5 @@
 import { createServer, maxHeaderSize, validateHeaderName, validateHeaderValue } from "node:http";
-import { handleRequest } from "./handler.mjs";
+import { handleRequest } from "canaryo-http-esm/handler";
 
 const port = Number(process.argv[2] || 3003);
 let ready = false;

@@ -1,4 +1,4 @@
-import { suffix } from "./message.cjs";
+import { suffix } from "#message";
 import strictAssert from "node:assert/strict";
 import {
     AsyncLocalStorage,

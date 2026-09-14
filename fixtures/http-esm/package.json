@@ -1,0 +1,10 @@
+{
+  "name": "canaryo-http-esm",
+  "type": "module",
+  "imports": {
+    "#message": "./message.cjs"
+  },
+  "exports": {
+    "./handler": "./handler.mjs"
+  }
+}
