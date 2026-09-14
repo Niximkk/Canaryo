@@ -3465,6 +3465,16 @@
     Stats.prototype.isBlockDevice = Stats.prototype.isCharacterDevice =
         Stats.prototype.isFIFO = Stats.prototype.isSocket = function () { return false; };
 
+    function Dirent(name, parentPath, stats) {
+        this.name = name;
+        this.parentPath = parentPath;
+        this.path = parentPath;
+        this._stats = stats;
+    }
+    for (const method of ["isFile", "isDirectory", "isSymbolicLink", "isBlockDevice", "isCharacterDevice", "isFIFO", "isSocket"]) {
+        Dirent.prototype[method] = function () { return this._stats[method](); };
+    }
+
     function encodingFrom(options) {
         return typeof options === "string" ? options : options && options.encoding;
     }
@@ -3563,10 +3573,52 @@
         const recursive = options === true || Boolean(options && options.recursive);
         __canaryoFsMkdir(normalizeFsPath(filename), recursive);
     }
-    function readdirSync(filename, _options) { return [...__canaryoFsReaddir(normalizeFsPath(filename))]; }
+    function readdirSync(filename, options) {
+        const parentPath = normalizeFsPath(filename);
+        const encoding = encodingFrom(options);
+        const names = [...__canaryoFsReaddir(parentPath)];
+        if (!options || typeof options !== "object" || !options.withFileTypes) {
+            return encoding === "buffer" ? names.map(name => Buffer.from(name)) : names;
+        }
+        return names.map(name => {
+            const child = __canaryoBuiltins.path.join(parentPath, name);
+            return new Dirent(encoding === "buffer" ? Buffer.from(name) : name, parentPath, lstatSync(child));
+        });
+    }
     function unlinkSync(filename) { __canaryoFsUnlink(normalizeFsPath(filename)); }
     function renameSync(from, to) { __canaryoFsRename(normalizeFsPath(from), normalizeFsPath(to)); }
     function copyFileSync(from, to, _mode) { __canaryoFsCopy(normalizeFsPath(from), normalizeFsPath(to)); }
+    function cpSync(source, destination, options = {}) {
+        const from = normalizeFsPath(source);
+        const to = normalizeFsPath(destination);
+        const force = options.force !== false;
+        if (typeof options.filter === "function" && !options.filter(from, to)) return;
+        const metadata = options.dereference ? statSync(from) : lstatSync(from);
+        if (metadata.isDirectory()) {
+            if (!options.recursive) throw new Error(`ERR_FS_EISDIR: recursive option is required to copy '${from}'`);
+            if (!existsSync(to)) mkdirSync(to, { recursive: true });
+            for (const name of readdirSync(from)) cpSync(__canaryoBuiltins.path.join(from, name), __canaryoBuiltins.path.join(to, name), options);
+            if (options.preserveTimestamps) utimesSync(to, metadata.atime, metadata.mtime);
+            return;
+        }
+        if (metadata.isSymbolicLink() && !options.dereference) {
+            if (existsSync(to)) {
+                if (!force) {
+                    if (options.errorOnExist) throw new Error(`EEXIST: destination already exists, copy '${to}'`);
+                    return;
+                }
+                rmSync(to, { recursive: true, force: true });
+            }
+            symlinkSync(readlinkSync(from), to);
+            return;
+        }
+        if (existsSync(to) && !force) {
+            if (options.errorOnExist) throw new Error(`EEXIST: destination already exists, copy '${to}'`);
+            return;
+        }
+        copyFileSync(from, to, options.mode);
+        if (options.preserveTimestamps) utimesSync(to, metadata.atime, metadata.mtime);
+    }
     function rmSync(filename, options = {}) {
         __canaryoFsRemove(normalizeFsPath(filename), Boolean(options.recursive), Boolean(options.force));
     }
@@ -3787,6 +3839,12 @@
     }
     function fsyncSync(fd) { fileDescriptor(fd); }
     const fdatasyncSync = fsyncSync;
+    function truncateSync(filename, length = 0) {
+        if (typeof filename === "number") return ftruncateSync(filename, length);
+        const fd = openSync(filename, "r+");
+        try { return ftruncateSync(fd, length); }
+        finally { closeSync(fd); }
+    }
     function callbackOperation(callback, operation) {
         queueMicrotask(() => {
             try { callback(null, operation()); }
@@ -3944,6 +4002,7 @@
         unlink(filename) { return Promise.resolve().then(() => unlinkSync(filename)); },
         rename(from, to) { return Promise.resolve().then(() => renameSync(from, to)); },
         copyFile(from, to, mode) { return Promise.resolve().then(() => copyFileSync(from, to, mode)); },
+        cp(from, to, options) { return Promise.resolve().then(() => cpSync(from, to, options)); },
         rm(filename, options) { return Promise.resolve().then(() => rmSync(filename, options)); },
         rmdir(filename, options) { return Promise.resolve().then(() => rmdirSync(filename, options)); },
         realpath(filename, options) { return Promise.resolve().then(() => realpathSync(filename, options)); },
@@ -3952,10 +4011,12 @@
         symlink(target, path, type) { return Promise.resolve().then(() => symlinkSync(target, path, type)); },
         chmod(filename, mode) { return Promise.resolve().then(() => chmodSync(filename, mode)); },
         utimes(filename, atime, mtime) { return Promise.resolve().then(() => utimesSync(filename, atime, mtime)); },
-        mkdtemp(prefix, options) { return Promise.resolve().then(() => mkdtempSync(prefix, options)); }
+        mkdtemp(prefix, options) { return Promise.resolve().then(() => mkdtempSync(prefix, options)); },
+        truncate(filename, length) { return Promise.resolve().then(() => truncateSync(filename, length)); }
     };
     const fsModule = {
         Stats,
+        Dirent,
         constants: {
             F_OK: 0, R_OK: 4, W_OK: 2, X_OK: 1,
             O_RDONLY: 0, O_WRONLY: 1, O_RDWR: 2,
@@ -3975,6 +4036,7 @@
         ftruncateSync,
         fsyncSync,
         fdatasyncSync,
+        truncateSync,
         statSync,
         lstatSync,
         existsSync,
@@ -3984,6 +4046,7 @@
         unlinkSync,
         renameSync,
         copyFileSync,
+        cpSync,
         rmSync,
         rmdirSync,
         realpathSync,
@@ -4044,6 +4107,11 @@
         fdatasync(fd, callback) { callbackOperation(callback, () => fdatasyncSync(fd)); },
         stat(filename, callback) { callbackOperation(callback, () => statSync(filename)); },
         lstat(filename, callback) { callbackOperation(callback, () => lstatSync(filename)); },
+        access(filename, mode, callback) {
+            if (typeof mode === "function") { callback = mode; mode = 0; }
+            callbackOperation(callback, () => accessSync(filename, mode));
+        },
+        exists(filename, callback) { queueMicrotask(() => callback(existsSync(filename))); },
         mkdir(filename, options, callback) {
             if (typeof options === "function") { callback = options; options = undefined; }
             callbackOperation(callback, () => mkdirSync(filename, options));
@@ -4057,6 +4125,14 @@
         copyFile(from, to, mode, callback) {
             if (typeof mode === "function") { callback = mode; mode = 0; }
             callbackOperation(callback, () => copyFileSync(from, to, mode));
+        },
+        cp(from, to, options, callback) {
+            if (typeof options === "function") { callback = options; options = {}; }
+            callbackOperation(callback, () => cpSync(from, to, options));
+        },
+        truncate(filename, length, callback) {
+            if (typeof length === "function") { callback = length; length = 0; }
+            callbackOperation(callback, () => truncateSync(filename, length));
         },
         rm(filename, options, callback) {
             if (typeof options === "function") { callback = options; options = undefined; }

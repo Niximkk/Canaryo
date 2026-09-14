@@ -3238,6 +3238,79 @@ mod tests {
     }
 
     #[test]
+    fn copies_directory_trees_and_returns_dirents() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let id = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory =
+            env::temp_dir().join(format!("canaryo-fs-copy-{}-{id}", std::process::id()));
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context
+                .globals()
+                .set("fixtureDirectory", directory.to_string_lossy().as_ref())
+                .unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            let synchronous = context
+                .eval::<bool, _>(
+                    r#"
+                    const fs = __canaryoBuiltins.fs;
+                    const path = __canaryoBuiltins.path;
+                    const source = path.join(fixtureDirectory, "source");
+                    const nested = path.join(source, "nested");
+                    const copied = path.join(fixtureDirectory, "copied");
+                    fs.mkdirSync(nested, { recursive: true });
+                    fs.writeFileSync(path.join(source, "root.txt"), "root");
+                    fs.writeFileSync(path.join(nested, "child.txt"), "child");
+                    fs.writeFileSync(path.join(nested, "skip.txt"), "skip");
+                    const entries = fs.readdirSync(source, { withFileTypes: true });
+                    const buffered = fs.readdirSync(source, { encoding: "buffer" });
+                    fs.cpSync(source, copied, {
+                        recursive: true,
+                        filter(from) { return !from.endsWith("skip.txt"); }
+                    });
+                    fs.truncateSync(path.join(copied, "root.txt"), 2);
+                    globalThis.fsCopyCallback = false;
+                    fs.access(path.join(copied, "root.txt"), error => {
+                        if (error) throw error;
+                        fs.exists(path.join(copied, "nested", "child.txt"), exists => { fsCopyCallback = exists; });
+                    });
+                    globalThis.fsCopyPromise = false;
+                    const promised = path.join(fixtureDirectory, "promised");
+                    fs.promises.cp(source, promised, { recursive: true }).then(async () => {
+                        await fs.promises.truncate(path.join(promised, "nested", "child.txt"), 3);
+                        fsCopyPromise = fs.readFileSync(path.join(promised, "nested", "child.txt"), "utf8") === "chi";
+                    });
+
+                    entries.some(entry => entry instanceof fs.Dirent && entry.name === "nested" && entry.isDirectory()) &&
+                        entries.some(entry => entry.name === "root.txt" && entry.isFile()) &&
+                        buffered.every(Buffer.isBuffer) &&
+                        fs.readFileSync(path.join(copied, "root.txt"), "utf8") === "ro" &&
+                        fs.readFileSync(path.join(copied, "nested", "child.txt"), "utf8") === "child" &&
+                        !fs.existsSync(path.join(copied, "nested", "skip.txt"))
+                    "#,
+                )
+                .unwrap();
+
+            for _ in 0..30 {
+                while context.execute_pending_job() {}
+            }
+
+            assert!(synchronous);
+            assert!(context.globals().get::<_, bool>("fsCopyCallback").unwrap());
+            assert!(context.globals().get::<_, bool>("fsCopyPromise").unwrap());
+        });
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn reads_and_writes_through_file_descriptors() {
         use std::time::{SystemTime, UNIX_EPOCH};
 
