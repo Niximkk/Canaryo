@@ -1,4 +1,5 @@
 const fastify = require("fastify")({ logger: false });
+const { ReadableStream } = require("node:stream/web");
 const port = Number(process.argv[2] || 3002);
 let completedResponses = 0;
 
@@ -18,6 +19,14 @@ fastify.get("/delayed", async () => {
     await new Promise(resolve => setTimeout(resolve, 20));
     return { delayed: true };
 });
+
+fastify.get("/web-stream", () => new ReadableStream({
+    start(controller) {
+        controller.enqueue(Buffer.from("can"));
+        controller.enqueue(new TextEncoder().encode("aryo"));
+        controller.close();
+    }
+}));
 
 fastify.get("/hooks", {
     onRequest: async (_request, reply) => {

@@ -3448,6 +3448,120 @@ mod tests {
     }
 
     #[test]
+    fn pipes_and_transforms_web_streams() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            context
+                .eval::<(), _>(
+                    r#"
+                    const web = __canaryoBuiltins["stream/web"];
+                    globalThis.webStreamOutput = "";
+                    globalThis.webStreamDone = false;
+                    const source = new web.ReadableStream({
+                        start(controller) {
+                            controller.enqueue("can");
+                            controller.enqueue("aryo");
+                            controller.close();
+                        }
+                    });
+                    const upper = new web.TransformStream({
+                        transform(chunk, controller) { controller.enqueue(chunk.toUpperCase()); }
+                    });
+                    const destination = new web.WritableStream({
+                        write(chunk) { webStreamOutput += chunk; }
+                    });
+                    source.pipeThrough(upper).pipeTo(destination).then(() => {
+                        webStreamDone = webStreamOutput === "CANARYO" &&
+                            !source.locked && !upper.readable.locked && !destination.locked &&
+                            globalThis.ReadableStream === web.ReadableStream &&
+                            new web.CountQueuingStrategy({ highWaterMark: 2 }).size() === 1 &&
+                            new web.ByteLengthQueuingStrategy({ highWaterMark: 4 }).size(new Uint8Array(3)) === 3;
+                    });
+                    "#,
+                )
+                .unwrap();
+
+            for _ in 0..20 {
+                while context.execute_pending_job() {}
+            }
+
+            assert_eq!(
+                context
+                    .globals()
+                    .get::<_, String>("webStreamOutput")
+                    .unwrap(),
+                "CANARYO"
+            );
+            assert!(context.globals().get::<_, bool>("webStreamDone").unwrap());
+        });
+    }
+
+    #[test]
+    fn converts_between_node_and_web_streams() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            context
+                .eval::<(), _>(
+                    r#"
+                    const { Readable } = __canaryoBuiltins.stream;
+                    globalThis.nodeToWebOutput = "";
+                    globalThis.webToNodeOutput = "";
+                    globalThis.streamConversionsDone = false;
+
+                    const nodeSource = new Readable();
+                    const reader = Readable.toWeb(nodeSource).getReader();
+                    nodeSource.push("node-");
+                    nodeSource.push("web");
+                    nodeSource.push(null);
+                    (async () => {
+                        while (true) {
+                            const result = await reader.read();
+                            if (result.done) break;
+                            nodeToWebOutput += Buffer.from(result.value).toString();
+                        }
+                        reader.releaseLock();
+                    })();
+
+                    const webSource = new ReadableStream({
+                        start(controller) {
+                            controller.enqueue(new TextEncoder().encode("web-"));
+                            controller.enqueue(Buffer.from("node"));
+                            controller.close();
+                        }
+                    });
+                    const converted = Readable.fromWeb(webSource);
+                    converted.on("data", chunk => { webToNodeOutput += Buffer.from(chunk).toString(); });
+                    converted.on("end", () => {
+                        streamConversionsDone = nodeToWebOutput === "node-web" && webToNodeOutput === "web-node";
+                    });
+                    "#,
+                )
+                .unwrap();
+
+            let run_timers: Function = context.globals().get("__canaryoRunTimers").unwrap();
+            for _ in 0..12 {
+                run_timers.call::<_, i64>(()).unwrap();
+                while context.execute_pending_job() {}
+            }
+
+            assert!(
+                context
+                    .globals()
+                    .get::<_, bool>("streamConversionsDone")
+                    .unwrap()
+            );
+        });
+    }
+
+    #[test]
     fn iterates_readable_streams_and_event_emitters_asynchronously() {
         let runtime = Runtime::new().unwrap();
         let context = Context::full(&runtime).unwrap();

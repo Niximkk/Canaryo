@@ -1272,6 +1272,22 @@ fn serves_a_native_fastify_application() {
 
 #[test]
 #[ignore = "requires npm ci in fixtures/fastify-basic"]
+fn serves_a_fastify_web_stream_response() {
+    let (_server, mut stream) = start_fixture("fixtures/fastify-basic/server.js");
+    stream
+        .write_all(b"GET /web-stream HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let response = read_response(&mut stream);
+
+    assert!(response.starts_with("HTTP/1.1 200 OK"));
+    assert!(
+        response.ends_with("canaryo"),
+        "unexpected response: {response}"
+    );
+}
+
+#[test]
+#[ignore = "requires npm ci in fixtures/fastify-basic"]
 fn serves_fastify_with_pino_logging_enabled() {
     let (mut server, mut stream) =
         start_fixture_with_stdout("fixtures/fastify-logger/server.js", Stdio::piped());
