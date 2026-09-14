@@ -3607,6 +3607,124 @@
         }
         throw new Error(`EEXIST: could not create a unique temporary directory for '${prefix}'`);
     }
+    function emptyStats() {
+        return new Stats({
+            size: 0, file: false, directory: false, symlink: false,
+            atimeMs: 0, mtimeMs: 0, ctimeMs: 0, birthtimeMs: 0,
+            mode: 0, blocks: 0, blksize: 0, dev: 0, ino: 0, nlink: 0, uid: 0, gid: 0, rdev: 0
+        });
+    }
+    function watchSnapshot(path) {
+        if (!existsSync(path)) return { exists: false, stats: emptyStats(), entries: new Map() };
+        const stats = lstatSync(path);
+        const entries = new Map();
+        if (stats.isDirectory()) {
+            for (const name of readdirSync(path)) {
+                const child = `${path}${path.endsWith("/") || path.endsWith("\\") ? "" : __canaryoBuiltins.path.sep}${name}`;
+                try {
+                    const metadata = lstatSync(child);
+                    entries.set(name, `${metadata.size}:${metadata.mtimeMs}:${metadata.mode}`);
+                } catch {}
+            }
+        }
+        return { exists: true, stats, entries };
+    }
+    function changedStats(left, right) {
+        return left.size !== right.size || left.mtimeMs !== right.mtimeMs || left.mode !== right.mode ||
+            left.file !== right.file || left.directory !== right.directory || left.symlink !== right.symlink;
+    }
+    function FSWatcher() {
+        EventEmitter.call(this);
+        this._timer = null;
+        this._closed = false;
+    }
+    util.inherits(FSWatcher, EventEmitter);
+    FSWatcher.prototype.close = function () {
+        if (this._closed) return;
+        this._closed = true;
+        if (this._timer) clearInterval(this._timer);
+        this._timer = null;
+        this.emit("close");
+    };
+    FSWatcher.prototype.ref = function () { this._timer?.ref(); return this; };
+    FSWatcher.prototype.unref = function () { this._timer?.unref(); return this; };
+    FSWatcher.prototype.hasRef = function () { return this._timer?.hasRef() ?? false; };
+    function watch(filename, options, listener) {
+        if (typeof options === "function") { listener = options; options = {}; }
+        else if (typeof options === "string") options = { encoding: options };
+        options ||= {};
+        const path = normalizeFsPath(filename);
+        if (!existsSync(path)) throw new Error(`ENOENT: no such file or directory, watch '${path}'`);
+        const watcher = new FSWatcher();
+        if (typeof listener === "function") watcher.on("change", listener);
+        let previous = watchSnapshot(path);
+        const encodeName = name => options.encoding === "buffer" ? Buffer.from(name) : name;
+        watcher._timer = setInterval(() => {
+            if (watcher._closed) return;
+            const current = watchSnapshot(path);
+            if (previous.stats.isDirectory() || current.stats.isDirectory()) {
+                const names = new Set([...previous.entries.keys(), ...current.entries.keys()]);
+                for (const name of names) {
+                    if (!previous.entries.has(name) || !current.entries.has(name)) watcher.emit("change", "rename", encodeName(name));
+                    else if (previous.entries.get(name) !== current.entries.get(name)) watcher.emit("change", "change", encodeName(name));
+                }
+            } else if (previous.exists !== current.exists) {
+                watcher.emit("change", "rename", encodeName(__canaryoBuiltins.path.basename(path)));
+            } else if (changedStats(previous.stats, current.stats)) {
+                watcher.emit("change", "change", encodeName(__canaryoBuiltins.path.basename(path)));
+            }
+            previous = current;
+        }, options.interval === undefined ? 100 : Math.max(0, Number(options.interval) || 0));
+        if (options.persistent === false) watcher.unref();
+        if (options.signal) addAbortListener(options.signal, () => watcher.close());
+        return watcher;
+    }
+    const statWatchers = new Map();
+    function StatWatcher(path, interval, persistent) {
+        EventEmitter.call(this);
+        this.path = path;
+        this._closed = false;
+        let previous = watchSnapshot(path).stats;
+        this._timer = setInterval(() => {
+            if (this._closed) return;
+            const current = watchSnapshot(path).stats;
+            if (changedStats(previous, current)) this.emit("change", current, previous);
+            previous = current;
+        }, interval);
+        if (!persistent) this.unref();
+    }
+    util.inherits(StatWatcher, EventEmitter);
+    StatWatcher.prototype.stop = StatWatcher.prototype.close = function () {
+        if (this._closed) return;
+        this._closed = true;
+        clearInterval(this._timer);
+        this._timer = null;
+        statWatchers.delete(this.path);
+        this.emit("stop");
+    };
+    StatWatcher.prototype.ref = FSWatcher.prototype.ref;
+    StatWatcher.prototype.unref = FSWatcher.prototype.unref;
+    StatWatcher.prototype.hasRef = FSWatcher.prototype.hasRef;
+    function watchFile(filename, options, listener) {
+        if (typeof options === "function") { listener = options; options = {}; }
+        options ||= {};
+        if (typeof listener !== "function") throw new TypeError("listener must be a function");
+        const path = normalizeFsPath(filename);
+        let watcher = statWatchers.get(path);
+        if (!watcher) {
+            watcher = new StatWatcher(path, options.interval === undefined ? 5007 : Math.max(0, Number(options.interval) || 0), options.persistent !== false);
+            statWatchers.set(path, watcher);
+        }
+        watcher.on("change", listener);
+        return watcher;
+    }
+    function unwatchFile(filename, listener) {
+        const watcher = statWatchers.get(normalizeFsPath(filename));
+        if (!watcher) return;
+        if (typeof listener === "function") watcher.off("change", listener);
+        else watcher.removeAllListeners("change");
+        if (watcher.listenerCount("change") === 0) watcher.close();
+    }
     function readSync(fd, buffer, offset = 0, length = buffer.byteLength - offset, position = null) {
         const file = fileDescriptor(fd);
         if (!file.readable) throw new Error(`EBADF: file is not open for reading, fd ${fd}`);
@@ -3877,6 +3995,11 @@
         utimesSync,
         futimesSync,
         mkdtempSync,
+        watch,
+        watchFile,
+        unwatchFile,
+        FSWatcher,
+        StatWatcher,
         readFile(filename, options, callback) {
             if (typeof options === "function") { callback = options; options = undefined; }
             callbackOperation(callback, () => readFileSync(filename, options));

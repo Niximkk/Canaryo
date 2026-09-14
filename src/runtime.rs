@@ -3398,6 +3398,81 @@ mod tests {
     }
 
     #[test]
+    fn watches_file_and_directory_changes() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let id = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory =
+            env::temp_dir().join(format!("canaryo-fs-watch-{}-{id}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context
+                .globals()
+                .set("fixtureDirectory", directory.to_string_lossy().as_ref())
+                .unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            let initialized = context
+                .eval::<bool, _>(
+                    r#"
+                    const fs = __canaryoBuiltins.fs;
+                    const path = __canaryoBuiltins.path;
+                    const file = path.join(fixtureDirectory, "watched.txt");
+                    const added = path.join(fixtureDirectory, "added.txt");
+                    fs.writeFileSync(file, "before");
+                    globalThis.watchEvents = [];
+                    globalThis.watchFileEvents = 0;
+                    const directoryWatcher = fs.watch(fixtureDirectory, { interval: 0 }, (type, name) => {
+                        watchEvents.push(`${type}:${name}`);
+                        if (watchEvents.some(value => value === "change:watched.txt") &&
+                            watchEvents.some(value => value === "rename:added.txt")) directoryWatcher.close();
+                    });
+                    const statListener = (current, previous) => {
+                        if (current.size !== previous.size) {
+                            watchFileEvents++;
+                            fs.unwatchFile(file, statListener);
+                        }
+                    };
+                    const statWatcher = fs.watchFile(file, { interval: 0 }, statListener);
+                    const controller = new AbortController();
+                    const abortedWatcher = fs.watch(file, { interval: 0, signal: controller.signal });
+                    controller.abort();
+                    setImmediate(() => {
+                        fs.writeFileSync(file, "after-change");
+                        fs.writeFileSync(added, "new");
+                    });
+                    directoryWatcher instanceof fs.FSWatcher && statWatcher instanceof fs.StatWatcher &&
+                        directoryWatcher.hasRef() && !abortedWatcher.hasRef()
+                    "#,
+                )
+                .unwrap();
+            assert!(initialized);
+
+            let run_timers: Function = context.globals().get("__canaryoRunTimers").unwrap();
+            for _ in 0..8 {
+                run_timers.call::<_, i64>(()).unwrap();
+                while context.execute_pending_job() {}
+            }
+
+            assert!(
+                context
+                    .eval::<bool, _>(
+                        "watchFileEvents === 1 && watchEvents.includes('change:watched.txt') && watchEvents.includes('rename:added.txt')",
+                    )
+                    .unwrap()
+            );
+        });
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn supports_event_emitter_ordering_and_helpers() {
         let runtime = Runtime::new().unwrap();
         let context = Context::full(&runtime).unwrap();
