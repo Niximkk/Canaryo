@@ -156,11 +156,13 @@ fn is_builtin(name: &str) -> bool {
             | "crypto"
             | "diagnostics_channel"
             | "dns"
+            | "dns/promises"
             | "events"
             | "fs"
             | "fs/promises"
             | "http"
             | "https"
+            | "module"
             | "net"
             | "os"
             | "path"
@@ -172,6 +174,7 @@ fn is_builtin(name: &str) -> bool {
             | "stream"
             | "stream/consumers"
             | "stream/promises"
+            | "stream/web"
             | "string_decoder"
             | "timers"
             | "timers/promises"
@@ -472,6 +475,22 @@ fn builtin_source(name: &str) -> Option<String> {
         ],
         "stream/promises" => &["finished", "pipeline"],
         "stream/consumers" => &["arrayBuffer", "blob", "buffer", "json", "text"],
+        "stream/web" => &[
+            "ReadableStream",
+            "ReadableStreamDefaultReader",
+            "ReadableStreamDefaultController",
+            "WritableStream",
+            "WritableStreamDefaultWriter",
+            "WritableStreamDefaultController",
+            "TransformStream",
+            "TransformStreamDefaultController",
+            "ByteLengthQueuingStrategy",
+            "CountQueuingStrategy",
+            "TextEncoderStream",
+            "TextDecoderStream",
+            "CompressionStream",
+            "DecompressionStream",
+        ],
         "string_decoder" => &["StringDecoder"],
         "timers" => &[
             "setTimeout",
@@ -601,5 +620,16 @@ mod tests {
         let source = "exports.first = 1; module.exports.second = 2; exports.default = 3;";
 
         assert_eq!(commonjs_named_exports(source), ["first", "second"]);
+    }
+
+    #[test]
+    fn exposes_nested_node_builtins_to_esm() {
+        assert!(builtin_source("node:dns/promises").is_some());
+        assert!(builtin_source("node:module").is_some());
+        assert!(
+            builtin_source("node:stream/web")
+                .unwrap()
+                .contains("CompressionStream")
+        );
     }
 }

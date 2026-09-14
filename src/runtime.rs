@@ -2670,6 +2670,58 @@ mod tests {
     }
 
     #[test]
+    fn compresses_and_decompresses_web_streams() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            context
+                .eval::<(), _>(
+                    r#"
+                    globalThis.webCompressionPassed = false;
+                    (async () => {
+                        const source = new TextEncoder().encode("Canaryo web compression".repeat(20));
+                        const compression = new CompressionStream("gzip");
+                        const decompression = new DecompressionStream("gzip");
+                        const piping = compression.readable.pipeTo(decompression.writable);
+                        const writer = compression.writable.getWriter();
+                        const reader = decompression.readable.getReader();
+                        await writer.write(source.subarray(0, 37));
+                        await writer.write(source.subarray(37));
+                        await writer.close();
+                        const chunks = [];
+                        while (true) {
+                            const { value, done } = await reader.read();
+                            if (done) break;
+                            chunks.push(value);
+                        }
+                        await piping;
+                        const decoded = new TextDecoder().decode(Buffer.concat(chunks.map(Buffer.from)));
+                        webCompressionPassed = decoded === "Canaryo web compression".repeat(20) &&
+                            compression.readable instanceof ReadableStream &&
+                            decompression.writable instanceof WritableStream &&
+                            __canaryoBuiltins["stream/web"].CompressionStream === CompressionStream;
+                    })();
+                    "#,
+                )
+                .unwrap();
+
+            for _ in 0..40 {
+                while context.execute_pending_job() {}
+            }
+
+            assert!(
+                context
+                    .globals()
+                    .get::<_, bool>("webCompressionPassed")
+                    .unwrap()
+            );
+        });
+    }
+
+    #[test]
     fn schedules_and_cancels_timers() {
         let runtime = Runtime::new().unwrap();
         let context = Context::full(&runtime).unwrap();

@@ -4093,6 +4093,51 @@
         }
     };
 
+    function webCompressionOperation(format, decompress) {
+        const normalized = String(format);
+        if (normalized === "gzip") return decompress ? "gunzip" : "gzip";
+        if (normalized === "deflate") return decompress ? "inflate" : "deflate";
+        if (normalized === "deflate-raw") return decompress ? "inflateRaw" : "deflateRaw";
+        throw new TypeError(`Unsupported compression format: ${format}`);
+    }
+
+    function createWebCompressionStream(format, decompress) {
+        const operation = webCompressionOperation(format, decompress);
+        const chunks = [];
+        return new TransformStream({
+            transform(chunk) {
+                if (!ArrayBuffer.isView(chunk) && !(chunk instanceof ArrayBuffer)) {
+                    throw new TypeError("Compression stream chunks must be BufferSource values");
+                }
+                chunks.push(Buffer.from(chunk));
+            },
+            flush(controller) {
+                controller.enqueue(new Uint8Array(zlibSync(operation, Buffer.concat(chunks))));
+            }
+        });
+    }
+
+    class CompressionStream {
+        constructor(format) {
+            const stream = createWebCompressionStream(format, false);
+            this.readable = stream.readable;
+            this.writable = stream.writable;
+        }
+        get [Symbol.toStringTag]() { return "CompressionStream"; }
+    }
+
+    class DecompressionStream {
+        constructor(format) {
+            const stream = createWebCompressionStream(format, true);
+            this.readable = stream.readable;
+            this.writable = stream.writable;
+        }
+        get [Symbol.toStringTag]() { return "DecompressionStream"; }
+    }
+
+    Object.assign(streamWeb, { CompressionStream, DecompressionStream });
+    Object.assign(globalThis, { CompressionStream, DecompressionStream });
+
     globalThis.__canaryoBuiltins = Object.freeze({
         assert,
         "assert/strict": assert,
