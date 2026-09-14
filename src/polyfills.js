@@ -3385,14 +3385,86 @@
     function normalizeFsPath(filename) {
         return filename instanceof URL ? fileURLToPath(filename) : String(filename);
     }
+    let nextFileDescriptor = 10;
+    const openFiles = new Map();
+    function fileDescriptor(value) {
+        const fd = Number(value);
+        const file = openFiles.get(fd);
+        if (!Number.isInteger(fd) || !file) throw new Error(`EBADF: bad file descriptor, fd ${value}`);
+        return file;
+    }
+    function normalizeOpenFlags(flags = "r") {
+        if (typeof flags === "number") {
+            const access = flags & 3;
+            return {
+                readable: access === 0 || access === 2,
+                writable: access === 1 || access === 2,
+                create: Boolean(flags & 0x40),
+                exclusive: Boolean(flags & 0x80),
+                truncate: Boolean(flags & 0x200),
+                append: Boolean(flags & 0x400),
+                value: flags
+            };
+        }
+        const value = String(flags);
+        if (!["r", "r+", "rs", "rs+", "sr", "sr+", "w", "wx", "w+", "wx+", "xw", "xw+", "a", "ax", "a+", "ax+", "as", "as+"].includes(value)) {
+            throw new TypeError(`Unknown file open flag: ${value}`);
+        }
+        return {
+            readable: value.startsWith("r") || value.includes("+"),
+            writable: !value.startsWith("r") || value.includes("+"),
+            create: value.startsWith("w") || value.startsWith("a"),
+            exclusive: value.includes("x"),
+            truncate: value.startsWith("w"),
+            append: value.startsWith("a"),
+            value
+        };
+    }
+    function openSync(filename, flags = "r", _mode = 0o666) {
+        const path = normalizeFsPath(filename);
+        const options = normalizeOpenFlags(flags);
+        const exists = existsSync(path);
+        if (!exists && !options.create) throw new Error(`ENOENT: no such file or directory, open '${path}'`);
+        if (exists && options.exclusive && options.create) throw new Error(`EEXIST: file already exists, open '${path}'`);
+        if (!exists) writeFileSync(path, Buffer.alloc(0));
+        else if (options.truncate) writeFileSync(path, Buffer.alloc(0));
+        const fd = nextFileDescriptor++;
+        openFiles.set(fd, { path, ...options, position: options.append ? statSync(path).size : 0 });
+        return fd;
+    }
+    function closeSync(fd) {
+        fileDescriptor(fd);
+        openFiles.delete(Number(fd));
+    }
     function readFileSync(filename, options) {
-        const buffer = Buffer.from(__canaryoFsRead(normalizeFsPath(filename)));
+        let buffer;
+        if (typeof filename === "number") {
+            const file = fileDescriptor(filename);
+            if (!file.readable) throw new Error(`EBADF: file is not open for reading, fd ${filename}`);
+            const contents = Buffer.from(__canaryoFsRead(file.path));
+            buffer = contents.subarray(file.position);
+            file.position = contents.length;
+        } else buffer = Buffer.from(__canaryoFsRead(normalizeFsPath(filename)));
         return encodingFrom(options) ? buffer.toString(encodingFrom(options)) : buffer;
     }
-    function writeFileSync(filename, value, _options) {
-        __canaryoFsWrite(normalizeFsPath(filename), Buffer.from(value), false);
+    function writeFileSync(filename, value, options) {
+        if (typeof filename === "number") {
+            const encoding = encodingFrom(options);
+            const bytes = Buffer.from(value, encoding);
+            const file = fileDescriptor(filename);
+            if (!file.writable) throw new Error(`EBADF: file is not open for writing, fd ${filename}`);
+            writeSync(filename, bytes, 0, bytes.length, null);
+            return;
+        }
+        __canaryoFsWrite(normalizeFsPath(filename), Buffer.from(value, encodingFrom(options)), false);
     }
     function appendFileSync(filename, value, _options) {
+        if (typeof filename === "number") {
+            const file = fileDescriptor(filename);
+            const bytes = Buffer.from(value, encodingFrom(_options));
+            writeSync(filename, bytes, 0, bytes.length, statSync(file.path).size);
+            return;
+        }
         __canaryoFsWrite(normalizeFsPath(filename), Buffer.from(value), true);
     }
     function statSync(filename) { return new Stats(__canaryoFsStat(normalizeFsPath(filename))); }
@@ -3416,13 +3488,74 @@
     }
     function realpathSync(filename, _options) { return __canaryoFsRealpath(normalizeFsPath(filename)); }
     realpathSync.native = realpathSync;
+    function readSync(fd, buffer, offset = 0, length = buffer.byteLength - offset, position = null) {
+        const file = fileDescriptor(fd);
+        if (!file.readable) throw new Error(`EBADF: file is not open for reading, fd ${fd}`);
+        if (!ArrayBuffer.isView(buffer)) throw new TypeError("buffer must be an ArrayBuffer view");
+        const start = Number(offset);
+        const count = Number(length);
+        if (!Number.isInteger(start) || !Number.isInteger(count) || start < 0 || count < 0 || start + count > buffer.byteLength) {
+            throw new RangeError("offset and length are outside the buffer");
+        }
+        const source = Buffer.from(__canaryoFsRead(file.path));
+        const filePosition = position === null || position === undefined ? file.position : Number(position);
+        if (!Number.isInteger(filePosition) || filePosition < 0) throw new RangeError("position must be a non-negative integer or null");
+        const bytesRead = Math.min(count, Math.max(0, source.length - filePosition));
+        const target = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+        target.set(source.subarray(filePosition, filePosition + bytesRead), start);
+        if (position === null || position === undefined) file.position += bytesRead;
+        return bytesRead;
+    }
+    function writeSync(fd, value, offsetOrPosition, lengthOrEncoding, position) {
+        const file = fileDescriptor(fd);
+        if (!file.writable) throw new Error(`EBADF: file is not open for writing, fd ${fd}`);
+        let bytes;
+        let filePosition;
+        let usesCurrentPosition;
+        if (typeof value === "string") {
+            usesCurrentPosition = offsetOrPosition === undefined || offsetOrPosition === null;
+            filePosition = usesCurrentPosition ? file.position : Number(offsetOrPosition);
+            bytes = Buffer.from(value, typeof lengthOrEncoding === "string" ? lengthOrEncoding : "utf8");
+        } else {
+            if (!ArrayBuffer.isView(value)) throw new TypeError("buffer must be an ArrayBuffer view");
+            const offset = offsetOrPosition === undefined ? 0 : Number(offsetOrPosition);
+            const length = lengthOrEncoding === undefined ? value.byteLength - offset : Number(lengthOrEncoding);
+            if (!Number.isInteger(offset) || !Number.isInteger(length) || offset < 0 || length < 0 || offset + length > value.byteLength) {
+                throw new RangeError("offset and length are outside the buffer");
+            }
+            bytes = Buffer.from(value).subarray(offset, offset + length);
+            usesCurrentPosition = position === undefined || position === null;
+            filePosition = usesCurrentPosition ? file.position : Number(position);
+        }
+        const existing = Buffer.from(__canaryoFsRead(file.path));
+        if (file.append) filePosition = existing.length;
+        if (!Number.isInteger(filePosition) || filePosition < 0) throw new RangeError("position must be a non-negative integer or null");
+        const output = Buffer.alloc(Math.max(existing.length, filePosition + bytes.length));
+        existing.copy(output);
+        bytes.copy(output, filePosition);
+        __canaryoFsWrite(file.path, output, false);
+        if (usesCurrentPosition) file.position = filePosition + bytes.length;
+        return bytes.length;
+    }
+    function fstatSync(fd) { return statSync(fileDescriptor(fd).path); }
+    function ftruncateSync(fd, length = 0) {
+        const file = fileDescriptor(fd);
+        if (!file.writable) throw new Error(`EINVAL: file is not open for writing, fd ${fd}`);
+        const size = Number(length);
+        if (!Number.isInteger(size) || size < 0) throw new RangeError("length must be a non-negative integer");
+        const current = Buffer.from(__canaryoFsRead(file.path));
+        const output = Buffer.alloc(size);
+        current.copy(output, 0, 0, Math.min(current.length, size));
+        __canaryoFsWrite(file.path, output, false);
+    }
+    function fsyncSync(fd) { fileDescriptor(fd); }
+    const fdatasyncSync = fsyncSync;
     function callbackOperation(callback, operation) {
         queueMicrotask(() => {
             try { callback(null, operation()); }
             catch (error) { callback(error); }
         });
     }
-    let nextFileDescriptor = 10;
     function ReadStream(filename, options = {}) {
         if (!(this instanceof ReadStream)) return new ReadStream(filename, options);
         if (typeof options === "string") options = { encoding: options };
@@ -3537,7 +3670,31 @@
         if (error) this.emit("error", error);
         return this.close();
     };
+    class FileHandle {
+        constructor(fd) { this.fd = fd; }
+        get [Symbol.toStringTag]() { return "FileHandle"; }
+        appendFile(value, options) { return Promise.resolve().then(() => appendFileSync(this.fd, value, options)); }
+        chmod(_mode) { return Promise.resolve(); }
+        chown(_uid, _gid) { return Promise.resolve(); }
+        close() { return Promise.resolve().then(() => { closeSync(this.fd); this.fd = -1; }); }
+        datasync() { return Promise.resolve().then(() => fdatasyncSync(this.fd)); }
+        read(buffer, offset, length, position) {
+            return Promise.resolve().then(() => ({ bytesRead: readSync(this.fd, buffer, offset, length, position), buffer }));
+        }
+        readFile(options) { return Promise.resolve().then(() => readFileSync(this.fd, options)); }
+        stat() { return Promise.resolve().then(() => fstatSync(this.fd)); }
+        sync() { return Promise.resolve().then(() => fsyncSync(this.fd)); }
+        truncate(length) { return Promise.resolve().then(() => ftruncateSync(this.fd, length)); }
+        write(value, offsetOrPosition, lengthOrEncoding, position) {
+            return Promise.resolve().then(() => ({
+                bytesWritten: writeSync(this.fd, value, offsetOrPosition, lengthOrEncoding, position),
+                buffer: value
+            }));
+        }
+        writeFile(value, options) { return Promise.resolve().then(() => writeFileSync(this.fd, value, options)); }
+    }
     const fsPromises = {
+        open(filename, flags, mode) { return Promise.resolve().then(() => new FileHandle(openSync(filename, flags, mode))); },
         readFile(filename, options) { return Promise.resolve().then(() => readFileSync(filename, options)); },
         writeFile(filename, value, options) { return Promise.resolve().then(() => writeFileSync(filename, value, options)); },
         appendFile(filename, value, options) { return Promise.resolve().then(() => appendFileSync(filename, value, options)); },
@@ -3554,13 +3711,25 @@
     };
     const fsModule = {
         Stats,
-        constants: { F_OK: 0, R_OK: 4, W_OK: 2, X_OK: 1 },
+        constants: {
+            F_OK: 0, R_OK: 4, W_OK: 2, X_OK: 1,
+            O_RDONLY: 0, O_WRONLY: 1, O_RDWR: 2,
+            O_CREAT: 0x40, O_EXCL: 0x80, O_TRUNC: 0x200, O_APPEND: 0x400
+        },
         ReadStream,
         WriteStream,
         promises: fsPromises,
         readFileSync,
         writeFileSync,
         appendFileSync,
+        openSync,
+        closeSync,
+        readSync,
+        writeSync,
+        fstatSync,
+        ftruncateSync,
+        fsyncSync,
+        fdatasyncSync,
         statSync,
         existsSync,
         accessSync,
@@ -3584,6 +3753,36 @@
             if (typeof options === "function") { callback = options; options = undefined; }
             callbackOperation(callback, () => appendFileSync(filename, value, options));
         },
+        open(filename, flags, mode, callback) {
+            if (typeof flags === "function") { callback = flags; flags = "r"; mode = undefined; }
+            if (typeof mode === "function") { callback = mode; mode = undefined; }
+            callbackOperation(callback, () => openSync(filename, flags, mode));
+        },
+        close(fd, callback) { callbackOperation(callback, () => closeSync(fd)); },
+        read(fd, buffer, offset, length, position, callback) {
+            queueMicrotask(() => {
+                try { callback(null, readSync(fd, buffer, offset, length, position), buffer); }
+                catch (error) { callback(error, 0, buffer); }
+            });
+        },
+        write(fd, value, offsetOrPosition, lengthOrEncoding, position, callback) {
+            if (typeof offsetOrPosition === "function") {
+                callback = offsetOrPosition; offsetOrPosition = undefined; lengthOrEncoding = undefined; position = undefined;
+            } else if (typeof lengthOrEncoding === "function") {
+                callback = lengthOrEncoding; lengthOrEncoding = undefined; position = undefined;
+            } else if (typeof position === "function") { callback = position; position = undefined; }
+            queueMicrotask(() => {
+                try { callback(null, writeSync(fd, value, offsetOrPosition, lengthOrEncoding, position), value); }
+                catch (error) { callback(error, 0, value); }
+            });
+        },
+        fstat(fd, callback) { callbackOperation(callback, () => fstatSync(fd)); },
+        ftruncate(fd, length, callback) {
+            if (typeof length === "function") { callback = length; length = 0; }
+            callbackOperation(callback, () => ftruncateSync(fd, length));
+        },
+        fsync(fd, callback) { callbackOperation(callback, () => fsyncSync(fd)); },
+        fdatasync(fd, callback) { callbackOperation(callback, () => fdatasyncSync(fd)); },
         stat(filename, callback) { callbackOperation(callback, () => statSync(filename)); },
         mkdir(filename, options, callback) {
             if (typeof options === "function") { callback = options; options = undefined; }

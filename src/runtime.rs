@@ -3056,6 +3056,86 @@ mod tests {
     }
 
     #[test]
+    fn reads_and_writes_through_file_descriptors() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let id = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let filename = env::temp_dir().join(format!("canaryo-fd-{}-{id}.txt", std::process::id()));
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context
+                .globals()
+                .set("fixturePath", filename.to_string_lossy().as_ref())
+                .unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            let synchronous = context
+                .eval::<bool, _>(
+                    r#"
+                    const fs = __canaryoBuiltins.fs;
+                    const fd = fs.openSync(fixturePath, "w+");
+                    const first = fs.writeSync(fd, Buffer.from("hello"), 0, 5, 0);
+                    const second = fs.writeSync(fd, "!", 5, "utf8");
+                    const output = Buffer.alloc(6);
+                    const read = fs.readSync(fd, output, 0, output.length, 0);
+                    fs.ftruncateSync(fd, 5);
+                    fs.fsyncSync(fd);
+                    const size = fs.fstatSync(fd).size;
+                    fs.closeSync(fd);
+                    let badDescriptor = false;
+                    try { fs.fstatSync(fd); }
+                    catch (error) { badDescriptor = /EBADF/.test(error.message); }
+                    globalThis.fdCallbackPassed = false;
+                    fs.open(fixturePath, "r", (openError, callbackFd) => {
+                        if (openError) throw openError;
+                        const buffer = Buffer.alloc(5);
+                        fs.read(callbackFd, buffer, 0, 5, 0, (readError, bytesRead, returned) => {
+                            if (readError) throw readError;
+                            fs.close(callbackFd, closeError => {
+                                if (closeError) throw closeError;
+                                fdCallbackPassed = bytesRead === 5 && returned === buffer && buffer.toString() === "hello";
+                            });
+                        });
+                    });
+                    globalThis.fdPromisePassed = false;
+                    fs.promises.open(fixturePath, "r+").then(async handle => {
+                        const written = await handle.write(Buffer.from("Y"), 0, 1, 4);
+                        const buffer = Buffer.alloc(5);
+                        const result = await handle.read(buffer, 0, 5, 0);
+                        await handle.truncate(4);
+                        await handle.datasync();
+                        const stat = await handle.stat();
+                        await handle.close();
+                        fdPromisePassed = written.bytesWritten === 1 && result.bytesRead === 5 &&
+                            buffer.toString() === "hellY" && stat.size === 4 && handle.fd === -1;
+                    });
+
+                    first === 5 && second === 1 && read === 6 && output.toString() === "hello!" &&
+                        size === 5 && badDescriptor && fs.constants.O_RDWR === 2
+                    "#,
+                )
+                .unwrap();
+
+            for _ in 0..20 {
+                while context.execute_pending_job() {}
+            }
+
+            assert!(synchronous);
+            assert!(context.globals().get::<_, bool>("fdCallbackPassed").unwrap());
+            assert!(context.globals().get::<_, bool>("fdPromisePassed").unwrap());
+        });
+
+        if filename.exists() {
+            fs::remove_file(filename).unwrap();
+        }
+    }
+
+    #[test]
     fn supports_event_emitter_ordering_and_helpers() {
         let runtime = Runtime::new().unwrap();
         let context = Context::full(&runtime).unwrap();
