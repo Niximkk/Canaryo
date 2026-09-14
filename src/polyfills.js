@@ -3372,6 +3372,9 @@
     function Stats(values) {
         Object.assign(this, values);
         this.mtime = new Date(this.mtimeMs);
+        this.atime = new Date(this.atimeMs);
+        this.ctime = new Date(this.ctimeMs);
+        this.birthtime = new Date(this.birthtimeMs);
     }
     Stats.prototype.isFile = function () { return this.file; };
     Stats.prototype.isDirectory = function () { return this.directory; };
@@ -3468,6 +3471,7 @@
         __canaryoFsWrite(normalizeFsPath(filename), Buffer.from(value), true);
     }
     function statSync(filename) { return new Stats(__canaryoFsStat(normalizeFsPath(filename))); }
+    function lstatSync(filename) { return new Stats(__canaryoFsLstat(normalizeFsPath(filename))); }
     function existsSync(filename) { return __canaryoFsExists(normalizeFsPath(filename)); }
     function accessSync(filename) {
         if (!existsSync(filename)) throw new Error(`ENOENT: no such file or directory, access '${filename}'`);
@@ -3488,6 +3492,38 @@
     }
     function realpathSync(filename, _options) { return __canaryoFsRealpath(normalizeFsPath(filename)); }
     realpathSync.native = realpathSync;
+    function readlinkSync(filename, options) {
+        const value = __canaryoFsReadlink(normalizeFsPath(filename));
+        return encodingFrom(options) === "buffer" ? Buffer.from(value) : value;
+    }
+    function linkSync(existingPath, newPath) {
+        __canaryoFsLink(normalizeFsPath(existingPath), normalizeFsPath(newPath));
+    }
+    function symlinkSync(target, path, type) {
+        __canaryoFsSymlink(normalizeFsPath(target), normalizeFsPath(path), type === "dir" || type === "junction");
+    }
+    function chmodSync(filename, mode) { __canaryoFsChmod(normalizeFsPath(filename), Number(mode)); }
+    function fchmodSync(fd, mode) { chmodSync(fileDescriptor(fd).path, mode); }
+    function timestampSeconds(value) {
+        const number = value instanceof Date ? value.getTime() / 1000 : Number(value);
+        if (!Number.isFinite(number)) throw new TypeError("time must be a finite number or Date");
+        return number;
+    }
+    function utimesSync(filename, atime, mtime) {
+        __canaryoFsUtimes(normalizeFsPath(filename), timestampSeconds(atime), timestampSeconds(mtime));
+    }
+    function futimesSync(fd, atime, mtime) { utimesSync(fileDescriptor(fd).path, atime, mtime); }
+    function mkdtempSync(prefix, options) {
+        const encoding = encodingFrom(options);
+        for (let attempt = 0; attempt < 100; attempt++) {
+            const suffix = randomBytes(6).toString("hex").slice(0, 6);
+            const path = `${normalizeFsPath(prefix)}${suffix}`;
+            if (existsSync(path)) continue;
+            mkdirSync(path);
+            return encoding === "buffer" ? Buffer.from(path) : path;
+        }
+        throw new Error(`EEXIST: could not create a unique temporary directory for '${prefix}'`);
+    }
     function readSync(fd, buffer, offset = 0, length = buffer.byteLength - offset, position = null) {
         const file = fileDescriptor(fd);
         if (!file.readable) throw new Error(`EBADF: file is not open for reading, fd ${fd}`);
@@ -3674,7 +3710,7 @@
         constructor(fd) { this.fd = fd; }
         get [Symbol.toStringTag]() { return "FileHandle"; }
         appendFile(value, options) { return Promise.resolve().then(() => appendFileSync(this.fd, value, options)); }
-        chmod(_mode) { return Promise.resolve(); }
+        chmod(mode) { return Promise.resolve().then(() => fchmodSync(this.fd, mode)); }
         chown(_uid, _gid) { return Promise.resolve(); }
         close() { return Promise.resolve().then(() => { closeSync(this.fd); this.fd = -1; }); }
         datasync() { return Promise.resolve().then(() => fdatasyncSync(this.fd)); }
@@ -3685,6 +3721,7 @@
         stat() { return Promise.resolve().then(() => fstatSync(this.fd)); }
         sync() { return Promise.resolve().then(() => fsyncSync(this.fd)); }
         truncate(length) { return Promise.resolve().then(() => ftruncateSync(this.fd, length)); }
+        utimes(atime, mtime) { return Promise.resolve().then(() => futimesSync(this.fd, atime, mtime)); }
         write(value, offsetOrPosition, lengthOrEncoding, position) {
             return Promise.resolve().then(() => ({
                 bytesWritten: writeSync(this.fd, value, offsetOrPosition, lengthOrEncoding, position),
@@ -3699,6 +3736,7 @@
         writeFile(filename, value, options) { return Promise.resolve().then(() => writeFileSync(filename, value, options)); },
         appendFile(filename, value, options) { return Promise.resolve().then(() => appendFileSync(filename, value, options)); },
         stat(filename) { return Promise.resolve().then(() => statSync(filename)); },
+        lstat(filename) { return Promise.resolve().then(() => lstatSync(filename)); },
         access(filename) { return Promise.resolve().then(() => accessSync(filename)); },
         mkdir(filename, options) { return Promise.resolve().then(() => mkdirSync(filename, options)); },
         readdir(filename, options) { return Promise.resolve().then(() => readdirSync(filename, options)); },
@@ -3707,7 +3745,13 @@
         copyFile(from, to, mode) { return Promise.resolve().then(() => copyFileSync(from, to, mode)); },
         rm(filename, options) { return Promise.resolve().then(() => rmSync(filename, options)); },
         rmdir(filename, options) { return Promise.resolve().then(() => rmdirSync(filename, options)); },
-        realpath(filename, options) { return Promise.resolve().then(() => realpathSync(filename, options)); }
+        realpath(filename, options) { return Promise.resolve().then(() => realpathSync(filename, options)); },
+        readlink(filename, options) { return Promise.resolve().then(() => readlinkSync(filename, options)); },
+        link(existingPath, newPath) { return Promise.resolve().then(() => linkSync(existingPath, newPath)); },
+        symlink(target, path, type) { return Promise.resolve().then(() => symlinkSync(target, path, type)); },
+        chmod(filename, mode) { return Promise.resolve().then(() => chmodSync(filename, mode)); },
+        utimes(filename, atime, mtime) { return Promise.resolve().then(() => utimesSync(filename, atime, mtime)); },
+        mkdtemp(prefix, options) { return Promise.resolve().then(() => mkdtempSync(prefix, options)); }
     };
     const fsModule = {
         Stats,
@@ -3731,6 +3775,7 @@
         fsyncSync,
         fdatasyncSync,
         statSync,
+        lstatSync,
         existsSync,
         accessSync,
         mkdirSync,
@@ -3741,6 +3786,14 @@
         rmSync,
         rmdirSync,
         realpathSync,
+        readlinkSync,
+        linkSync,
+        symlinkSync,
+        chmodSync,
+        fchmodSync,
+        utimesSync,
+        futimesSync,
+        mkdtempSync,
         readFile(filename, options, callback) {
             if (typeof options === "function") { callback = options; options = undefined; }
             callbackOperation(callback, () => readFileSync(filename, options));
@@ -3784,6 +3837,7 @@
         fsync(fd, callback) { callbackOperation(callback, () => fsyncSync(fd)); },
         fdatasync(fd, callback) { callbackOperation(callback, () => fdatasyncSync(fd)); },
         stat(filename, callback) { callbackOperation(callback, () => statSync(filename)); },
+        lstat(filename, callback) { callbackOperation(callback, () => lstatSync(filename)); },
         mkdir(filename, options, callback) {
             if (typeof options === "function") { callback = options; options = undefined; }
             callbackOperation(callback, () => mkdirSync(filename, options));
@@ -3809,6 +3863,23 @@
         realpath(filename, options, callback) {
             if (typeof options === "function") { callback = options; options = undefined; }
             callbackOperation(callback, () => realpathSync(filename, options));
+        },
+        readlink(filename, options, callback) {
+            if (typeof options === "function") { callback = options; options = undefined; }
+            callbackOperation(callback, () => readlinkSync(filename, options));
+        },
+        link(existingPath, newPath, callback) { callbackOperation(callback, () => linkSync(existingPath, newPath)); },
+        symlink(target, path, type, callback) {
+            if (typeof type === "function") { callback = type; type = undefined; }
+            callbackOperation(callback, () => symlinkSync(target, path, type));
+        },
+        chmod(filename, mode, callback) { callbackOperation(callback, () => chmodSync(filename, mode)); },
+        fchmod(fd, mode, callback) { callbackOperation(callback, () => fchmodSync(fd, mode)); },
+        utimes(filename, atime, mtime, callback) { callbackOperation(callback, () => utimesSync(filename, atime, mtime)); },
+        futimes(fd, atime, mtime, callback) { callbackOperation(callback, () => futimesSync(fd, atime, mtime)); },
+        mkdtemp(prefix, options, callback) {
+            if (typeof options === "function") { callback = options; options = undefined; }
+            callbackOperation(callback, () => mkdtempSync(prefix, options));
         },
         createReadStream(filename, options) { return new ReadStream(filename, options); },
         createWriteStream(filename, options) { return new WriteStream(filename, options); }

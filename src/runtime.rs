@@ -1254,6 +1254,14 @@ fn install_host_globals<'js>(
     let fs_remove = Function::new(context.clone(), fs_remove).map_err(|error| error.to_string())?;
     let fs_realpath =
         Function::new(context.clone(), fs_realpath).map_err(|error| error.to_string())?;
+    let fs_lstat = Function::new(context.clone(), fs_lstat).map_err(|error| error.to_string())?;
+    let fs_readlink =
+        Function::new(context.clone(), fs_readlink).map_err(|error| error.to_string())?;
+    let fs_link = Function::new(context.clone(), fs_link).map_err(|error| error.to_string())?;
+    let fs_symlink =
+        Function::new(context.clone(), fs_symlink).map_err(|error| error.to_string())?;
+    let fs_chmod = Function::new(context.clone(), fs_chmod).map_err(|error| error.to_string())?;
+    let fs_utimes = Function::new(context.clone(), fs_utimes).map_err(|error| error.to_string())?;
     globals
         .set("__canaryoFsUnlink", fs_unlink)
         .map_err(|error| error.to_string())?;
@@ -1268,6 +1276,24 @@ fn install_host_globals<'js>(
         .map_err(|error| error.to_string())?;
     globals
         .set("__canaryoFsRealpath", fs_realpath)
+        .map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoFsLstat", fs_lstat)
+        .map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoFsReadlink", fs_readlink)
+        .map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoFsLink", fs_link)
+        .map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoFsSymlink", fs_symlink)
+        .map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoFsChmod", fs_chmod)
+        .map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoFsUtimes", fs_utimes)
         .map_err(|error| error.to_string())?;
 
     let process = Object::new(context.clone()).map_err(|error| error.to_string())?;
@@ -2215,22 +2241,75 @@ fn fs_write<'js>(
 }
 
 fn fs_stat<'js>(context: rquickjs::Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>> {
-    use std::time::UNIX_EPOCH;
-
     let metadata = fs::metadata(path)
         .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))?;
+    fs_metadata_object(context, metadata)
+}
+
+fn fs_lstat<'js>(context: rquickjs::Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))?;
+    fs_metadata_object(context, metadata)
+}
+
+fn fs_metadata_object<'js>(
+    context: rquickjs::Ctx<'js>,
+    metadata: fs::Metadata,
+) -> rquickjs::Result<Object<'js>> {
+    use std::time::UNIX_EPOCH;
+
     let result = Object::new(context.clone())?;
     result.set("size", metadata.len() as f64)?;
     result.set("file", metadata.is_file())?;
     result.set("directory", metadata.is_dir())?;
     result.set("symlink", metadata.file_type().is_symlink())?;
-    let modified = metadata
-        .modified()
-        .ok()
-        .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
-        .map(|value| value.as_secs_f64() * 1000.0)
-        .unwrap_or(0.0);
-    result.set("mtimeMs", modified)?;
+    let timestamp = |value: io::Result<std::time::SystemTime>| {
+        value
+            .ok()
+            .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+            .map(|value| value.as_secs_f64() * 1000.0)
+            .unwrap_or(0.0)
+    };
+    let mtime = timestamp(metadata.modified());
+    let atime = timestamp(metadata.accessed());
+    let birthtime = timestamp(metadata.created());
+    result.set("mtimeMs", mtime)?;
+    result.set("atimeMs", atime)?;
+    result.set("ctimeMs", mtime)?;
+    result.set("birthtimeMs", birthtime)?;
+    #[cfg(unix)]
+    let mode = {
+        use std::os::unix::fs::MetadataExt;
+        metadata.mode()
+    };
+    #[cfg(not(unix))]
+    let mode = if metadata.permissions().readonly() {
+        0o444
+    } else {
+        0o666
+    };
+    result.set("mode", mode)?;
+    result.set("blocks", metadata.len().div_ceil(512) as f64)?;
+    result.set("blksize", 4096)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        result.set("dev", metadata.dev() as f64)?;
+        result.set("ino", metadata.ino() as f64)?;
+        result.set("nlink", metadata.nlink() as f64)?;
+        result.set("uid", metadata.uid())?;
+        result.set("gid", metadata.gid())?;
+        result.set("rdev", metadata.rdev() as f64)?;
+    }
+    #[cfg(not(unix))]
+    {
+        result.set("dev", 0)?;
+        result.set("ino", 0)?;
+        result.set("nlink", 1)?;
+        result.set("uid", 0)?;
+        result.set("gid", 0)?;
+        result.set("rdev", 0)?;
+    }
     Ok(result)
 }
 
@@ -2310,6 +2389,89 @@ fn fs_remove<'js>(
 fn fs_realpath<'js>(context: rquickjs::Ctx<'js>, path: String) -> rquickjs::Result<String> {
     fs::canonicalize(path)
         .map(|path| path.to_string_lossy().into_owned())
+        .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))
+}
+
+fn fs_readlink<'js>(context: rquickjs::Ctx<'js>, path: String) -> rquickjs::Result<String> {
+    fs::read_link(path)
+        .map(|path| path.to_string_lossy().into_owned())
+        .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))
+}
+
+fn fs_link<'js>(context: rquickjs::Ctx<'js>, from: String, to: String) -> rquickjs::Result<()> {
+    fs::hard_link(from, to)
+        .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))
+}
+
+fn fs_symlink<'js>(
+    context: rquickjs::Ctx<'js>,
+    target: String,
+    path: String,
+    directory: bool,
+) -> rquickjs::Result<()> {
+    #[cfg(unix)]
+    let result = {
+        let _ = directory;
+        std::os::unix::fs::symlink(target, path)
+    };
+    #[cfg(windows)]
+    let result = if directory {
+        std::os::windows::fs::symlink_dir(target, path)
+    } else {
+        std::os::windows::fs::symlink_file(target, path)
+    };
+    #[cfg(not(any(unix, windows)))]
+    let result = {
+        let _ = (target, path, directory);
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "symbolic links are unsupported on this platform",
+        ))
+    };
+    result.map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))
+}
+
+fn fs_chmod<'js>(context: rquickjs::Ctx<'js>, path: String, mode: u32) -> rquickjs::Result<()> {
+    let metadata = fs::metadata(&path)
+        .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))?;
+    let mut permissions = metadata.permissions();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        permissions.set_mode(mode);
+    }
+    #[cfg(not(unix))]
+    permissions.set_readonly(mode & 0o222 == 0);
+    fs::set_permissions(path, permissions)
+        .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))
+}
+
+fn fs_utimes<'js>(
+    context: rquickjs::Ctx<'js>,
+    path: String,
+    accessed_seconds: f64,
+    modified_seconds: f64,
+) -> rquickjs::Result<()> {
+    use std::time::{Duration, UNIX_EPOCH};
+
+    if !accessed_seconds.is_finite()
+        || !modified_seconds.is_finite()
+        || accessed_seconds < 0.0
+        || modified_seconds < 0.0
+    {
+        return Err(rquickjs::Exception::throw_message(
+            &context,
+            "timestamps must be finite non-negative values",
+        ));
+    }
+    let times = fs::FileTimes::new()
+        .set_accessed(UNIX_EPOCH + Duration::from_secs_f64(accessed_seconds))
+        .set_modified(UNIX_EPOCH + Duration::from_secs_f64(modified_seconds));
+    fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .and_then(|file| file.set_times(times))
         .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))
 }
 
@@ -3133,6 +3295,86 @@ mod tests {
         if filename.exists() {
             fs::remove_file(filename).unwrap();
         }
+    }
+
+    #[test]
+    fn manages_links_permissions_and_file_times() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let id = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory =
+            env::temp_dir().join(format!("canaryo-fs-meta-{}-{id}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context
+                .globals()
+                .set("fixtureDirectory", directory.to_string_lossy().as_ref())
+                .unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            let synchronous = context
+                .eval::<bool, _>(
+                    r#"
+                    const fs = __canaryoBuiltins.fs;
+                    const path = __canaryoBuiltins.path;
+                    const original = path.join(fixtureDirectory, "original.txt");
+                    const hardLink = path.join(fixtureDirectory, "hard.txt");
+                    const symbolicLink = path.join(fixtureDirectory, "symbolic.txt");
+                    fs.writeFileSync(original, "metadata");
+                    fs.linkSync(original, hardLink);
+                    fs.utimesSync(original, new Date(1577934245000), 1577934245);
+                    const timestamp = fs.statSync(original).mtimeMs;
+                    fs.chmodSync(original, 0o444);
+                    const readonly = (fs.statSync(original).mode & 0o222) === 0;
+                    fs.chmodSync(original, 0o666);
+                    let symlinkReady = false;
+                    try {
+                        fs.symlinkSync(original, symbolicLink, "file");
+                        symlinkReady = fs.lstatSync(symbolicLink).isSymbolicLink() &&
+                            fs.readlinkSync(symbolicLink) === original;
+                    } catch {}
+                    const temporary = fs.mkdtempSync(path.join(fixtureDirectory, "temp-"));
+                    globalThis.fsMetadataPromise = false;
+                    const promisedLink = path.join(fixtureDirectory, "promised.txt");
+                    fs.promises.link(original, promisedLink).then(async () => {
+                        const metadata = await fs.promises.lstat(promisedLink);
+                        await fs.promises.chmod(promisedLink, 0o666);
+                        await fs.promises.utimes(promisedLink, 1577934245, 1577934245);
+                        await fs.promises.unlink(promisedLink);
+                        const promisedTemp = await fs.promises.mkdtemp(path.join(fixtureDirectory, "promise-"));
+                        await fs.promises.rmdir(promisedTemp);
+                        fsMetadataPromise = metadata.isFile() && !fs.existsSync(promisedLink);
+                    });
+
+                    fs.readFileSync(hardLink, "utf8") === "metadata" &&
+                        fs.lstatSync(original).isFile() && readonly &&
+                        Math.abs(timestamp - 1577934245000) < 2000 &&
+                        fs.statSync(temporary).isDirectory() &&
+                        (!fs.existsSync(symbolicLink) || symlinkReady)
+                    "#,
+                )
+                .unwrap();
+
+            for _ in 0..30 {
+                while context.execute_pending_job() {}
+            }
+
+            assert!(synchronous);
+            assert!(
+                context
+                    .globals()
+                    .get::<_, bool>("fsMetadataPromise")
+                    .unwrap()
+            );
+        });
+
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
