@@ -79,49 +79,49 @@ Execution starts directly for low startup overhead. Use `canaryo check` in devel
 
 ## Performance
 
-Results collected on Windows 11 with an AMD Ryzen 5 5600X, Node.js 22.15.1, and a release build of Canaryo 0.1.0. Every load result is the median of three 3-second samples after warm-up; all measured requests completed without errors.
+Results collected on Windows 11 with an AMD Ryzen 5 5600X, Node.js 22.15.1, Bun 1.4.2, and a release build of Canaryo 0.1.0. Every load result is the median of three 3-second samples after warm-up; all measured requests completed without errors.
 
 ### Startup latency
 
 Lower is better.
 
-| Application | Node.js | Canaryo | Canaryo improvement |
+| Application | Node.js | Bun | Canaryo |
 |---|---:|---:|---:|
-| `node:http` | 53.22 ms | **25.47 ms** | **52.1% lower** |
-| Express 5.2.1 | 195.87 ms | **168.53 ms** | **14.0% lower** |
-| Fastify 5.12.3 | 331.61 ms | **199.67 ms** | **39.8% lower** |
+| `node:http` | 50.90 ms | 51.30 ms | **25.24 ms** |
+| Express 5.2.1 | 218.48 ms | **171.33 ms** | 198.14 ms |
+| Fastify 5.12.3 | 372.25 ms | **195.19 ms** | 213.90 ms |
 
 ### Throughput at concurrency 16
 
 Higher is better. "New connection" opens a TCP connection for every request; "keep-alive" reuses one connection per worker.
 
-| Application | New connection: Node.js | New connection: Canaryo | Difference | Keep-alive: Node.js | Keep-alive: Canaryo | Difference |
+| Application | New: Node.js | New: Bun | New: Canaryo | Keep-alive: Node.js | Keep-alive: Bun | Keep-alive: Canaryo |
 |---|---:|---:|---:|---:|---:|---:|
-| `node:http` | 6,998 req/s | **8,069 req/s** | **+15.3%** | **23,385 req/s** | 21,411 req/s | **-8.4%** |
-| Express 5.2.1 | **3,665 req/s** | 3,242 req/s | **-11.5%** | **6,569 req/s** | 5,848 req/s | **-11.0%** |
-| Fastify 5.12.3 | 5,968 req/s | **6,040 req/s** | **+1.2%** | **20,286 req/s** | 10,377 req/s | **-48.8%** |
+| `node:http` | 6,461 | 7,183 | **7,365** | 20,220 | **25,732** | 19,006 |
+| Express 5.2.1 | 3,250 | **6,253** | 3,630 | 6,019 | **16,860** | 5,313 |
+| Fastify 5.12.3 | 5,905 | **6,625** | 5,269 | 17,587 | **22,364** | 8,925 |
 
 ### 16 KiB JSON throughput at concurrency 16
 
 This test sends `POST /echo` over persistent connections and includes parsing and returning the request body.
 
-| Application | Node.js | Canaryo | Difference | Node.js RSS | Canaryo RSS |
-|---|---:|---:|---:|---:|---:|
-| `node:http` | **11,308 req/s** | 10,929 req/s | **-3.4%** | 38.9 MiB | **9.3 MiB** |
-| Express 5.2.1 | **3,580 req/s** | 2,124 req/s | **-40.7%** | 86.9 MiB | **12.9 MiB** |
-| Fastify 5.12.3 | **6,168 req/s** | 971 req/s | **-84.3%** | 97.6 MiB | **16.4 MiB** |
+| Application | Node.js | Bun | Canaryo | Node.js RSS | Bun RSS | Canaryo RSS |
+|---|---:|---:|---:|---:|---:|---:|
+| `node:http` | 10,343 req/s | **10,643 req/s** | 7,999 req/s | 41.3 MiB | 43.6 MiB | **9.2 MiB** |
+| Express 5.2.1 | 3,038 req/s | **6,493 req/s** | 1,797 req/s | 84.3 MiB | 62.3 MiB | **13.0 MiB** |
+| Fastify 5.12.3 | 4,919 req/s | **8,187 req/s** | 1,019 req/s | 97.5 MiB | 72.4 MiB | **17.5 MiB** |
 
 ### Resident memory at concurrency 16
 
 Lower is better. RSS is sampled from the runtime process during the selected throughput run.
 
-| Application | New connection: Node.js | New connection: Canaryo | Reduction | Keep-alive: Node.js | Keep-alive: Canaryo | Reduction |
+| Application | New: Bun | New: Canaryo | Reduction | Keep-alive: Bun | Keep-alive: Canaryo | Reduction |
 |---|---:|---:|---:|---:|---:|---:|
-| `node:http` | 40.3 MiB | **8.8 MiB** | **78.2%** | 36.3 MiB | **9.3 MiB** | **74.4%** |
-| Express 5.2.1 | 67.5 MiB | **12.7 MiB** | **81.2%** | 90.7 MiB | **12.5 MiB** | **86.2%** |
-| Fastify 5.12.3 | 53.2 MiB | **15.9 MiB** | **70.1%** | 54.8 MiB | **15.4 MiB** | **71.9%** |
+| `node:http` | 47.6 MiB | **9.8 MiB** | **79.4%** | 47.3 MiB | **9.8 MiB** | **79.3%** |
+| Express 5.2.1 | 59.1 MiB | **12.9 MiB** | **78.2%** | 54.7 MiB | **12.6 MiB** | **77.0%** |
+| Fastify 5.12.3 | 63.6 MiB | **16.3 MiB** | **74.4%** | 58.5 MiB | **17.3 MiB** | **70.4%** |
 
-Canaryo currently leads startup and memory use in every tested application. With new connections at concurrency 16, it leads `node:http`, is close to Node.js on Fastify, and trails on Express. Typed-array data transfer brought persistent Express GET within 11.0% and a 16 KiB native HTTP echo within 3.4% of Node.js. Fastify request paths remain the main optimization target because their async framework work benefits strongly from V8's optimizing JIT.
+Canaryo starts native HTTP 50.8% faster than Bun and uses 70.4% to 79.4% less resident memory across the concurrency-16 GET workloads. It also leads Bun's native HTTP result by 2.5% when each request opens a connection. Bun leads the persistent and framework-heavy workloads because JavaScriptCore's optimizing JIT accelerates repeated application code; Fastify and large JSON request paths remain Canaryo's main performance target.
 
 These synthetic loopback results cover the current compatibility surface on one machine. See [BENCHMARKS.md](BENCHMARKS.md) for latency percentiles, concurrency 1 results, methodology, limitations, and reproduction commands.
 

@@ -15,6 +15,7 @@ const KEEP_ALIVE_REQUEST: &[u8] = b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
 #[derive(Clone, Copy)]
 enum Runtime {
     Node,
+    Bun,
     Canaryo,
 }
 
@@ -22,6 +23,7 @@ impl Runtime {
     fn name(self) -> &'static str {
         match self {
             Self::Node => "Node.js",
+            Self::Bun => "Bun",
             Self::Canaryo => "Canaryo",
         }
     }
@@ -35,6 +37,7 @@ struct Config {
     keep_alive: bool,
     body_size: Option<usize>,
     case_filter: Option<String>,
+    include_bun: bool,
 }
 
 struct Server(Child);
@@ -67,6 +70,9 @@ fn main() {
     let config = parse_config();
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let canaryo = canaryo_binary();
+    let bun = config.include_bun.then(|| {
+        bun_binary().unwrap_or_else(|| panic!("Bun not found; install it or add bun to PATH"))
+    });
 
     if !canaryo.is_file() {
         panic!(
@@ -95,6 +101,9 @@ fn main() {
     println!("- CPU: {}", cpu_name());
     println!("- Logical processors: {}", logical_processors());
     println!("- Node.js: {}", command_version("node", "--version"));
+    if let Some(bun) = &bun {
+        println!("- Bun: {}", command_version(bun, "--version"));
+    }
     println!("- Canaryo: {}", command_version(&canaryo, "--version"));
     println!("- Samples per result: {}", config.runs);
     println!("- Startup samples: {}", config.startup_runs);
@@ -117,11 +126,22 @@ fn main() {
     println!("## Startup\n");
     println!("| Application | Runtime | Median | Minimum | Maximum |");
     println!("|---|---:|---:|---:|---:|");
+    let runtimes = if config.include_bun {
+        vec![Runtime::Node, Runtime::Bun, Runtime::Canaryo]
+    } else {
+        vec![Runtime::Node, Runtime::Canaryo]
+    };
     for &(label, fixture) in &cases {
-        for runtime in [Runtime::Node, Runtime::Canaryo] {
+        for &runtime in &runtimes {
             let mut times = Vec::with_capacity(config.startup_runs);
             for _ in 0..config.startup_runs {
-                times.push(measure_startup(runtime, root, fixture, &canaryo));
+                times.push(measure_startup(
+                    runtime,
+                    root,
+                    fixture,
+                    &canaryo,
+                    bun.as_deref(),
+                ));
             }
             times.sort_unstable();
             println!(
@@ -144,7 +164,7 @@ fn main() {
         println!("|---|---:|---:|---:|---:|---:|---:|---:|");
 
         for &(label, fixture) in &cases {
-            for runtime in [Runtime::Node, Runtime::Canaryo] {
+            for &runtime in &runtimes {
                 let mut samples = Vec::with_capacity(config.runs);
                 for _ in 0..config.runs {
                     samples.push(measure_load(
@@ -152,6 +172,7 @@ fn main() {
                         root,
                         fixture,
                         &canaryo,
+                        bun.as_deref(),
                         concurrency,
                         &config,
                     ));
@@ -189,6 +210,7 @@ fn parse_config() -> Config {
         keep_alive: false,
         body_size: None,
         case_filter: None,
+        include_bun: false,
     };
     let arguments: Vec<String> = env::args().skip(1).collect();
     let mut index = 0;
@@ -205,6 +227,11 @@ fn parse_config() -> Config {
         }
         if arguments[index] == "--keep-alive" {
             config.keep_alive = true;
+            index += 1;
+            continue;
+        }
+        if arguments[index] == "--bun" {
+            config.include_bun = true;
             index += 1;
             continue;
         }
@@ -248,6 +275,24 @@ fn canaryo_binary() -> PathBuf {
         .join(format!("canaryo{suffix}"))
 }
 
+fn bun_binary() -> Option<PathBuf> {
+    if Command::new("bun")
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+    {
+        return Some(PathBuf::from("bun"));
+    }
+    let home = env::var_os("USERPROFILE").or_else(|| env::var_os("HOME"))?;
+    let binary = PathBuf::from(home)
+        .join(".bun")
+        .join("bin")
+        .join(format!("bun{}", env::consts::EXE_SUFFIX));
+    binary.is_file().then_some(binary)
+}
+
 fn free_port() -> u16 {
     TcpListener::bind(("127.0.0.1", 0))
         .unwrap()
@@ -256,9 +301,17 @@ fn free_port() -> u16 {
         .port()
 }
 
-fn spawn_server(runtime: Runtime, root: &Path, fixture: &str, canaryo: &Path, port: u16) -> Server {
+fn spawn_server(
+    runtime: Runtime,
+    root: &Path,
+    fixture: &str,
+    canaryo: &Path,
+    bun: Option<&Path>,
+    port: u16,
+) -> Server {
     let executable = match runtime {
         Runtime::Node => Path::new("node"),
+        Runtime::Bun => bun.expect("Bun executable is required"),
         Runtime::Canaryo => canaryo,
     };
     let child = Command::new(executable)
@@ -291,9 +344,15 @@ fn wait_until_ready(server: &mut Server, port: u16) -> Duration {
     }
 }
 
-fn measure_startup(runtime: Runtime, root: &Path, fixture: &str, canaryo: &Path) -> Duration {
+fn measure_startup(
+    runtime: Runtime,
+    root: &Path,
+    fixture: &str,
+    canaryo: &Path,
+    bun: Option<&Path>,
+) -> Duration {
     let port = free_port();
-    let mut server = spawn_server(runtime, root, fixture, canaryo, port);
+    let mut server = spawn_server(runtime, root, fixture, canaryo, bun, port);
     wait_until_ready(&mut server, port)
 }
 
@@ -302,11 +361,12 @@ fn measure_load(
     root: &Path,
     fixture: &str,
     canaryo: &Path,
+    bun: Option<&Path>,
     concurrency: usize,
     config: &Config,
 ) -> Sample {
     let port = free_port();
-    let mut server = spawn_server(runtime, root, fixture, canaryo, port);
+    let mut server = spawn_server(runtime, root, fixture, canaryo, bun, port);
     wait_until_ready(&mut server, port);
     let _ = run_load(
         port,
