@@ -3311,6 +3311,87 @@ mod tests {
     }
 
     #[test]
+    fn iterates_open_directories_and_recursive_listings() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let id = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = env::temp_dir().join(format!("canaryo-fs-dir-{}-{id}", std::process::id()));
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context
+                .globals()
+                .set("fixtureDirectory", directory.to_string_lossy().as_ref())
+                .unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            let synchronous = context
+                .eval::<bool, _>(
+                    r#"
+                    const fs = __canaryoBuiltins.fs;
+                    const path = __canaryoBuiltins.path;
+                    const nested = path.join(fixtureDirectory, "nested");
+                    fs.mkdirSync(nested, { recursive: true });
+                    fs.writeFileSync(path.join(fixtureDirectory, "root.txt"), "root");
+                    fs.writeFileSync(path.join(nested, "child.txt"), "child");
+
+                    const recursiveNames = fs.readdirSync(fixtureDirectory, { recursive: true });
+                    const recursiveEntries = fs.readdirSync(fixtureDirectory, { recursive: true, withFileTypes: true });
+                    const directory = fs.opendirSync(fixtureDirectory);
+                    const opened = [];
+                    for (let entry = directory.readSync(); entry !== null; entry = directory.readSync()) opened.push(entry);
+                    directory.closeSync();
+                    let closedError = false;
+                    try { directory.readSync(); } catch { closedError = true; }
+
+                    globalThis.fsDirCallback = false;
+                    fs.opendir(fixtureDirectory, (error, handle) => {
+                        if (error) throw error;
+                        handle.read((readError, entry) => {
+                            if (readError) throw readError;
+                            handle.close(closeError => {
+                                if (closeError) throw closeError;
+                                fsDirCallback = entry instanceof fs.Dirent;
+                            });
+                        });
+                    });
+
+                    globalThis.fsDirPromise = false;
+                    (async () => {
+                        const handle = await fs.promises.opendir(fixtureDirectory, { recursive: true });
+                        const entries = [];
+                        for await (const entry of handle) entries.push(entry);
+                        let automaticallyClosed = false;
+                        try { await handle.read(); } catch { automaticallyClosed = true; }
+                        fsDirPromise = entries.length === 3 && automaticallyClosed;
+                    })();
+
+                    recursiveNames.includes("root.txt") &&
+                        recursiveNames.includes(path.join("nested", "child.txt")) &&
+                        recursiveEntries.some(entry => entry.name === "child.txt" && entry.parentPath === nested) &&
+                        opened.length === 2 && opened.every(entry => entry instanceof fs.Dirent) &&
+                        directory instanceof fs.Dir && closedError
+                    "#,
+                )
+                .unwrap();
+
+            for _ in 0..50 {
+                while context.execute_pending_job() {}
+            }
+
+            assert!(synchronous);
+            assert!(context.globals().get::<_, bool>("fsDirCallback").unwrap());
+            assert!(context.globals().get::<_, bool>("fsDirPromise").unwrap());
+        });
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn reads_and_writes_through_file_descriptors() {
         use std::time::{SystemTime, UNIX_EPOCH};
 

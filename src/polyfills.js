@@ -3573,18 +3573,84 @@
         const recursive = options === true || Boolean(options && options.recursive);
         __canaryoFsMkdir(normalizeFsPath(filename), recursive);
     }
+    function collectDirectoryEntries(parentPath, options, relativeParent = "") {
+        const entries = [];
+        for (const name of __canaryoFsReaddir(parentPath)) {
+            const childPath = __canaryoBuiltins.path.join(parentPath, name);
+            const relativePath = relativeParent ? __canaryoBuiltins.path.join(relativeParent, name) : name;
+            const stats = lstatSync(childPath);
+            entries.push({ name, parentPath, relativePath, stats });
+            if (options.recursive && stats.isDirectory()) {
+                entries.push(...collectDirectoryEntries(childPath, options, relativePath));
+            }
+        }
+        return entries;
+    }
     function readdirSync(filename, options) {
         const parentPath = normalizeFsPath(filename);
-        const encoding = encodingFrom(options);
-        const names = [...__canaryoFsReaddir(parentPath)];
-        if (!options || typeof options !== "object" || !options.withFileTypes) {
+        const settings = typeof options === "string" ? { encoding: options } : options || {};
+        const encoding = encodingFrom(settings);
+        const entries = collectDirectoryEntries(parentPath, settings);
+        if (!settings.withFileTypes) {
+            const names = entries.map(entry => settings.recursive ? entry.relativePath : entry.name);
             return encoding === "buffer" ? names.map(name => Buffer.from(name)) : names;
         }
-        return names.map(name => {
-            const child = __canaryoBuiltins.path.join(parentPath, name);
-            return new Dirent(encoding === "buffer" ? Buffer.from(name) : name, parentPath, lstatSync(child));
-        });
+        return entries.map(entry => new Dirent(
+            encoding === "buffer" ? Buffer.from(entry.name) : entry.name,
+            entry.parentPath,
+            entry.stats
+        ));
     }
+    function Dir(path, options = {}) {
+        if (!(this instanceof Dir)) return new Dir(path, options);
+        this.path = normalizeFsPath(path);
+        this._options = typeof options === "string" ? { encoding: options } : options || {};
+        this._entries = collectDirectoryEntries(this.path, this._options).map(entry => new Dirent(
+            encodingFrom(this._options) === "buffer" ? Buffer.from(entry.name) : entry.name,
+            entry.parentPath,
+            entry.stats
+        ));
+        this._position = 0;
+        this._closed = false;
+    }
+    Dir.prototype.readSync = function () {
+        if (this._closed) throw new Error(`ERR_DIR_CLOSED: Directory handle was closed: ${this.path}`);
+        return this._entries[this._position++] || null;
+    };
+    Dir.prototype.read = function (callback) {
+        if (typeof callback === "function") {
+            callbackOperation(callback, () => this.readSync());
+            return;
+        }
+        return Promise.resolve().then(() => this.readSync());
+    };
+    Dir.prototype.closeSync = function () {
+        if (this._closed) throw new Error(`ERR_DIR_CLOSED: Directory handle was closed: ${this.path}`);
+        this._closed = true;
+    };
+    Dir.prototype.close = function (callback) {
+        if (typeof callback === "function") {
+            callbackOperation(callback, () => this.closeSync());
+            return;
+        }
+        return Promise.resolve().then(() => this.closeSync());
+    };
+    Dir.prototype[Symbol.asyncIterator] = function () {
+        const directory = this;
+        return {
+            async next() {
+                const value = await directory.read();
+                if (value !== null) return { value, done: false };
+                if (!directory._closed) await directory.close();
+                return { value: undefined, done: true };
+            },
+            async return() {
+                if (!directory._closed) await directory.close();
+                return { value: undefined, done: true };
+            }
+        };
+    };
+    function opendirSync(filename, options) { return new Dir(filename, options); }
     function unlinkSync(filename) { __canaryoFsUnlink(normalizeFsPath(filename)); }
     function renameSync(from, to) { __canaryoFsRename(normalizeFsPath(from), normalizeFsPath(to)); }
     function copyFileSync(from, to, _mode) { __canaryoFsCopy(normalizeFsPath(from), normalizeFsPath(to)); }
@@ -3999,6 +4065,7 @@
         access(filename) { return Promise.resolve().then(() => accessSync(filename)); },
         mkdir(filename, options) { return Promise.resolve().then(() => mkdirSync(filename, options)); },
         readdir(filename, options) { return Promise.resolve().then(() => readdirSync(filename, options)); },
+        opendir(filename, options) { return Promise.resolve().then(() => opendirSync(filename, options)); },
         unlink(filename) { return Promise.resolve().then(() => unlinkSync(filename)); },
         rename(from, to) { return Promise.resolve().then(() => renameSync(from, to)); },
         copyFile(from, to, mode) { return Promise.resolve().then(() => copyFileSync(from, to, mode)); },
@@ -4017,6 +4084,7 @@
     const fsModule = {
         Stats,
         Dirent,
+        Dir,
         constants: {
             F_OK: 0, R_OK: 4, W_OK: 2, X_OK: 1,
             O_RDONLY: 0, O_WRONLY: 1, O_RDWR: 2,
@@ -4043,6 +4111,7 @@
         accessSync,
         mkdirSync,
         readdirSync,
+        opendirSync,
         unlinkSync,
         renameSync,
         copyFileSync,
@@ -4119,6 +4188,10 @@
         readdir(filename, options, callback) {
             if (typeof options === "function") { callback = options; options = undefined; }
             callbackOperation(callback, () => readdirSync(filename, options));
+        },
+        opendir(filename, options, callback) {
+            if (typeof options === "function") { callback = options; options = undefined; }
+            callbackOperation(callback, () => opendirSync(filename, options));
         },
         unlink(filename, callback) { callbackOperation(callback, () => unlinkSync(filename)); },
         rename(from, to, callback) { callbackOperation(callback, () => renameSync(from, to)); },
