@@ -1303,6 +1303,41 @@ fn serves_a_fastify_web_response() {
 
 #[test]
 #[ignore = "requires npm ci in fixtures/fastify-basic"]
+fn serves_a_fastify_fetch_response() {
+    let (_server, mut stream) = start_fixture("fixtures/fastify-basic/server.js");
+    stream
+        .write_all(b"GET /fetch-response HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let response = read_response(&mut stream);
+    let headers = response.to_ascii_lowercase();
+
+    assert!(response.starts_with("HTTP/1.1 200 OK"));
+    assert!(headers.contains("content-type: application/json; charset=utf-8"));
+    assert!(response.ends_with(r#"{"id":"73","active":"fetch"}"#));
+}
+
+#[test]
+#[ignore = "requires npm ci in fixtures/fastify-basic"]
+fn fetches_post_bodies_and_follows_relative_redirects() {
+    let (_server, mut stream) = start_fixture("fixtures/fastify-basic/server.js");
+
+    stream
+        .write_all(b"GET /fetch-post HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+        .unwrap();
+    let post = read_response(&mut stream);
+    assert!(post.starts_with("HTTP/1.1 200 OK"));
+    assert!(post.ends_with(r#"{"body":{"source":"fetch"},"contentType":"application/json"}"#));
+
+    stream
+        .write_all(b"GET /fetch-redirect HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let redirect = read_response(&mut stream);
+    assert!(redirect.starts_with("HTTP/1.1 200 OK"));
+    assert!(redirect.ends_with(r#"{"id":"91","active":"redirect"}"#));
+}
+
+#[test]
+#[ignore = "requires npm ci in fixtures/fastify-basic"]
 fn serves_fastify_with_pino_logging_enabled() {
     let (mut server, mut stream) =
         start_fixture_with_stdout("fixtures/fastify-logger/server.js", Stdio::piped());

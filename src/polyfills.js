@@ -1968,7 +1968,94 @@
         get [Symbol.toStringTag]() { return "Response"; }
     }
     installBodyMethods(Response.prototype);
-    Object.assign(globalThis, { Headers, Request, Response });
+
+    function fetchResponseBody(message) {
+        return new ReadableStream({
+            start(controller) {
+                message.on("data", chunk => {
+                    controller.enqueue(Buffer.from(chunk));
+                    if (controller.desiredSize <= 0) message.pause();
+                });
+                message.once("end", () => controller.close());
+                message.once("error", error => controller.error(error));
+            },
+            pull() { message.resume(); },
+            cancel(reason) { message.destroy(reason instanceof Error ? reason : undefined); }
+        });
+    }
+    function dispatchFetch(url, method, headers, body, signal, redirectMode, redirectCount) {
+        return new Promise((resolve, reject) => {
+            const target = new URL(url);
+            const transport = target.protocol === "https:"
+                ? globalThis.__canaryoHttpsModule
+                : target.protocol === "http:"
+                    ? globalThis.__canaryoHttpModule
+                    : null;
+            if (!transport) { reject(new TypeError(`Unsupported protocol: ${target.protocol}`)); return; }
+            const request = transport.request(target.href, {
+                method,
+                headers: Object.fromEntries(headers),
+                signal
+            }, message => {
+                const status = message.statusCode;
+                const location = message.headers.location;
+                const isRedirect = [301, 302, 303, 307, 308].includes(status) && location;
+                if (isRedirect && redirectMode === "error") {
+                    message.resume();
+                    reject(new TypeError("Redirect encountered"));
+                    return;
+                }
+                if (isRedirect && redirectMode === "follow") {
+                    if (redirectCount >= 20) {
+                        message.resume();
+                        reject(new TypeError("Maximum redirect count exceeded"));
+                        return;
+                    }
+                    message.resume();
+                    const switchToGet = status === 303 || ((status === 301 || status === 302) && method === "POST");
+                    const nextMethod = switchToGet ? "GET" : method;
+                    const nextBody = switchToGet ? null : body;
+                    const nextHeaders = new Headers(headers);
+                    if (switchToGet) {
+                        nextHeaders.delete("content-length");
+                        nextHeaders.delete("content-type");
+                    }
+                    dispatchFetch(new URL(location, target).href, nextMethod, nextHeaders, nextBody, signal, redirectMode, redirectCount + 1).then(resolve, reject);
+                    return;
+                }
+                const responseHeaders = new Headers(message.headers);
+                const hasBody = method !== "HEAD" && ![204, 205, 304].includes(status);
+                const response = new Response(hasBody ? fetchResponseBody(message) : null, {
+                    status,
+                    statusText: message.statusMessage,
+                    headers: responseHeaders
+                });
+                response.url = target.href;
+                response.redirected = redirectCount > 0;
+                resolve(response);
+            });
+            request.once("error", reject);
+            if (body && body.length) request.end(body); else request.end();
+        });
+    }
+    async function fetch(input, init = {}) {
+        const request = input instanceof Request && Object.keys(init).length === 0
+            ? input
+            : new Request(input, init);
+        if (request.signal.aborted) throw abortApiError(request.signal.reason);
+        if (request.body?.locked || request.bodyUsed) throw new TypeError("Body is unusable");
+        const body = request.body === null ? null : await consumeBody(request);
+        return dispatchFetch(
+            request.url,
+            request.method,
+            request.headers,
+            body,
+            request.signal,
+            request.redirect,
+            0
+        );
+    }
+    Object.assign(globalThis, { Headers, Request, Response, fetch });
 
     const asyncLocalStorages = new Set();
     let asyncContextEnabled = false;

@@ -38,6 +38,17 @@ fastify.get("/web-response", () => new Response(new ReadableStream({
     headers: { "x-canaryo-web": "response" }
 }));
 
+fastify.get("/fetch-response", () => fetch(`http://127.0.0.1:${port}/users/73?active=fetch`));
+
+fastify.get("/fetch-post", () => fetch(`http://127.0.0.1:${port}/echo`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ source: "fetch" })
+}));
+
+fastify.get("/fetch-redirect-source", (_request, reply) => reply.redirect("/users/91?active=redirect"));
+fastify.get("/fetch-redirect", () => fetch(`http://127.0.0.1:${port}/fetch-redirect-source`));
+
 fastify.get("/hooks", {
     onRequest: async (_request, reply) => {
         reply.header("x-canaryo-hook", "on-request");
