@@ -3786,6 +3786,62 @@ mod tests {
     }
 
     #[test]
+    fn supports_node_assertion_families() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            context
+                .eval::<(), _>(
+                    r#"
+                    const looseAssert = __canaryoBuiltins.assert;
+                    const strictAssert = __canaryoBuiltins["assert/strict"];
+                    globalThis.assertionsPassed = false;
+                    (async () => {
+                        looseAssert.equal("1", 1);
+                        let strictRejected = false;
+                        try { strictAssert.equal("1", 1); }
+                        catch (error) {
+                            strictRejected = error instanceof looseAssert.AssertionError &&
+                                error.code === "ERR_ASSERTION" && error.actual === "1";
+                        }
+                        const left = { values: [1, { runtime: "canaryo" }], map: new Map([["ready", true]]) };
+                        left.self = left;
+                        const right = { values: [1, { runtime: "canaryo" }], map: new Map([["ready", true]]) };
+                        right.self = right;
+                        strictAssert.deepEqual(left, right);
+                        const thrown = looseAssert.throws(
+                            () => { throw Object.assign(new Error("boom"), { code: "EBOOM" }); },
+                            { code: "EBOOM", message: /boom/ }
+                        );
+                        await looseAssert.rejects(Promise.reject(new TypeError("async boom")), TypeError);
+                        await looseAssert.doesNotReject(Promise.resolve(42));
+                        looseAssert.match("canaryo", /naryo/);
+                        looseAssert.doesNotMatch("canaryo", /node/);
+                        looseAssert.ifError(null);
+                        assertionsPassed = strictRejected && thrown.code === "EBOOM" &&
+                            strictAssert.strict === strictAssert && looseAssert.strict === strictAssert;
+                    })();
+                    "#,
+                )
+                .unwrap();
+
+            for _ in 0..20 {
+                while context.execute_pending_job() {}
+            }
+
+            assert!(
+                context
+                    .globals()
+                    .get::<_, bool>("assertionsPassed")
+                    .unwrap()
+            );
+        });
+    }
+
+    #[test]
     fn records_performance_entries_and_histograms() {
         let runtime = Runtime::new().unwrap();
         let context = Context::full(&runtime).unwrap();

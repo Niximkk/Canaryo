@@ -2708,22 +2708,119 @@
         return deprecate;
     }
 
-    function assertionError(message) {
-        const error = new Error(message || "Assertion failed");
-        error.name = "AssertionError";
-        error.code = "ERR_ASSERTION";
-        return error;
+    class AssertionError extends Error {
+        constructor(options = {}) {
+            super(options.message || "Assertion failed");
+            this.name = "AssertionError";
+            this.code = "ERR_ASSERTION";
+            this.actual = options.actual;
+            this.expected = options.expected;
+            this.operator = options.operator;
+            this.generatedMessage = options.message === undefined;
+        }
+    }
+    function assertionError(message, actual, expected, operator) {
+        return new AssertionError({ message, actual, expected, operator });
+    }
+    function deepEquals(actual, expected, strict, seen = new Map()) {
+        if (strict ? Object.is(actual, expected) : actual == expected) return true;
+        if (actual === null || expected === null || typeof actual !== "object" || typeof expected !== "object") return false;
+        if (seen.get(actual) === expected) return true;
+        seen.set(actual, expected);
+        if (strict && Object.getPrototypeOf(actual) !== Object.getPrototypeOf(expected)) return false;
+        if (actual instanceof Date || expected instanceof Date) return actual instanceof Date && expected instanceof Date && actual.getTime() === expected.getTime();
+        if (actual instanceof RegExp || expected instanceof RegExp) return actual instanceof RegExp && expected instanceof RegExp && actual.source === expected.source && actual.flags === expected.flags;
+        if (ArrayBuffer.isView(actual) || ArrayBuffer.isView(expected)) {
+            if (!ArrayBuffer.isView(actual) || !ArrayBuffer.isView(expected) || actual.byteLength !== expected.byteLength) return false;
+            const left = new Uint8Array(actual.buffer, actual.byteOffset, actual.byteLength);
+            const right = new Uint8Array(expected.buffer, expected.byteOffset, expected.byteLength);
+            return left.every((value, index) => value === right[index]);
+        }
+        if (actual instanceof Map || expected instanceof Map) {
+            if (!(actual instanceof Map) || !(expected instanceof Map) || actual.size !== expected.size) return false;
+            return [...actual].every(([key, value]) => [...expected].some(([otherKey, otherValue]) =>
+                deepEquals(key, otherKey, strict, seen) && deepEquals(value, otherValue, strict, seen)));
+        }
+        if (actual instanceof Set || expected instanceof Set) {
+            if (!(actual instanceof Set) || !(expected instanceof Set) || actual.size !== expected.size) return false;
+            return [...actual].every(value => [...expected].some(other => deepEquals(value, other, strict, seen)));
+        }
+        const actualKeys = Object.keys(actual);
+        const expectedKeys = Object.keys(expected);
+        if (actualKeys.length !== expectedKeys.length || actualKeys.some(key => !Object.prototype.hasOwnProperty.call(expected, key))) return false;
+        return actualKeys.every(key => deepEquals(actual[key], expected[key], strict, seen));
+    }
+    function matchesException(error, expected) {
+        if (expected === undefined) return true;
+        if (expected instanceof RegExp) return expected.test(String(error?.message || error));
+        if (typeof expected === "function") {
+            if (expected.prototype instanceof Error || expected === Error) return error instanceof expected;
+            return expected(error) === true;
+        }
+        if (expected && typeof expected === "object") {
+            return Object.keys(expected).every(key => expected[key] instanceof RegExp
+                ? expected[key].test(String(error?.[key]))
+                : deepEquals(error?.[key], expected[key], true));
+        }
+        throw new TypeError("expected must be a RegExp, function, or object");
     }
     function assert(value, message) {
-        if (!value) throw assertionError(message);
+        if (!value) throw assertionError(message, value, true, "==");
     }
     assert.ok = assert;
-    assert.equal = (actual, expected, message) => { if (actual != expected) throw assertionError(message); };
-    assert.strictEqual = (actual, expected, message) => { if (actual !== expected) throw assertionError(message); };
-    assert.notStrictEqual = (actual, expected, message) => { if (actual === expected) throw assertionError(message); };
+    assert.equal = (actual, expected, message) => { if (actual != expected) throw assertionError(message, actual, expected, "=="); };
+    assert.notEqual = (actual, expected, message) => { if (actual == expected) throw assertionError(message, actual, expected, "!="); };
+    assert.strictEqual = (actual, expected, message) => { if (!Object.is(actual, expected)) throw assertionError(message, actual, expected, "strictEqual"); };
+    assert.notStrictEqual = (actual, expected, message) => { if (Object.is(actual, expected)) throw assertionError(message, actual, expected, "notStrictEqual"); };
+    assert.deepEqual = (actual, expected, message) => { if (!deepEquals(actual, expected, false)) throw assertionError(message, actual, expected, "deepEqual"); };
+    assert.notDeepEqual = (actual, expected, message) => { if (deepEquals(actual, expected, false)) throw assertionError(message, actual, expected, "notDeepEqual"); };
+    assert.deepStrictEqual = (actual, expected, message) => { if (!deepEquals(actual, expected, true)) throw assertionError(message, actual, expected, "deepStrictEqual"); };
+    assert.notDeepStrictEqual = (actual, expected, message) => { if (deepEquals(actual, expected, true)) throw assertionError(message, actual, expected, "notDeepStrictEqual"); };
     assert.fail = message => { throw assertionError(message); };
-    assert.AssertionError = function AssertionError(options = {}) { return assertionError(options.message); };
-    assert.strict = assert;
+    assert.throws = (block, expected, message) => {
+        if (typeof block !== "function") throw new TypeError("block must be a function");
+        try { block(); }
+        catch (error) {
+            if (matchesException(error, expected)) return error;
+            throw assertionError(message, error, expected, "throws");
+        }
+        throw assertionError(message || "Missing expected exception", undefined, expected, "throws");
+    };
+    assert.doesNotThrow = (block, expected, message) => {
+        try { block(); }
+        catch (error) {
+            if (expected === undefined || matchesException(error, expected)) throw assertionError(message || "Got unwanted exception", error, expected, "doesNotThrow");
+            throw error;
+        }
+    };
+    assert.rejects = async (block, expected, message) => {
+        try { await (typeof block === "function" ? block() : block); }
+        catch (error) {
+            if (matchesException(error, expected)) return;
+            throw assertionError(message, error, expected, "rejects");
+        }
+        throw assertionError(message || "Missing expected rejection", undefined, expected, "rejects");
+    };
+    assert.doesNotReject = async (block, expected, message) => {
+        try { await (typeof block === "function" ? block() : block); }
+        catch (error) {
+            if (expected === undefined || matchesException(error, expected)) throw assertionError(message || "Got unwanted rejection", error, expected, "doesNotReject");
+            throw error;
+        }
+    };
+    assert.match = (value, regexp, message) => { if (!(regexp instanceof RegExp) || !regexp.test(String(value))) throw assertionError(message, value, regexp, "match"); };
+    assert.doesNotMatch = (value, regexp, message) => { if (!(regexp instanceof RegExp) || regexp.test(String(value))) throw assertionError(message, value, regexp, "doesNotMatch"); };
+    assert.ifError = value => { if (value !== null && value !== undefined) throw assertionError(`ifError got unwanted exception: ${value.message || value}`, value, null, "ifError"); };
+    assert.AssertionError = AssertionError;
+    function strictAssert(value, message) { return assert(value, message); }
+    Object.assign(strictAssert, assert, {
+        equal: assert.strictEqual,
+        notEqual: assert.notStrictEqual,
+        deepEqual: assert.deepStrictEqual,
+        notDeepEqual: assert.notDeepStrictEqual
+    });
+    strictAssert.strict = strictAssert;
+    assert.strict = strictAssert;
 
     const processStartedAt = __canaryoPerformanceNow();
     EventEmitter.call(process);
@@ -4393,7 +4490,7 @@
 
     globalThis.__canaryoBuiltins = Object.freeze({
         assert,
-        "assert/strict": assert,
+        "assert/strict": strictAssert,
         async_hooks: {
             AsyncLocalStorage,
             AsyncResource,

@@ -197,7 +197,7 @@ fn builtin_source(name: &str) -> Option<String> {
     } else if normalized == "https" {
         "globalThis.__canaryoHttpsModule".to_string()
     } else if normalized == "assert/strict" {
-        "globalThis.__canaryoBuiltins.assert".to_string()
+        "globalThis.__canaryoBuiltins[\"assert/strict\"]".to_string()
     } else if normalized == "path/posix" {
         "globalThis.__canaryoBuiltins.path.posix".to_string()
     } else if normalized == "path/win32" {
@@ -214,8 +214,20 @@ fn builtin_source(name: &str) -> Option<String> {
         "assert" | "assert/strict" => &[
             "ok",
             "equal",
+            "notEqual",
             "strictEqual",
             "notStrictEqual",
+            "deepEqual",
+            "notDeepEqual",
+            "deepStrictEqual",
+            "notDeepStrictEqual",
+            "throws",
+            "doesNotThrow",
+            "rejects",
+            "doesNotReject",
+            "match",
+            "doesNotMatch",
+            "ifError",
             "fail",
             "AssertionError",
         ],
