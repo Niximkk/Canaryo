@@ -978,6 +978,11 @@ fn install_host_globals<'js>(
     globals
         .set("__canaryoHmac", hmac)
         .map_err(|error| error.to_string())?;
+    let pbkdf2 =
+        Function::new(context.clone(), crypto_pbkdf2).map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoPbkdf2", pbkdf2)
+        .map_err(|error| error.to_string())?;
     let random_bytes =
         Function::new(context.clone(), crypto_random_bytes).map_err(|error| error.to_string())?;
     globals
@@ -2573,6 +2578,40 @@ fn crypto_hmac<'js>(
     TypedArray::new_copy(context, tag.as_ref())
 }
 
+fn crypto_pbkdf2<'js>(
+    context: rquickjs::Ctx<'js>,
+    password: TypedArray<'js, u8>,
+    salt: TypedArray<'js, u8>,
+    iterations: u32,
+    key_length: u32,
+    digest: String,
+) -> rquickjs::Result<TypedArray<'js, u8>> {
+    let algorithm = match digest.to_ascii_lowercase().replace('-', "").as_str() {
+        "sha1" => ring::pbkdf2::PBKDF2_HMAC_SHA1,
+        "sha256" => ring::pbkdf2::PBKDF2_HMAC_SHA256,
+        "sha384" => ring::pbkdf2::PBKDF2_HMAC_SHA384,
+        "sha512" => ring::pbkdf2::PBKDF2_HMAC_SHA512,
+        _ => {
+            return Err(rquickjs::Exception::throw_message(
+                &context,
+                &format!("unsupported hash: {digest}"),
+            ));
+        }
+    };
+    let iterations = std::num::NonZeroU32::new(iterations).ok_or_else(|| {
+        rquickjs::Exception::throw_message(&context, "iterations must be greater than zero")
+    })?;
+    let password = typed_array_bytes(&context, &password)?;
+    let salt = typed_array_bytes(&context, &salt)?;
+    let mut output = Vec::new();
+    output
+        .try_reserve_exact(key_length as usize)
+        .map_err(|_| rquickjs::Exception::throw_message(&context, "derived key is too large"))?;
+    output.resize(key_length as usize, 0);
+    ring::pbkdf2::derive(algorithm, iterations, salt, password, &mut output);
+    TypedArray::new(context, output)
+}
+
 fn crypto_random_bytes<'js>(
     context: rquickjs::Ctx<'js>,
     size: u32,
@@ -2802,6 +2841,48 @@ mod tests {
     }
 
     #[test]
+    fn derives_keys_with_pbkdf2() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            let synchronous = context
+                .eval::<bool, _>(
+                    r#"
+                    const crypto = __canaryoBuiltins.crypto;
+                    const sha1 = crypto.pbkdf2Sync("password", "salt", 1, 20, "sha1").toString("hex");
+                    const sha256 = crypto.pbkdf2Sync("password", "salt", 1, 32, "sha256").toString("hex");
+                    let invalidIterations = false;
+                    try { crypto.pbkdf2Sync("password", "salt", 0, 20, "sha256"); }
+                    catch (error) { invalidIterations = error instanceof RangeError; }
+                    globalThis.pbkdf2CallbackPassed = false;
+                    crypto.pbkdf2("password", "salt", 2, 20, "sha1", (error, key) => {
+                        if (error) throw error;
+                        pbkdf2CallbackPassed = Buffer.isBuffer(key) &&
+                            key.toString("hex") === "ea6c014dc72d6f8ccd1ed92ace1d41f0d8de8957";
+                    });
+                    sha1 === "0c60c80f961f0e71f3a9b524af6012062fe037a6" &&
+                        sha256 === "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b" &&
+                        invalidIterations
+                    "#,
+                )
+                .unwrap();
+
+            while context.execute_pending_job() {}
+
+            assert!(synchronous);
+            assert!(
+                context
+                    .globals()
+                    .get::<_, bool>("pbkdf2CallbackPassed")
+                    .unwrap()
+            );
+        });
+    }
+
+    #[test]
     fn provides_web_crypto_digests_and_hmac_keys() {
         let runtime = Runtime::new().unwrap();
         let context = Context::full(&runtime).unwrap();
@@ -2832,12 +2913,35 @@ mod tests {
                             true,
                             ["sign"]
                         );
+                        const password = await crypto.subtle.importKey(
+                            "raw",
+                            new TextEncoder().encode("password"),
+                            "PBKDF2",
+                            false,
+                            ["deriveBits", "deriveKey"]
+                        );
+                        const derivation = {
+                            name: "PBKDF2",
+                            hash: "SHA-256",
+                            salt: new TextEncoder().encode("salt"),
+                            iterations: 1
+                        };
+                        const derivedBits = Buffer.from(await crypto.subtle.deriveBits(derivation, password, 256));
+                        const derivedKey = await crypto.subtle.deriveKey(
+                            derivation,
+                            password,
+                            { name: "HMAC", hash: "SHA-256", length: 128 },
+                            true,
+                            ["sign"]
+                        );
                         const integer = nodeCrypto.randomInt(10, 20);
                         const floating = nodeCrypto.randomFloat();
                         webCryptoPassed = digest.toString("hex") ===
                             "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824" &&
                             verified && exported.toString() === "secret" && key instanceof CryptoKey &&
                             generated.algorithm.length === 128 && nodeCrypto.subtle === crypto.subtle &&
+                            derivedBits.toString("hex") === "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b" &&
+                            derivedKey.algorithm.name === "HMAC" && derivedKey.algorithm.length === 128 &&
                             nodeCrypto.hash("sha256", "hello", "hex") === digest.toString("hex") &&
                             integer >= 10 && integer < 20 && floating >= 0 && floating < 1 &&
                             crypto instanceof Crypto && crypto.subtle instanceof SubtleCrypto;

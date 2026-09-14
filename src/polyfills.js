@@ -4918,6 +4918,31 @@
             process.nextTick(callback, error);
         }
     }
+    function pbkdf2Sync(password, salt, iterations, keyLength, digest) {
+        const rounds = Number(iterations);
+        const length = Number(keyLength);
+        if (!Number.isInteger(rounds) || rounds <= 0 || rounds > 0x7fffffff) {
+            throw new RangeError("iterations must be a positive 32-bit integer");
+        }
+        if (!Number.isInteger(length) || length < 0 || length > 0x7fffffff) {
+            throw new RangeError("keylen must be a non-negative 32-bit integer");
+        }
+        if (digest === undefined) throw new TypeError("digest is required");
+        return Buffer.from(__canaryoPbkdf2(
+            cryptoInput(password),
+            cryptoInput(salt),
+            rounds,
+            length,
+            String(digest)
+        ));
+    }
+    function pbkdf2(password, salt, iterations, keyLength, digest, callback) {
+        if (typeof callback !== "function") throw new TypeError("callback must be a function");
+        process.nextTick(() => {
+            try { callback(null, pbkdf2Sync(password, salt, iterations, keyLength, digest)); }
+            catch (error) { callback(error); }
+        });
+    }
     function randomUUID() {
         const bytes = randomBytes(16);
         bytes[6] = bytes[6] & 0x0f | 0x40;
@@ -4986,7 +5011,12 @@
         }
         async importKey(format, keyData, algorithm, extractable, keyUsages) {
             if (String(format) !== "raw") throw new TypeError("only raw keys are supported");
-            if (webCryptoAlgorithm(algorithm) !== "HMAC") throw new TypeError("only HMAC keys are supported");
+            const name = webCryptoAlgorithm(algorithm);
+            if (name === "PBKDF2") {
+                if (extractable) throw new DOMException("PBKDF2 keys cannot be extractable", "SyntaxError");
+                return new CryptoKey(cryptoKeyToken, "secret", { name: "PBKDF2" }, false, keyUsages, webCryptoBytes(keyData));
+            }
+            if (name !== "HMAC") throw new TypeError("only HMAC and PBKDF2 keys are supported");
             const hash = webCryptoAlgorithm(algorithm.hash);
             return new CryptoKey(cryptoKeyToken, "secret", { name: "HMAC", hash: { name: hash }, length: webCryptoBytes(keyData).byteLength * 8 }, extractable, keyUsages, webCryptoBytes(keyData));
         }
@@ -5001,6 +5031,32 @@
             const length = algorithm.length === undefined ? 256 : Number(algorithm.length);
             if (!Number.isInteger(length) || length <= 0 || length % 8 !== 0) throw new RangeError("HMAC key length must be a positive multiple of 8");
             return new CryptoKey(cryptoKeyToken, "secret", { name: "HMAC", hash: { name: hash }, length }, extractable, keyUsages, randomBytes(length / 8));
+        }
+        async deriveBits(algorithm, baseKey, length) {
+            if (webCryptoAlgorithm(algorithm) !== "PBKDF2" || !(baseKey instanceof CryptoKey) || baseKey.algorithm.name !== "PBKDF2") {
+                throw new DOMException("key and algorithm must use PBKDF2", "InvalidAccessError");
+            }
+            const bitLength = Number(length);
+            if (!Number.isInteger(bitLength) || bitLength <= 0 || bitLength % 8 !== 0) {
+                throw new DOMException("derived bit length must be a positive multiple of 8", "OperationError");
+            }
+            return cryptoArrayBuffer(__canaryoPbkdf2(
+                baseKey._bytes,
+                webCryptoBytes(algorithm.salt),
+                Number(algorithm.iterations),
+                bitLength / 8,
+                webCryptoAlgorithm(algorithm.hash)
+            ));
+        }
+        async deriveKey(algorithm, baseKey, derivedKeyAlgorithm, extractable, keyUsages) {
+            if (webCryptoAlgorithm(derivedKeyAlgorithm) !== "HMAC") {
+                throw new TypeError("only HMAC derived keys are supported");
+            }
+            const hash = webCryptoAlgorithm(derivedKeyAlgorithm.hash);
+            const defaultLength = hash === "SHA-384" || hash === "SHA-512" ? 1024 : 512;
+            const length = derivedKeyAlgorithm.length === undefined ? defaultLength : Number(derivedKeyAlgorithm.length);
+            const bytes = new Uint8Array(await this.deriveBits(algorithm, baseKey, length));
+            return new CryptoKey(cryptoKeyToken, "secret", { name: "HMAC", hash: { name: hash }, length }, extractable, keyUsages, bytes);
         }
         async sign(algorithm, key, data) {
             if (webCryptoAlgorithm(algorithm) !== "HMAC" || !(key instanceof CryptoKey) || key.algorithm.name !== "HMAC") {
@@ -5040,6 +5096,8 @@
         randomInt,
         randomFloat,
         randomUUID,
+        pbkdf2,
+        pbkdf2Sync,
         timingSafeEqual(left, right) {
             return __canaryoTimingSafeEqual(cryptoInput(left), cryptoInput(right));
         },
