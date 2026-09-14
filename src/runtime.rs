@@ -10,7 +10,7 @@ use std::{
         mpsc::{Receiver, SyncSender, TryRecvError, sync_channel},
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use ring::rand::SecureRandom;
@@ -957,6 +957,14 @@ fn install_host_globals<'js>(
         .map_err(|error| error.to_string())?;
     globals
         .set("__canaryoWriteError", write_error)
+        .map_err(|error| error.to_string())?;
+    let performance_started = Instant::now();
+    let performance_now = Function::new(context.clone(), move || {
+        performance_started.elapsed().as_secs_f64() * 1000.0
+    })
+    .map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoPerformanceNow", performance_now)
         .map_err(|error| error.to_string())?;
     let cwd = Function::new(context.clone(), cwd).map_err(|error| error.to_string())?;
     globals
@@ -3663,6 +3671,55 @@ mod tests {
             assert_eq!(
                 result,
                 r#"{"decoded":"Canário 🐦","decoded16":"A🐦B","base64Value":"AQIDBA==","tags":"rust,js","message":"hello world","empty":"","nullPrototype":true,"custom":"1,2","stringified":"tag=rust&tag=js&enabled=true","aliases":true}"#
+            );
+        });
+    }
+
+    #[test]
+    fn records_performance_entries_and_histograms() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            let result = context
+                .eval::<String, _>(
+                    r#"
+                    const hooks = __canaryoBuiltins.perf_hooks;
+                    const observer = new hooks.PerformanceObserver(() => {});
+                    observer.observe({ entryTypes: ["mark", "measure", "function"] });
+                    performance.mark("start", { startTime: 10, detail: { phase: 1 } });
+                    performance.mark("end", { startTime: 25 });
+                    const measure = performance.measure("work", "start", "end");
+                    const histogram = hooks.createHistogram();
+                    const timed = performance.timerify(value => value * 2, { histogram });
+                    const timedResult = timed(21);
+                    const observed = observer.takeRecords();
+                    performance.clearMarks("end");
+                    const delay = hooks.monitorEventLoopDelay();
+                    const value = JSON.stringify({
+                        relativeNow: performance.now() >= 0 && performance.now() < Date.now(),
+                        measure: [measure.name, measure.startTime, measure.duration],
+                        detail: performance.getEntriesByName("start", "mark")[0].detail.phase,
+                        marksAfterClear: performance.getEntriesByType("mark").map(entry => entry.name),
+                        observedTypes: observed.map(entry => entry.entryType).join(","),
+                        timedResult,
+                        histogramCount: histogram.count,
+                        histogramPercentile: histogram.percentile(50) >= 1,
+                        delayShape: delay.enable() && delay.disable() && delay.hasRef() === false,
+                        constructors: hooks.PerformanceEntry === PerformanceEntry &&
+                            hooks.PerformanceObserver === PerformanceObserver
+                    });
+                    observer.disconnect();
+                    value
+                    "#,
+                )
+                .unwrap();
+
+            assert_eq!(
+                result,
+                r#"{"relativeNow":true,"measure":["work",10,15],"detail":1,"marksAfterClear":["start"],"observedTypes":"mark,mark,measure,function","timedResult":42,"histogramCount":1,"histogramPercentile":true,"delayShape":true,"constructors":true}"#
             );
         });
     }

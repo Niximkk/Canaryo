@@ -414,7 +414,17 @@ fn builtin_source(name: &str) -> Option<String> {
             "win32",
             "posix",
         ],
-        "perf_hooks" => &["performance"],
+        "perf_hooks" => &[
+            "performance",
+            "PerformanceEntry",
+            "PerformanceMark",
+            "PerformanceMeasure",
+            "PerformanceObserver",
+            "PerformanceObserverEntryList",
+            "monitorEventLoopDelay",
+            "createHistogram",
+            "constants",
+        ],
         "process" => &[
             "argv",
             "argv0",
