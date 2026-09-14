@@ -3621,6 +3621,53 @@ mod tests {
     }
 
     #[test]
+    fn decodes_split_text_and_node_query_strings() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            let result = context
+                .eval::<String, _>(
+                    r#"
+                    const { StringDecoder } = __canaryoBuiltins.string_decoder;
+                    const querystring = __canaryoBuiltins.querystring;
+                    const utf8 = new StringDecoder("utf8");
+                    const encoded = Buffer.from("Canário 🐦");
+                    const decoded = utf8.write(encoded.subarray(0, 4)) +
+                        utf8.write(encoded.subarray(4, 10)) + utf8.end(encoded.subarray(10));
+                    const utf16 = new StringDecoder("utf16le");
+                    const utf16Bytes = Buffer.from("A🐦B", "utf16le");
+                    const decoded16 = utf16.write(utf16Bytes.subarray(0, 3)) + utf16.end(utf16Bytes.subarray(3));
+                    const base64 = new StringDecoder("base64");
+                    const base64Value = base64.write(Buffer.from([1, 2])) + base64.end(Buffer.from([3, 4]));
+                    const parsed = querystring.parse("tag=rust&tag=js&message=hello+world&empty");
+                    const custom = querystring.parse("a:1;a:2", ";", ":");
+                    JSON.stringify({
+                        decoded,
+                        decoded16,
+                        base64Value,
+                        tags: parsed.tag.join(","),
+                        message: parsed.message,
+                        empty: parsed.empty,
+                        nullPrototype: Object.getPrototypeOf(parsed) === null,
+                        custom: custom.a.join(","),
+                        stringified: querystring.stringify({ tag: ["rust", "js"], enabled: true }),
+                        aliases: querystring.decode === querystring.parse && querystring.encode === querystring.stringify
+                    })
+                    "#,
+                )
+                .unwrap();
+
+            assert_eq!(
+                result,
+                r#"{"decoded":"Canário 🐦","decoded16":"A🐦B","base64Value":"AQIDBA==","tags":"rust,js","message":"hello world","empty":"","nullPrototype":true,"custom":"1,2","stringified":"tag=rust&tag=js&enabled=true","aliases":true}"#
+            );
+        });
+    }
+
+    #[test]
     fn serializes_and_parses_form_data_values() {
         let runtime = Runtime::new().unwrap();
         let context = Context::full(&runtime).unwrap();

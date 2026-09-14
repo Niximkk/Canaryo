@@ -498,6 +498,12 @@
         return [...bytes].map(byte => String.fromCharCode(normalized === "ascii" ? byte & 0x7f : byte)).join("");
     }
     class Buffer extends Uint8Array {
+        constructor(...args) {
+            super(0);
+            const bytes = new Uint8Array(...args);
+            Object.setPrototypeOf(bytes, new.target.prototype);
+            return bytes;
+        }
         static from(value, encodingOrOffset, length) {
             if (typeof value === "string") return new Buffer(encodeString(value, encodingOrOffset));
             if (ArrayBuffer.isView(value)) return new Buffer(value);
@@ -509,7 +515,9 @@
             const buffer = new Buffer(size);
             if (typeof fill === "string") {
                 const pattern = Buffer.from(fill, encoding);
-                for (let index = 0; index < buffer.length; index++) buffer[index] = pattern[index % pattern.length];
+                if (pattern.length) {
+                    for (let index = 0; index < buffer.length; index++) buffer[index] = pattern[index % pattern.length];
+                }
             } else buffer.fill(fill);
             return buffer;
         }
@@ -524,7 +532,10 @@
         }
         static compare(left, right) { return Buffer.from(left).compare(right); }
         static concat(list, totalLength) {
-            const length = totalLength ?? list.reduce((sum, item) => sum + item.length, 0);
+            if (!Array.isArray(list)) throw new TypeError("list must be an Array of Uint8Array instances");
+            const length = totalLength === undefined
+                ? list.reduce((sum, item) => sum + item.length, 0)
+                : Number(totalLength);
             const result = new Buffer(length);
             let offset = 0;
             for (const item of list) {
@@ -649,14 +660,119 @@
 
     class StringDecoder {
         constructor(encoding = "utf8") {
-            const normalized = String(encoding).toLowerCase().replace(/[-_]/g, "");
-            if (normalized !== "utf8") throw new Error(`encoding not supported: ${encoding}`);
-            this.encoding = "utf8";
+            this.encoding = normalizeEncoding(encoding);
+            this._pending = [];
+            this.lastNeed = 0;
+            this.lastTotal = 0;
+            this.lastChar = Buffer.alloc(4);
         }
-        write(value) { return Buffer.from(value).toString(); }
-        end(value) { return value === undefined ? "" : this.write(value); }
-        text(value, offset = 0) { return this.write(value.subarray(offset)); }
+        _split(bytes) {
+            let complete = bytes.length;
+            if (this.encoding === "utf8" && complete > 0) {
+                let lead = complete - 1;
+                while (lead >= 0 && (bytes[lead] & 0xc0) === 0x80) lead--;
+                if (lead >= 0) {
+                    const first = bytes[lead];
+                    const expected = first >= 0xf0 && first <= 0xf4 ? 4
+                        : first >= 0xe0 ? 3
+                            : first >= 0xc2 ? 2
+                                : 1;
+                    if (complete - lead < expected) complete = lead;
+                }
+            } else if (this.encoding === "utf16le") {
+                complete -= complete % 2;
+                if (complete >= 2) {
+                    const code = bytes[complete - 2] | bytes[complete - 1] << 8;
+                    if (code >= 0xd800 && code <= 0xdbff) complete -= 2;
+                }
+            } else if (this.encoding === "base64" || this.encoding === "base64url") {
+                complete -= complete % 3;
+            }
+            return complete;
+        }
+        write(value) {
+            const bytes = this._pending.concat([...value]);
+            const complete = this._split(bytes);
+            this._pending = bytes.slice(complete);
+            this.lastNeed = this._pending.length;
+            this.lastTotal = this.lastNeed ? complete + this.lastNeed : 0;
+            return decodeBytes(new Uint8Array(bytes.slice(0, complete)), this.encoding);
+        }
+        end(value) {
+            let output = value === undefined ? "" : this.write(value);
+            if (this._pending.length) {
+                output += this.encoding === "utf8" || this.encoding === "utf16le"
+                    ? "\ufffd"
+                    : decodeBytes(new Uint8Array(this._pending), this.encoding);
+            }
+            this._pending = [];
+            this.lastNeed = 0;
+            this.lastTotal = 0;
+            return output;
+        }
+        text(value, offset = 0) {
+            this._pending = [];
+            return this.write([...value].slice(offset));
+        }
     }
+
+    function queryUnescape(value, decode = decodeURIComponent) {
+        const source = String(value).replace(/\+/g, " ");
+        try { return decode(source); }
+        catch {
+            return source.replace(/(?:%[0-9a-fA-F]{2})+/g, sequence => {
+                try { return decodeURIComponent(sequence); }
+                catch { return sequence; }
+            });
+        }
+    }
+    function queryParse(value, separator = "&", equals = "=", options = {}) {
+        const output = Object.create(null);
+        const source = String(value);
+        if (!source) return output;
+        const maxKeys = options.maxKeys === undefined ? 1000 : Number(options.maxKeys);
+        const parts = source.split(String(separator));
+        const limit = maxKeys > 0 ? Math.min(parts.length, maxKeys) : parts.length;
+        const decode = typeof options.decodeURIComponent === "function" ? options.decodeURIComponent : decodeURIComponent;
+        for (let index = 0; index < limit; index++) {
+            const part = parts[index];
+            const equalAt = part.indexOf(String(equals));
+            const key = queryUnescape(equalAt < 0 ? part : part.slice(0, equalAt), decode);
+            const item = queryUnescape(equalAt < 0 ? "" : part.slice(equalAt + String(equals).length), decode);
+            if (!(key in output)) output[key] = item;
+            else if (Array.isArray(output[key])) output[key].push(item);
+            else output[key] = [output[key], item];
+        }
+        return output;
+    }
+    function queryPrimitive(value) {
+        return typeof value === "string" || typeof value === "number" || typeof value === "bigint" || typeof value === "boolean"
+            ? String(value)
+            : "";
+    }
+    function queryStringify(value, separator = "&", equals = "=", options = {}) {
+        if (value === null || typeof value !== "object") return "";
+        const encode = typeof options.encodeURIComponent === "function" ? options.encodeURIComponent : encodeURIComponent;
+        const parts = [];
+        for (const key of Object.keys(value)) {
+            const encodedKey = encode(key);
+            const items = Array.isArray(value[key]) ? value[key] : [value[key]];
+            if (!items.length) parts.push(`${encodedKey}${equals}`);
+            for (const item of items) parts.push(`${encodedKey}${equals}${encode(queryPrimitive(item))}`);
+        }
+        return parts.join(String(separator));
+    }
+    const querystringModule = {
+        decode: queryParse,
+        parse: queryParse,
+        encode: queryStringify,
+        stringify: queryStringify,
+        escape: encodeURIComponent,
+        unescape: queryUnescape,
+        unescapeBuffer(value, decodeSpaces) {
+            return Buffer.from(queryUnescape(decodeSpaces ? String(value).replace(/\+/g, " ") : value));
+        }
+    };
 
     function inspect(value) {
         if (typeof value === "string") return value;
@@ -3807,7 +3923,7 @@
         "path/win32": win32Path,
         perf_hooks: { performance },
         process,
-        querystring: { parse(value) { return Object.fromEntries(String(value).split("&").filter(Boolean).map(item => item.split("=").map(decodeURIComponent))); }, stringify(value) { return Object.entries(value).map(([key, item]) => `${encodeURIComponent(key)}=${encodeURIComponent(item)}`).join("&"); }, escape: encodeURIComponent, unescape: decodeURIComponent },
+        querystring: querystringModule,
         stream: Stream,
         "stream/consumers": streamConsumers,
         "stream/promises": streamPromises,
