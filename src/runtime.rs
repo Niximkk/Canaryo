@@ -2726,7 +2726,27 @@ mod tests {
                     __canaryoBuiltins.buffer.File === File &&
                     new Blob(["can", Buffer.from("aryo")], { type: "TEXT/PLAIN" }).size === 7 &&
                     new File(["value"], "data.txt", { lastModified: 42 }).lastModified === 42 &&
-                    atob(btoa("Canaryo")) === "Canaryo"
+                    atob(btoa("Canaryo")) === "Canaryo" &&
+                    (() => {
+                        const signed = Buffer.alloc(6);
+                        signed.writeIntLE(-123456, 0, 3);
+                        signed.writeUIntBE(0x123456, 3, 3);
+                        const floating = Buffer.alloc(12);
+                        floating.writeFloatLE(1.5, 0);
+                        floating.writeDoubleBE(Math.PI, 4);
+                        const bigint = Buffer.alloc(16);
+                        bigint.writeBigUInt64LE(0x123456789abcdef0n, 0);
+                        bigint.writeBigInt64BE(-42n, 8);
+                        return signed.readIntLE(0, 3) === -123456 &&
+                            signed.readUIntBE(3, 3) === 0x123456 &&
+                            floating.readFloatLE(0) === 1.5 &&
+                            Math.abs(floating.readDoubleBE(4) - Math.PI) < 1e-12 &&
+                            bigint.readBigUInt64LE(0) === 0x123456789abcdef0n &&
+                            bigint.readBigInt64BE(8) === -42n &&
+                            Buffer.from([1, 2, 3, 4]).swap32().equals(Buffer.from([4, 3, 2, 1])) &&
+                            Buffer.from("ababa").lastIndexOf("ba") === 3 &&
+                            Buffer.allocUnsafeSlow(3).length === 3 && Buffer.poolSize === 8192;
+                    })()
                     "#,
                 )
                 .unwrap()

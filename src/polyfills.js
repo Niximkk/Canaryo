@@ -534,6 +534,7 @@
             return buffer;
         }
         static allocUnsafe(size) { return new Buffer(size); }
+        static allocUnsafeSlow(size) { return new Buffer(size); }
         static isBuffer(value) { return value instanceof Buffer; }
         static isEncoding(value) { try { normalizeEncoding(value); return true; } catch { return false; } }
         static byteLength(value, encoding) {
@@ -587,6 +588,21 @@
             return -1;
         }
         includes(value, byteOffset, encoding) { return this.indexOf(value, byteOffset, encoding) !== -1; }
+        lastIndexOf(value, byteOffset = this.length - 1, encoding) {
+            const needle = typeof value === "number" ? Buffer.from([value & 0xff]) : Buffer.from(value, encoding);
+            let start = Number(byteOffset);
+            if (!Number.isFinite(start)) start = this.length - 1;
+            if (start < 0) start = this.length + start;
+            start = Math.min(Math.trunc(start), this.length - needle.length);
+            for (let index = start; index >= 0; index--) {
+                let matches = true;
+                for (let offset = 0; offset < needle.length; offset++) {
+                    if (this[index + offset] !== needle[offset]) { matches = false; break; }
+                }
+                if (matches) return index;
+            }
+            return -1;
+        }
         write(value, offset = 0, length = this.length - offset, encoding = "utf8") {
             if (typeof length === "string") { encoding = length; length = this.length - offset; }
             const source = Buffer.from(value, encoding);
@@ -595,18 +611,85 @@
             return count;
         }
         readUInt8(offset = 0) { return this[offset]; }
+        readInt8(offset = 0) { const value = this.readUInt8(offset); return value & 0x80 ? value - 0x100 : value; }
         readUInt16LE(offset = 0) { return this[offset] | this[offset + 1] << 8; }
         readUInt16BE(offset = 0) { return this[offset] << 8 | this[offset + 1]; }
+        readInt16LE(offset = 0) { const value = this.readUInt16LE(offset); return value & 0x8000 ? value - 0x10000 : value; }
+        readInt16BE(offset = 0) { const value = this.readUInt16BE(offset); return value & 0x8000 ? value - 0x10000 : value; }
         readUInt32LE(offset = 0) { return (this[offset] | this[offset + 1] << 8 | this[offset + 2] << 16 | this[offset + 3] << 24) >>> 0; }
         readUInt32BE(offset = 0) { return (this[offset] << 24 | this[offset + 1] << 16 | this[offset + 2] << 8 | this[offset + 3]) >>> 0; }
+        readInt32LE(offset = 0) { return this.readUInt32LE(offset) | 0; }
+        readInt32BE(offset = 0) { return this.readUInt32BE(offset) | 0; }
+        readUIntLE(offset, byteLength) {
+            let value = 0;
+            let multiplier = 1;
+            for (let index = 0; index < byteLength; index++) { value += this[offset + index] * multiplier; multiplier *= 256; }
+            return value;
+        }
+        readUIntBE(offset, byteLength) {
+            let value = 0;
+            for (let index = 0; index < byteLength; index++) value = value * 256 + this[offset + index];
+            return value;
+        }
+        readIntLE(offset, byteLength) { const value = this.readUIntLE(offset, byteLength); const limit = 2 ** (byteLength * 8 - 1); return value >= limit ? value - 2 ** (byteLength * 8) : value; }
+        readIntBE(offset, byteLength) { const value = this.readUIntBE(offset, byteLength); const limit = 2 ** (byteLength * 8 - 1); return value >= limit ? value - 2 ** (byteLength * 8) : value; }
+        _dataView() { return new DataView(this.buffer, this.byteOffset, this.byteLength); }
+        readFloatLE(offset = 0) { return this._dataView().getFloat32(offset, true); }
+        readFloatBE(offset = 0) { return this._dataView().getFloat32(offset, false); }
+        readDoubleLE(offset = 0) { return this._dataView().getFloat64(offset, true); }
+        readDoubleBE(offset = 0) { return this._dataView().getFloat64(offset, false); }
+        readBigUInt64LE(offset = 0) { return this._dataView().getBigUint64(offset, true); }
+        readBigUInt64BE(offset = 0) { return this._dataView().getBigUint64(offset, false); }
+        readBigInt64LE(offset = 0) { return this._dataView().getBigInt64(offset, true); }
+        readBigInt64BE(offset = 0) { return this._dataView().getBigInt64(offset, false); }
         writeUInt8(value, offset = 0) { this[offset] = value; return offset + 1; }
+        writeInt8(value, offset = 0) { return this.writeUInt8(value, offset); }
         writeUInt16LE(value, offset = 0) { this[offset] = value; this[offset + 1] = value >> 8; return offset + 2; }
         writeUInt16BE(value, offset = 0) { this[offset] = value >> 8; this[offset + 1] = value; return offset + 2; }
+        writeInt16LE(value, offset = 0) { return this.writeUInt16LE(value, offset); }
+        writeInt16BE(value, offset = 0) { return this.writeUInt16BE(value, offset); }
         writeUInt32LE(value, offset = 0) { for (let index = 0; index < 4; index++) this[offset + index] = value >>> index * 8; return offset + 4; }
         writeUInt32BE(value, offset = 0) { for (let index = 0; index < 4; index++) this[offset + index] = value >>> (3 - index) * 8; return offset + 4; }
+        writeInt32LE(value, offset = 0) { return this.writeUInt32LE(value, offset); }
+        writeInt32BE(value, offset = 0) { return this.writeUInt32BE(value, offset); }
+        writeUIntLE(value, offset, byteLength) {
+            let remaining = Number(value);
+            for (let index = 0; index < byteLength; index++) { this[offset + index] = remaining % 256; remaining = Math.floor(remaining / 256); }
+            return offset + byteLength;
+        }
+        writeUIntBE(value, offset, byteLength) {
+            let remaining = Number(value);
+            for (let index = byteLength - 1; index >= 0; index--) { this[offset + index] = remaining % 256; remaining = Math.floor(remaining / 256); }
+            return offset + byteLength;
+        }
+        writeIntLE(value, offset, byteLength) { return this.writeUIntLE(value < 0 ? value + 2 ** (byteLength * 8) : value, offset, byteLength); }
+        writeIntBE(value, offset, byteLength) { return this.writeUIntBE(value < 0 ? value + 2 ** (byteLength * 8) : value, offset, byteLength); }
+        writeFloatLE(value, offset = 0) { this._dataView().setFloat32(offset, Number(value), true); return offset + 4; }
+        writeFloatBE(value, offset = 0) { this._dataView().setFloat32(offset, Number(value), false); return offset + 4; }
+        writeDoubleLE(value, offset = 0) { this._dataView().setFloat64(offset, Number(value), true); return offset + 8; }
+        writeDoubleBE(value, offset = 0) { this._dataView().setFloat64(offset, Number(value), false); return offset + 8; }
+        writeBigUInt64LE(value, offset = 0) { this._dataView().setBigUint64(offset, BigInt(value), true); return offset + 8; }
+        writeBigUInt64BE(value, offset = 0) { this._dataView().setBigUint64(offset, BigInt(value), false); return offset + 8; }
+        writeBigInt64LE(value, offset = 0) { this._dataView().setBigInt64(offset, BigInt(value), true); return offset + 8; }
+        writeBigInt64BE(value, offset = 0) { this._dataView().setBigInt64(offset, BigInt(value), false); return offset + 8; }
+        swap16() { return this._swap(2); }
+        swap32() { return this._swap(4); }
+        swap64() { return this._swap(8); }
+        _swap(width) {
+            if (this.length % width !== 0) throw new RangeError(`Buffer size must be a multiple of ${width * 8}-bits`);
+            for (let offset = 0; offset < this.length; offset += width) {
+                for (let left = 0, right = width - 1; left < right; left++, right--) {
+                    const value = this[offset + left];
+                    this[offset + left] = this[offset + right];
+                    this[offset + right] = value;
+                }
+            }
+            return this;
+        }
         toJSON() { return { type: "Buffer", data: [...this] }; }
     }
-    for (const method of ["from", "alloc", "allocUnsafe", "isBuffer", "isEncoding", "byteLength", "compare", "concat"]) {
+    Buffer.poolSize = 8192;
+    for (const method of ["from", "alloc", "allocUnsafe", "allocUnsafeSlow", "isBuffer", "isEncoding", "byteLength", "compare", "concat"]) {
         Object.defineProperty(Buffer, method, { enumerable: true });
     }
 
