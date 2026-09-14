@@ -3420,8 +3420,13 @@ mod tests {
                     const output = Buffer.alloc(6);
                     const read = fs.readSync(fd, output, 0, output.length, 0);
                     fs.ftruncateSync(fd, 5);
+                    const vectoredWrite = fs.writevSync(fd, [Buffer.from(" "), Buffer.from("world")], 5);
+                    const vectorBuffers = [Buffer.alloc(5), Buffer.alloc(6)];
+                    const vectoredRead = fs.readvSync(fd, vectorBuffers, 0);
                     fs.fsyncSync(fd);
                     const size = fs.fstatSync(fd).size;
+                    const bigintStats = fs.fstatSync(fd, { bigint: true });
+                    const missing = fs.statSync(`${fixturePath}.missing`, { throwIfNoEntry: false });
                     fs.closeSync(fd);
                     let badDescriptor = false;
                     try { fs.fstatSync(fd); }
@@ -3429,30 +3434,35 @@ mod tests {
                     globalThis.fdCallbackPassed = false;
                     fs.open(fixturePath, "r", (openError, callbackFd) => {
                         if (openError) throw openError;
-                        const buffer = Buffer.alloc(5);
-                        fs.read(callbackFd, buffer, 0, 5, 0, (readError, bytesRead, returned) => {
+                        const buffers = [Buffer.alloc(2), Buffer.alloc(3)];
+                        fs.readv(callbackFd, buffers, 0, (readError, bytesRead, returned) => {
                             if (readError) throw readError;
                             fs.close(callbackFd, closeError => {
                                 if (closeError) throw closeError;
-                                fdCallbackPassed = bytesRead === 5 && returned === buffer && buffer.toString() === "hello";
+                                fdCallbackPassed = bytesRead === 5 && returned === buffers && Buffer.concat(buffers).toString() === "hello";
                             });
                         });
                     });
                     globalThis.fdPromisePassed = false;
                     fs.promises.open(fixturePath, "r+").then(async handle => {
-                        const written = await handle.write(Buffer.from("Y"), 0, 1, 4);
-                        const buffer = Buffer.alloc(5);
-                        const result = await handle.read(buffer, 0, 5, 0);
+                        const writeBuffers = [Buffer.from("Y"), Buffer.from("Z")];
+                        const written = await handle.writev(writeBuffers, 4);
+                        const buffers = [Buffer.alloc(5), Buffer.alloc(6)];
+                        const result = await handle.readv(buffers, 0);
                         await handle.truncate(4);
                         await handle.datasync();
-                        const stat = await handle.stat();
+                        const stat = await handle.stat({ bigint: true });
                         await handle.close();
-                        fdPromisePassed = written.bytesWritten === 1 && result.bytesRead === 5 &&
-                            buffer.toString() === "hellY" && stat.size === 4 && handle.fd === -1;
+                        fdPromisePassed = written.bytesWritten === 2 && written.buffers === writeBuffers &&
+                            result.bytesRead === 11 && result.buffers === buffers && Buffer.concat(buffers).toString() === "hellYZworld" &&
+                            stat.size === 4n && fs.promises.constants.O_RDWR === 2 && handle.fd === -1;
                     });
 
                     first === 5 && second === 1 && read === 6 && output.toString() === "hello!" &&
-                        size === 5 && badDescriptor && fs.constants.O_RDWR === 2
+                        vectoredWrite === 6 && vectoredRead === 11 && Buffer.concat(vectorBuffers).toString() === "hello world" &&
+                        size === 11 && typeof bigintStats.size === "bigint" && bigintStats.size === 11n &&
+                        typeof bigintStats.mtimeNs === "bigint" && bigintStats.isFile() && missing === undefined &&
+                        badDescriptor && fs.constants.O_RDWR === 2
                     "#,
                 )
                 .unwrap();

@@ -3452,12 +3452,21 @@
         async text(stream) { return (await consumeStream(stream)).toString(); }
     };
 
-    function Stats(values) {
+    function Stats(values, bigint = false) {
         Object.assign(this, values);
-        this.mtime = new Date(this.mtimeMs);
-        this.atime = new Date(this.atimeMs);
-        this.ctime = new Date(this.ctimeMs);
-        this.birthtime = new Date(this.birthtimeMs);
+        this.mtime = new Date(values.mtimeMs);
+        this.atime = new Date(values.atimeMs);
+        this.ctime = new Date(values.ctimeMs);
+        this.birthtime = new Date(values.birthtimeMs);
+        if (bigint) {
+            for (const name of ["dev", "ino", "mode", "nlink", "uid", "gid", "rdev", "size", "blksize", "blocks", "atimeMs", "mtimeMs", "ctimeMs", "birthtimeMs"]) {
+                this[name] = BigInt(Math.trunc(values[name]));
+            }
+            this.atimeNs = BigInt(Math.trunc(values.atimeMs * 1e6));
+            this.mtimeNs = BigInt(Math.trunc(values.mtimeMs * 1e6));
+            this.ctimeNs = BigInt(Math.trunc(values.ctimeMs * 1e6));
+            this.birthtimeNs = BigInt(Math.trunc(values.birthtimeMs * 1e6));
+        }
     }
     Stats.prototype.isFile = function () { return this.file; };
     Stats.prototype.isDirectory = function () { return this.directory; };
@@ -3563,8 +3572,16 @@
         }
         __canaryoFsWrite(normalizeFsPath(filename), Buffer.from(value), true);
     }
-    function statSync(filename) { return new Stats(__canaryoFsStat(normalizeFsPath(filename))); }
-    function lstatSync(filename) { return new Stats(__canaryoFsLstat(normalizeFsPath(filename))); }
+    function statSync(filename, options = {}) {
+        const path = normalizeFsPath(filename);
+        if (options.throwIfNoEntry === false && !existsSync(path)) return undefined;
+        return new Stats(__canaryoFsStat(path), Boolean(options.bigint));
+    }
+    function lstatSync(filename, options = {}) {
+        const path = normalizeFsPath(filename);
+        if (options.throwIfNoEntry === false && !existsSync(path)) return undefined;
+        return new Stats(__canaryoFsLstat(path), Boolean(options.bigint));
+    }
     function existsSync(filename) { return __canaryoFsExists(normalizeFsPath(filename)); }
     function accessSync(filename) {
         if (!existsSync(filename)) throw new Error(`ENOENT: no such file or directory, access '${filename}'`);
@@ -3892,7 +3909,31 @@
         if (usesCurrentPosition) file.position = filePosition + bytes.length;
         return bytes.length;
     }
-    function fstatSync(fd) { return statSync(fileDescriptor(fd).path); }
+    function readvSync(fd, buffers, position = null) {
+        if (!Array.isArray(buffers)) throw new TypeError("buffers must be an array of ArrayBuffer views");
+        let bytesRead = 0;
+        let currentPosition = position;
+        for (const buffer of buffers) {
+            const count = readSync(fd, buffer, 0, buffer.byteLength, currentPosition);
+            bytesRead += count;
+            if (currentPosition !== null && currentPosition !== undefined) currentPosition = Number(currentPosition) + count;
+            if (count < buffer.byteLength) break;
+        }
+        return bytesRead;
+    }
+    function writevSync(fd, buffers, position = null) {
+        if (!Array.isArray(buffers)) throw new TypeError("buffers must be an array of ArrayBuffer views");
+        let bytesWritten = 0;
+        let currentPosition = position;
+        for (const buffer of buffers) {
+            if (!ArrayBuffer.isView(buffer)) throw new TypeError("buffers must contain only ArrayBuffer views");
+            const count = writeSync(fd, buffer, 0, buffer.byteLength, currentPosition);
+            bytesWritten += count;
+            if (currentPosition !== null && currentPosition !== undefined) currentPosition = Number(currentPosition) + count;
+        }
+        return bytesWritten;
+    }
+    function fstatSync(fd, options) { return statSync(fileDescriptor(fd).path, options); }
     function ftruncateSync(fd, length = 0) {
         const file = fileDescriptor(fd);
         if (!file.writable) throw new Error(`EINVAL: file is not open for writing, fd ${fd}`);
@@ -4042,8 +4083,11 @@
         read(buffer, offset, length, position) {
             return Promise.resolve().then(() => ({ bytesRead: readSync(this.fd, buffer, offset, length, position), buffer }));
         }
+        readv(buffers, position) {
+            return Promise.resolve().then(() => ({ bytesRead: readvSync(this.fd, buffers, position), buffers }));
+        }
         readFile(options) { return Promise.resolve().then(() => readFileSync(this.fd, options)); }
-        stat() { return Promise.resolve().then(() => fstatSync(this.fd)); }
+        stat(options) { return Promise.resolve().then(() => fstatSync(this.fd, options)); }
         sync() { return Promise.resolve().then(() => fsyncSync(this.fd)); }
         truncate(length) { return Promise.resolve().then(() => ftruncateSync(this.fd, length)); }
         utimes(atime, mtime) { return Promise.resolve().then(() => futimesSync(this.fd, atime, mtime)); }
@@ -4053,15 +4097,24 @@
                 buffer: value
             }));
         }
+        writev(buffers, position) {
+            return Promise.resolve().then(() => ({ bytesWritten: writevSync(this.fd, buffers, position), buffers }));
+        }
         writeFile(value, options) { return Promise.resolve().then(() => writeFileSync(this.fd, value, options)); }
     }
+    const fsConstants = {
+        F_OK: 0, R_OK: 4, W_OK: 2, X_OK: 1,
+        O_RDONLY: 0, O_WRONLY: 1, O_RDWR: 2,
+        O_CREAT: 0x40, O_EXCL: 0x80, O_TRUNC: 0x200, O_APPEND: 0x400
+    };
     const fsPromises = {
+        constants: fsConstants,
         open(filename, flags, mode) { return Promise.resolve().then(() => new FileHandle(openSync(filename, flags, mode))); },
         readFile(filename, options) { return Promise.resolve().then(() => readFileSync(filename, options)); },
         writeFile(filename, value, options) { return Promise.resolve().then(() => writeFileSync(filename, value, options)); },
         appendFile(filename, value, options) { return Promise.resolve().then(() => appendFileSync(filename, value, options)); },
-        stat(filename) { return Promise.resolve().then(() => statSync(filename)); },
-        lstat(filename) { return Promise.resolve().then(() => lstatSync(filename)); },
+        stat(filename, options) { return Promise.resolve().then(() => statSync(filename, options)); },
+        lstat(filename, options) { return Promise.resolve().then(() => lstatSync(filename, options)); },
         access(filename) { return Promise.resolve().then(() => accessSync(filename)); },
         mkdir(filename, options) { return Promise.resolve().then(() => mkdirSync(filename, options)); },
         readdir(filename, options) { return Promise.resolve().then(() => readdirSync(filename, options)); },
@@ -4085,11 +4138,7 @@
         Stats,
         Dirent,
         Dir,
-        constants: {
-            F_OK: 0, R_OK: 4, W_OK: 2, X_OK: 1,
-            O_RDONLY: 0, O_WRONLY: 1, O_RDWR: 2,
-            O_CREAT: 0x40, O_EXCL: 0x80, O_TRUNC: 0x200, O_APPEND: 0x400
-        },
+        constants: fsConstants,
         ReadStream,
         WriteStream,
         promises: fsPromises,
@@ -4099,7 +4148,9 @@
         openSync,
         closeSync,
         readSync,
+        readvSync,
         writeSync,
+        writevSync,
         fstatSync,
         ftruncateSync,
         fsyncSync,
@@ -4156,6 +4207,13 @@
                 catch (error) { callback(error, 0, buffer); }
             });
         },
+        readv(fd, buffers, position, callback) {
+            if (typeof position === "function") { callback = position; position = null; }
+            queueMicrotask(() => {
+                try { callback(null, readvSync(fd, buffers, position), buffers); }
+                catch (error) { callback(error, 0, buffers); }
+            });
+        },
         write(fd, value, offsetOrPosition, lengthOrEncoding, position, callback) {
             if (typeof offsetOrPosition === "function") {
                 callback = offsetOrPosition; offsetOrPosition = undefined; lengthOrEncoding = undefined; position = undefined;
@@ -4167,15 +4225,31 @@
                 catch (error) { callback(error, 0, value); }
             });
         },
-        fstat(fd, callback) { callbackOperation(callback, () => fstatSync(fd)); },
+        writev(fd, buffers, position, callback) {
+            if (typeof position === "function") { callback = position; position = null; }
+            queueMicrotask(() => {
+                try { callback(null, writevSync(fd, buffers, position), buffers); }
+                catch (error) { callback(error, 0, buffers); }
+            });
+        },
+        fstat(fd, options, callback) {
+            if (typeof options === "function") { callback = options; options = undefined; }
+            callbackOperation(callback, () => fstatSync(fd, options));
+        },
         ftruncate(fd, length, callback) {
             if (typeof length === "function") { callback = length; length = 0; }
             callbackOperation(callback, () => ftruncateSync(fd, length));
         },
         fsync(fd, callback) { callbackOperation(callback, () => fsyncSync(fd)); },
         fdatasync(fd, callback) { callbackOperation(callback, () => fdatasyncSync(fd)); },
-        stat(filename, callback) { callbackOperation(callback, () => statSync(filename)); },
-        lstat(filename, callback) { callbackOperation(callback, () => lstatSync(filename)); },
+        stat(filename, options, callback) {
+            if (typeof options === "function") { callback = options; options = undefined; }
+            callbackOperation(callback, () => statSync(filename, options));
+        },
+        lstat(filename, options, callback) {
+            if (typeof options === "function") { callback = options; options = undefined; }
+            callbackOperation(callback, () => lstatSync(filename, options));
+        },
         access(filename, mode, callback) {
             if (typeof mode === "function") { callback = mode; mode = 0; }
             callbackOperation(callback, () => accessSync(filename, mode));
