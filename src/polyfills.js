@@ -2122,10 +2122,10 @@
         return encodingFrom(options) ? buffer.toString(encodingFrom(options)) : buffer;
     }
     function writeFileSync(filename, value, _options) {
-        __canaryoFsWrite(normalizeFsPath(filename), [...Buffer.from(value)], false);
+        __canaryoFsWrite(normalizeFsPath(filename), Buffer.from(value), false);
     }
     function appendFileSync(filename, value, _options) {
-        __canaryoFsWrite(normalizeFsPath(filename), [...Buffer.from(value)], true);
+        __canaryoFsWrite(normalizeFsPath(filename), Buffer.from(value), true);
     }
     function statSync(filename) { return new Stats(__canaryoFsStat(normalizeFsPath(filename))); }
     function existsSync(filename) { return __canaryoFsExists(normalizeFsPath(filename)); }
@@ -2524,8 +2524,8 @@
     NetSocket.prototype._write = function (chunk, encoding, callback) {
         try {
             const body = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding);
-            if (this._canaryoServerSocket) this.__canaryoServerOutgoing.push(body.toString("base64"));
-            else __canaryoNetWrite(this._canaryoNetId, body.toString("base64"));
+            if (this._canaryoServerSocket) this.__canaryoServerOutgoing.push(body);
+            else __canaryoNetWrite(this._canaryoNetId, body);
             this.bytesWritten += body.length;
             this._resetTimeout();
             callback();
@@ -2595,9 +2595,8 @@
     globalThis.__canaryoPollNetSockets = function () {
         if (netSockets.size === 0) return 0;
         for (let count = 0; count < 64; count++) {
-            const raw = __canaryoNetPoll();
-            if (raw === undefined || raw === null) break;
-            const event = JSON.parse(raw);
+            const event = __canaryoNetPoll();
+            if (event === undefined || event === null) break;
             const socket = netSockets.get(event.id);
             if (!socket) continue;
             if (event.type === "connected") {
@@ -2614,7 +2613,7 @@
                 socket.emit("connect");
                 socket.emit("ready");
             } else if (event.type === "data") {
-                socket.__canaryoNetReceiveBytes(Buffer.from(event.body, "base64"));
+                socket.__canaryoNetReceiveBytes(Buffer.from(event.body));
             } else if (event.type === "end") {
                 socket.__canaryoNetReceiveEnd();
             } else if (event.type === "error") {
@@ -2848,8 +2847,7 @@
     if (typeof globalThis.crypto === "undefined") globalThis.crypto = webcrypto;
 
     function zlibSync(operation, input) {
-        const contents = Buffer.from(input).toString("base64");
-        return Buffer.from(__canaryoZlibTransform(operation, contents), "base64");
+        return Buffer.from(__canaryoZlibTransform(operation, Buffer.from(input)));
     }
     function zlibAsync(operation, input, options, callback) {
         if (typeof options === "function") { callback = options; options = undefined; }

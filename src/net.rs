@@ -5,10 +5,9 @@ use std::{
     time::Duration,
 };
 
-use base64::Engine;
 use mio::{Events, Interest, Poll, Token, net::TcpStream};
 use rquickjs::function::This;
-use rquickjs::{Array, Ctx, Exception, Function, Object, Result};
+use rquickjs::{Array, Ctx, Exception, Function, Object, Result, TypedArray};
 
 const LISTENER: Token = Token(0);
 
@@ -223,10 +222,12 @@ fn collect_socket_commands<'js>(
     connection
         .socket
         .set("__canaryoServerOutgoing", Array::new(context.clone())?)?;
-    for chunk in chunks.iter::<String>() {
-        let body = base64::engine::general_purpose::STANDARD
-            .decode(chunk?)
-            .map_err(|error| Exception::throw_message(context, &error.to_string()))?;
+    for chunk in chunks.iter::<TypedArray<u8>>() {
+        let chunk = chunk?;
+        let body = chunk
+            .as_bytes()
+            .ok_or_else(|| Exception::throw_message(context, "detached TCP output buffer"))?
+            .to_vec();
         if !body.is_empty() {
             connection.outgoing.push_back(body);
         }
@@ -254,10 +255,7 @@ fn read_connection<'js>(context: &Ctx<'js>, connection: &mut Connection<'js>) ->
                 return Ok(false);
             }
             Ok(length) => {
-                let bytes = Array::new(context.clone())?;
-                for (index, byte) in input[..length].iter().enumerate() {
-                    bytes.set(index, *byte)?;
-                }
+                let bytes = TypedArray::<u8>::new_copy(context.clone(), &input[..length])?;
                 let receive: Function = connection.socket.get("__canaryoNetReceiveBytes")?;
                 receive.call::<_, ()>((This(connection.socket.clone()), bytes))?;
                 while context.execute_pending_job() {}

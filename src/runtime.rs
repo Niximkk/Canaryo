@@ -13,7 +13,6 @@ use std::{
     time::Duration,
 };
 
-use base64::Engine;
 use ring::rand::SecureRandom;
 use rquickjs::{
     Array, CatchResultExt, Context, Function, Module, Object, Promise, Runtime, TypedArray,
@@ -403,7 +402,7 @@ ClientRequest.prototype.write = function(chunk, encoding, callback) {
     if (this.writableEnded) throw new Error("write after end");
     const bytes = Buffer.from(chunk, encoding);
     this.__canaryoStart(true);
-    __canaryoHttpRequestWrite(this._requestId, bytes.toString("base64"));
+    __canaryoHttpRequestWrite(this._requestId, bytes);
     if (callback) process.nextTick(callback);
     return true;
 };
@@ -510,9 +509,8 @@ function finishClientRequest(request) {
 
 globalThis.__canaryoPollHttpRequests = function() {
     for (let count = 0; count < 64; count++) {
-        const raw = __canaryoHttpRequestPoll();
-        if (raw === undefined || raw === null) break;
-        const event = JSON.parse(raw);
+        const event = __canaryoHttpRequestPoll();
+        if (event === undefined || event === null) break;
         const request = pendingClientRequests.get(event.id);
         if (!request || request.destroyed) continue;
         if (event.type === "headers") {
@@ -538,7 +536,7 @@ globalThis.__canaryoPollHttpRequests = function() {
             request.emit("response", response);
         } else if (event.type === "data") {
             if (request._response) {
-                request._response.__canaryoDeliverChunk(Buffer.from(event.body, "base64"));
+                request._response.__canaryoDeliverChunk(Buffer.from(event.body));
             }
         } else if (event.type === "end") {
             if (request._response) request._response.__canaryoFinishBody();
@@ -1087,12 +1085,8 @@ fn install_host_globals<'js>(
     let http_receiver = Arc::new(Mutex::new(http_receiver));
     let poll_http_request = {
         let receiver = http_receiver;
-        Function::new(context.clone(), move || {
-            receiver
-                .lock()
-                .ok()
-                .and_then(|receiver| receiver.try_recv().ok())
-                .map(|event| event.to_json())
+        Function::new(context.clone(), move |context| {
+            poll_outbound_http_event(context, &receiver)
         })
         .map_err(|error| error.to_string())?
     };
@@ -1153,12 +1147,8 @@ fn install_host_globals<'js>(
         .set("__canaryoNetDestroy", net_destroy)
         .map_err(|error| error.to_string())?;
     let net_receiver = Arc::new(Mutex::new(net_receiver));
-    let net_poll = Function::new(context.clone(), move || {
-        net_receiver
-            .lock()
-            .ok()
-            .and_then(|receiver| receiver.try_recv().ok())
-            .map(|event| event.to_json())
+    let net_poll = Function::new(context.clone(), move |context| {
+        poll_net_client_event(context, &net_receiver)
     })
     .map_err(|error| error.to_string())?;
     globals
@@ -1354,7 +1344,7 @@ enum NetClientEvent {
     },
     Data {
         id: u64,
-        body: String,
+        body: Vec<u8>,
     },
     End {
         id: u64,
@@ -1369,8 +1359,9 @@ enum NetClientEvent {
 }
 
 impl NetClientEvent {
-    fn to_json(&self) -> String {
-        let value = match self {
+    fn into_js<'js>(self, context: rquickjs::Ctx<'js>) -> rquickjs::Result<Object<'js>> {
+        let value = Object::new(context.clone())?;
+        match self {
             Self::Connected {
                 id,
                 local_address,
@@ -1378,26 +1369,48 @@ impl NetClientEvent {
                 remote_address,
                 remote_port,
                 family,
-            } => serde_json::json!({
-                "type": "connected",
-                "id": id,
-                "localAddress": local_address,
-                "localPort": local_port,
-                "remoteAddress": remote_address,
-                "remotePort": remote_port,
-                "family": family,
-            }),
+            } => {
+                value.set("type", "connected")?;
+                value.set("id", id)?;
+                value.set("localAddress", local_address)?;
+                value.set("localPort", local_port)?;
+                value.set("remoteAddress", remote_address)?;
+                value.set("remotePort", remote_port)?;
+                value.set("family", family)?;
+            }
             Self::Data { id, body } => {
-                serde_json::json!({ "type": "data", "id": id, "body": body })
+                value.set("type", "data")?;
+                value.set("id", id)?;
+                value.set("body", TypedArray::new(context, body)?)?;
             }
-            Self::End { id } => serde_json::json!({ "type": "end", "id": id }),
+            Self::End { id } => {
+                value.set("type", "end")?;
+                value.set("id", id)?;
+            }
             Self::Error { id, message } => {
-                serde_json::json!({ "type": "error", "id": id, "message": message })
+                value.set("type", "error")?;
+                value.set("id", id)?;
+                value.set("message", message)?;
             }
-            Self::Close { id } => serde_json::json!({ "type": "close", "id": id }),
-        };
-        value.to_string()
+            Self::Close { id } => {
+                value.set("type", "close")?;
+                value.set("id", id)?;
+            }
+        }
+        Ok(value)
     }
+}
+
+fn poll_net_client_event<'js>(
+    context: rquickjs::Ctx<'js>,
+    receiver: &Mutex<Receiver<NetClientEvent>>,
+) -> rquickjs::Result<Option<Object<'js>>> {
+    receiver
+        .lock()
+        .ok()
+        .and_then(|receiver| receiver.try_recv().ok())
+        .map(|event| event.into_js(context))
+        .transpose()
 }
 
 struct NetClientRuntime {
@@ -1439,14 +1452,10 @@ fn start_net_client<'js>(
 fn send_net_client_data<'js>(
     context: rquickjs::Ctx<'js>,
     id: u64,
-    body_base64: String,
+    body: TypedArray<'js, u8>,
     runtime: &NetClientRuntime,
 ) -> rquickjs::Result<()> {
-    use base64::Engine;
-
-    let body = base64::engine::general_purpose::STANDARD
-        .decode(body_base64)
-        .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))?;
+    let body = typed_array_bytes(&context, &body)?.to_vec();
     send_net_client_command(&context, id, NetClientCommand::Data(body), runtime)
 }
 
@@ -1475,8 +1484,6 @@ fn perform_net_client(
     commands: Receiver<NetClientCommand>,
     events: &SyncSender<NetClientEvent>,
 ) {
-    use base64::Engine;
-
     let mut stream = match TcpStream::connect((host, port)) {
         Ok(stream) => stream,
         Err(error) => {
@@ -1573,7 +1580,7 @@ fn perform_net_client(
                 if events
                     .send(NetClientEvent::Data {
                         id,
-                        body: base64::engine::general_purpose::STANDARD.encode(&input[..length]),
+                        body: input[..length].to_vec(),
                     })
                     .is_err()
                 {
@@ -1603,7 +1610,7 @@ enum OutboundHttpEvent {
     },
     Data {
         id: u64,
-        body: String,
+        body: Vec<u8>,
     },
     End {
         id: u64,
@@ -1805,30 +1812,57 @@ impl Read for OutboundHttpUploadReader {
 }
 
 impl OutboundHttpEvent {
-    fn to_json(&self) -> String {
-        let value = match self {
+    fn into_js<'js>(self, context: rquickjs::Ctx<'js>) -> rquickjs::Result<Object<'js>> {
+        let value = Object::new(context.clone())?;
+        match self {
             Self::Headers {
                 id,
                 status,
                 status_text,
                 headers,
-            } => serde_json::json!({
-                "type": "headers",
-                "id": id,
-                "status": status,
-                "statusText": status_text,
-                "headers": headers,
-            }),
+            } => {
+                let js_headers = Array::new(context.clone())?;
+                for (index, (name, header_value)) in headers.into_iter().enumerate() {
+                    let pair = Array::new(context.clone())?;
+                    pair.set(0, name)?;
+                    pair.set(1, header_value)?;
+                    js_headers.set(index, pair)?;
+                }
+                value.set("type", "headers")?;
+                value.set("id", id)?;
+                value.set("status", status)?;
+                value.set("statusText", status_text)?;
+                value.set("headers", js_headers)?;
+            }
             Self::Data { id, body } => {
-                serde_json::json!({ "type": "data", "id": id, "body": body })
+                value.set("type", "data")?;
+                value.set("id", id)?;
+                value.set("body", TypedArray::new(context, body)?)?;
             }
-            Self::End { id } => serde_json::json!({ "type": "end", "id": id }),
+            Self::End { id } => {
+                value.set("type", "end")?;
+                value.set("id", id)?;
+            }
             Self::Error { id, message } => {
-                serde_json::json!({ "type": "error", "id": id, "message": message })
+                value.set("type", "error")?;
+                value.set("id", id)?;
+                value.set("message", message)?;
             }
-        };
-        value.to_string()
+        }
+        Ok(value)
     }
+}
+
+fn poll_outbound_http_event<'js>(
+    context: rquickjs::Ctx<'js>,
+    receiver: &Mutex<Receiver<OutboundHttpEvent>>,
+) -> rquickjs::Result<Option<Object<'js>>> {
+    receiver
+        .lock()
+        .ok()
+        .and_then(|receiver| receiver.try_recv().ok())
+        .map(|event| event.into_js(context))
+        .transpose()
 }
 
 fn create_outbound_http_agent<'js>(
@@ -1914,14 +1948,10 @@ fn start_outbound_http_request<'js>(
 fn write_outbound_http_request<'js>(
     context: rquickjs::Ctx<'js>,
     id: u64,
-    body_base64: String,
+    body: TypedArray<'js, u8>,
     runtime: &OutboundHttpRuntime,
 ) -> rquickjs::Result<()> {
-    use base64::Engine;
-
-    let body = base64::engine::general_purpose::STANDARD
-        .decode(body_base64)
-        .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))?;
+    let body = typed_array_bytes(&context, &body)?.to_vec();
     send_outbound_http_upload(&context, id, OutboundHttpUpload::Data(body), runtime)
 }
 
@@ -1978,8 +2008,6 @@ fn perform_outbound_http_request(
     agent: OutboundHttpAgent,
     sender: SyncSender<OutboundHttpEvent>,
 ) {
-    use base64::Engine;
-
     let _permit = agent.limiter.acquire(outbound_http_origin(&url));
     let mut request = agent.client.request(&method, &url);
     for (name, value) in headers {
@@ -2034,7 +2062,7 @@ fn perform_outbound_http_request(
                 if sender
                     .send(OutboundHttpEvent::Data {
                         id,
-                        body: base64::engine::general_purpose::STANDARD.encode(&chunk[..read]),
+                        body: chunk[..read].to_vec(),
                     })
                     .is_err()
                 {
@@ -2146,20 +2174,19 @@ fn dns_lookup<'js>(
     Ok(result)
 }
 
-fn fs_read<'js>(context: rquickjs::Ctx<'js>, path: String) -> rquickjs::Result<Array<'js>> {
+fn fs_read<'js>(
+    context: rquickjs::Ctx<'js>,
+    path: String,
+) -> rquickjs::Result<TypedArray<'js, u8>> {
     let bytes = fs::read(path)
         .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))?;
-    let result = Array::new(context.clone())?;
-    for (index, byte) in bytes.into_iter().enumerate() {
-        result.set(index, byte)?;
-    }
-    Ok(result)
+    TypedArray::new(context, bytes)
 }
 
 fn fs_write<'js>(
     context: rquickjs::Ctx<'js>,
     path: String,
-    bytes: Vec<u8>,
+    bytes: TypedArray<'js, u8>,
     append: bool,
 ) -> rquickjs::Result<()> {
     use std::io::Write;
@@ -2174,7 +2201,8 @@ fn fs_write<'js>(
     let mut file = options
         .open(path)
         .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))?;
-    file.write_all(&bytes)
+    let bytes = typed_array_bytes(&context, &bytes)?;
+    file.write_all(bytes)
         .map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))
 }
 
@@ -2327,15 +2355,6 @@ fn typed_array_bytes<'a, 'js>(
         .ok_or_else(|| rquickjs::Exception::throw_message(context, "detached Uint8Array"))
 }
 
-fn decode_base64_input<'js>(
-    context: &rquickjs::Ctx<'js>,
-    contents: &str,
-) -> rquickjs::Result<Vec<u8>> {
-    base64::engine::general_purpose::STANDARD
-        .decode(contents)
-        .map_err(|error| rquickjs::Exception::throw_message(context, &error.to_string()))
-}
-
 fn digest_algorithm(name: &str) -> Option<&'static ring::digest::Algorithm> {
     match name.to_ascii_lowercase().replace('-', "").as_str() {
         "sha1" => Some(&ring::digest::SHA1_FOR_LEGACY_USE_ONLY),
@@ -2416,44 +2435,43 @@ fn crypto_timing_safe_equal<'js>(
 fn zlib_transform<'js>(
     context: rquickjs::Ctx<'js>,
     operation: String,
-    contents: String,
-) -> rquickjs::Result<String> {
+    contents: TypedArray<'js, u8>,
+) -> rquickjs::Result<TypedArray<'js, u8>> {
     use flate2::{
         Compression,
         read::{DeflateDecoder, GzDecoder, ZlibDecoder},
         write::{DeflateEncoder, GzEncoder, ZlibEncoder},
     };
 
-    let input = decode_base64_input(&context, &contents)?;
+    let input = typed_array_bytes(&context, &contents)?;
     let result = match operation.as_str() {
         "gzip" => {
             let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-            encoder.write_all(&input).and_then(|_| encoder.finish())
+            encoder.write_all(input).and_then(|_| encoder.finish())
         }
-        "gunzip" => read_compressed(GzDecoder::new(input.as_slice())),
+        "gunzip" => read_compressed(GzDecoder::new(input)),
         "deflate" => {
             let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-            encoder.write_all(&input).and_then(|_| encoder.finish())
+            encoder.write_all(input).and_then(|_| encoder.finish())
         }
-        "inflate" => read_compressed(ZlibDecoder::new(input.as_slice())),
+        "inflate" => read_compressed(ZlibDecoder::new(input)),
         "deflateRaw" => {
             let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
-            encoder.write_all(&input).and_then(|_| encoder.finish())
+            encoder.write_all(input).and_then(|_| encoder.finish())
         }
-        "inflateRaw" => read_compressed(DeflateDecoder::new(input.as_slice())),
-        "unzip" if input.starts_with(&[0x1f, 0x8b]) => {
-            read_compressed(GzDecoder::new(input.as_slice()))
-        }
-        "unzip" => read_compressed(ZlibDecoder::new(input.as_slice())),
+        "inflateRaw" => read_compressed(DeflateDecoder::new(input)),
+        "unzip" if input.starts_with(&[0x1f, 0x8b]) => read_compressed(GzDecoder::new(input)),
+        "unzip" => read_compressed(ZlibDecoder::new(input)),
         "brotliCompress" => {
-            let mut reader = input.as_slice();
+            let mut reader = input;
             let mut output = Vec::new();
             let params = brotli::enc::BrotliEncoderParams::default();
             brotli::BrotliCompress(&mut reader, &mut output, &params).map(|_| output)
         }
         "brotliDecompress" => {
             let mut output = Vec::new();
-            brotli::BrotliDecompress(&mut input.as_slice(), &mut output).map(|_| output)
+            let mut reader = input;
+            brotli::BrotliDecompress(&mut reader, &mut output).map(|_| output)
         }
         _ => {
             return Err(rquickjs::Exception::throw_message(
@@ -2464,7 +2482,7 @@ fn zlib_transform<'js>(
     };
     let output =
         result.map_err(|error| rquickjs::Exception::throw_message(&context, &error.to_string()))?;
-    Ok(base64::engine::general_purpose::STANDARD.encode(output))
+    TypedArray::new(context, output)
 }
 
 fn read_compressed(mut reader: impl Read) -> io::Result<Vec<u8>> {
