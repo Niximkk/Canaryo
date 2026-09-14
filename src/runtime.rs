@@ -3621,6 +3621,53 @@ mod tests {
     }
 
     #[test]
+    fn serializes_and_parses_form_data_values() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            context
+                .eval::<(), _>(
+                    r#"
+                    globalThis.formDataWorked = false;
+                    const source = new FormData();
+                    source.append("name", "canaryo");
+                    source.append("tag", "rust");
+                    source.append("tag", "javascript");
+                    source.append("file", new File([new Uint8Array([0, 1, 2, 255])], "data.bin", {
+                        type: "application/octet-stream"
+                    }));
+                    const request = new Request("https://example.com/upload", {
+                        method: "POST",
+                        body: source
+                    });
+                    const urlEncoded = new Response("item=one&item=two", {
+                        headers: { "content-type": "application/x-www-form-urlencoded" }
+                    });
+                    Promise.all([request.formData(), urlEncoded.formData()]).then(([multipart, encoded]) => {
+                        const file = multipart.get("file");
+                        formDataWorked = request.headers.get("content-type").startsWith("multipart/form-data; boundary=") &&
+                            multipart.get("name") === "canaryo" &&
+                            multipart.getAll("tag").join(",") === "rust,javascript" &&
+                            file instanceof File && file.name === "data.bin" &&
+                            file.type === "application/octet-stream" && file.size === 4 &&
+                            encoded.getAll("item").join(",") === "one,two";
+                    });
+                    "#,
+                )
+                .unwrap();
+
+            for _ in 0..30 {
+                while context.execute_pending_job() {}
+            }
+
+            assert!(context.globals().get::<_, bool>("formDataWorked").unwrap());
+        });
+    }
+
+    #[test]
     fn iterates_readable_streams_and_event_emitters_asynchronously() {
         let runtime = Runtime::new().unwrap();
         let context = Context::full(&runtime).unwrap();

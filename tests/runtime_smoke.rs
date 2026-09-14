@@ -1337,6 +1337,24 @@ fn fetches_post_bodies_and_follows_relative_redirects() {
 }
 
 #[test]
+fn serializes_form_data_through_native_fetch() {
+    let (_server, mut stream) = start_fixture("fixtures/fetch/server.js");
+    stream
+        .write_all(b"GET /send HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let response = read_response(&mut stream);
+
+    assert!(response.starts_with("HTTP/1.1 200 OK"));
+    assert!(response.contains("multipart/form-data; boundary=----canaryo-"));
+    assert!(response.contains("name=\\\"runtime\\\""));
+    assert!(response.contains("canaryo"));
+    assert!(response.contains("name=\\\"tags\\\""));
+    assert!(response.contains("javascript"));
+    assert!(response.contains("filename=\\\"canaryo.txt\\\""));
+    assert!(response.contains("binary-data"));
+}
+
+#[test]
 #[ignore = "requires npm ci in fixtures/fastify-basic"]
 fn serves_fastify_with_pino_logging_enabled() {
     let (mut server, mut stream) =

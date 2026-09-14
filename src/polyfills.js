@@ -1835,12 +1835,114 @@
         get [Symbol.toStringTag]() { return "Headers"; }
     }
 
+    class FormData {
+        constructor() { this._entries = []; }
+        append(name, value, filename) {
+            const key = String(name);
+            if (value instanceof Blob) {
+                const file = value instanceof File && filename === undefined
+                    ? value
+                    : new File([value], filename === undefined ? "blob" : String(filename), {
+                        type: value.type,
+                        lastModified: value.lastModified
+                    });
+                this._entries.push([key, file]);
+            } else this._entries.push([key, String(value)]);
+        }
+        delete(name) {
+            const key = String(name);
+            this._entries = this._entries.filter(([entryName]) => entryName !== key);
+        }
+        get(name) {
+            const key = String(name);
+            return this._entries.find(([entryName]) => entryName === key)?.[1] ?? null;
+        }
+        getAll(name) {
+            const key = String(name);
+            return this._entries.filter(([entryName]) => entryName === key).map(([, value]) => value);
+        }
+        has(name) {
+            const key = String(name);
+            return this._entries.some(([entryName]) => entryName === key);
+        }
+        set(name, value, filename) {
+            const key = String(name);
+            const first = this._entries.findIndex(([entryName]) => entryName === key);
+            this.delete(key);
+            this.append(key, value, filename);
+            if (first >= 0) this._entries.splice(first, 0, this._entries.pop());
+        }
+        *entries() { yield* this._entries; }
+        *keys() { for (const [name] of this._entries) yield name; }
+        *values() { for (const [, value] of this._entries) yield value; }
+        forEach(callback, thisArg) {
+            for (const [name, value] of this._entries) callback.call(thisArg, value, name, this);
+        }
+        [Symbol.iterator]() { return this.entries(); }
+        get [Symbol.toStringTag]() { return "FormData"; }
+    }
+
+    let nextFormBoundary = 0;
+    function quoteFormName(value) {
+        return String(value).replace(/\r/g, "%0D").replace(/\n/g, "%0A").replace(/"/g, "%22");
+    }
+    function serializeFormData(form) {
+        const boundary = `----canaryo-${Date.now().toString(16)}-${++nextFormBoundary}`;
+        const chunks = [];
+        for (const [name, value] of form) {
+            let disposition = `Content-Disposition: form-data; name="${quoteFormName(name)}"`;
+            if (value instanceof File) disposition += `; filename="${quoteFormName(value.name)}"`;
+            chunks.push(Buffer.from(`--${boundary}\r\n${disposition}\r\n`));
+            if (value instanceof File && value.type) chunks.push(Buffer.from(`Content-Type: ${value.type}\r\n`));
+            chunks.push(Buffer.from("\r\n"));
+            chunks.push(value instanceof File ? Buffer.from(value._buffer) : Buffer.from(value));
+            chunks.push(Buffer.from("\r\n"));
+        }
+        chunks.push(Buffer.from(`--${boundary}--\r\n`));
+        return { bytes: Buffer.concat(chunks), type: `multipart/form-data; boundary=${boundary}` };
+    }
+    function parseFormData(bytes, contentType) {
+        const form = new FormData();
+        if (/^application\/x-www-form-urlencoded(?:;|$)/i.test(contentType)) {
+            for (const [name, value] of new URLSearchParams(bytes.toString())) form.append(name, value);
+            return form;
+        }
+        const boundaryMatch = contentType.match(/boundary=(?:"([^"]+)"|([^;\s]+))/i);
+        if (!/^multipart\/form-data(?:;|$)/i.test(contentType) || !boundaryMatch) {
+            throw new TypeError("Body cannot be parsed as FormData");
+        }
+        const boundary = boundaryMatch[1] || boundaryMatch[2];
+        const source = bytes.toString("latin1");
+        for (let part of source.split(`--${boundary}`).slice(1)) {
+            if (part.startsWith("--")) break;
+            if (part.startsWith("\r\n")) part = part.slice(2);
+            if (part.endsWith("\r\n")) part = part.slice(0, -2);
+            const headerEnd = part.indexOf("\r\n\r\n");
+            if (headerEnd < 0) continue;
+            const rawHeaders = part.slice(0, headerEnd);
+            const contents = Buffer.from(part.slice(headerEnd + 4), "latin1");
+            const disposition = rawHeaders.split("\r\n").find(line => /^content-disposition:/i.test(line));
+            const name = disposition?.match(/(?:^|;)\s*name="([^"]*)"/i)?.[1];
+            if (name === undefined) continue;
+            const filename = disposition.match(/(?:^|;)\s*filename="([^"]*)"/i)?.[1];
+            if (filename !== undefined) {
+                const type = rawHeaders.split("\r\n").find(line => /^content-type:/i.test(line))?.split(":", 2)[1]?.trim() || "";
+                form.append(name, new File([contents], filename, { type }));
+            } else form.append(name, contents.toString());
+        }
+        return form;
+    }
+
     function bodyWithType(value) {
         if (value === null || value === undefined) return { stream: null, type: null };
         if (value instanceof ReadableStream) return { stream: value, type: null };
         let bytes;
         let type = null;
-        if (value instanceof Blob) {
+        if (value instanceof FormData) {
+            const serialized = serializeFormData(value);
+            bytes = serialized.bytes;
+            type = serialized.type;
+        } else if (value instanceof Blob) {
             bytes = Buffer.from(value._buffer);
             type = value.type || null;
         } else if (value instanceof URLSearchParams) {
@@ -1881,6 +1983,10 @@
         },
         blob() { return consumeBody(this).then(bytes => new Blob([bytes], { type: this.headers.get("content-type") || "" })); },
         bytes() { return consumeBody(this).then(bytes => new Uint8Array(bytes)); },
+        formData() {
+            const contentType = this.headers.get("content-type") || "";
+            return consumeBody(this).then(bytes => parseFormData(bytes, contentType));
+        },
         json() { return consumeBody(this).then(bytes => JSON.parse(bytes.toString())); },
         text() { return consumeBody(this).then(bytes => bytes.toString()); }
     };
@@ -2055,7 +2161,7 @@
             0
         );
     }
-    Object.assign(globalThis, { Headers, Request, Response, fetch });
+    Object.assign(globalThis, { Headers, FormData, Request, Response, fetch });
 
     const asyncLocalStorages = new Set();
     let asyncContextEnabled = false;
