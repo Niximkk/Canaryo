@@ -28,6 +28,16 @@ fastify.get("/web-stream", () => new ReadableStream({
     }
 }));
 
+fastify.get("/web-response", () => new Response(new ReadableStream({
+    start(controller) {
+        controller.enqueue(Buffer.from("web-response"));
+        controller.close();
+    }
+}), {
+    status: 201,
+    headers: { "x-canaryo-web": "response" }
+}));
+
 fastify.get("/hooks", {
     onRequest: async (_request, reply) => {
         reply.header("x-canaryo-hook", "on-request");

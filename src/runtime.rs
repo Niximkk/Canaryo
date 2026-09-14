@@ -3562,6 +3562,65 @@ mod tests {
     }
 
     #[test]
+    fn provides_fetch_request_response_and_headers_values() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            context
+                .eval::<(), _>(
+                    r#"
+                    globalThis.fetchValuesWorked = false;
+                    const headers = new Headers([["X-Test", "one"], ["x-test", "two"]]);
+                    headers.append("set-cookie", "first=1");
+                    headers.append("set-cookie", "second=2");
+                    const response = Response.json({ answer: 42 }, {
+                        status: 201,
+                        headers: { "x-response": "yes" }
+                    });
+                    const responseClone = response.clone();
+                    const request = new Request("https://example.com/items", {
+                        method: "POST",
+                        body: new URLSearchParams({ page: "2" })
+                    });
+                    const requestClone = request.clone();
+                    Promise.all([
+                        response.json(),
+                        responseClone.text(),
+                        request.text(),
+                        requestClone.arrayBuffer()
+                    ]).then(([json, responseText, requestText, requestBytes]) => {
+                        fetchValuesWorked = json.answer === 42 &&
+                            responseText === '{"answer":42}' && response.bodyUsed &&
+                            response.status === 201 && response.ok &&
+                            response.headers.get("x-response") === "yes" &&
+                            headers.get("X-Test") === "one, two" &&
+                            headers.getSetCookie().join(";") === "first=1;second=2" &&
+                            requestText === "page=2" && request.bodyUsed &&
+                            Buffer.from(requestBytes).toString() === "page=2" &&
+                            request.headers.get("content-type") === "application/x-www-form-urlencoded;charset=UTF-8" &&
+                            Object.prototype.toString.call(response) === "[object Response]";
+                    });
+                    "#,
+                )
+                .unwrap();
+
+            for _ in 0..30 {
+                while context.execute_pending_job() {}
+            }
+
+            assert!(
+                context
+                    .globals()
+                    .get::<_, bool>("fetchValuesWorked")
+                    .unwrap()
+            );
+        });
+    }
+
+    #[test]
     fn iterates_readable_streams_and_event_emitters_asynchronously() {
         let runtime = Runtime::new().unwrap();
         let context = Context::full(&runtime).unwrap();

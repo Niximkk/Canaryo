@@ -1288,6 +1288,21 @@ fn serves_a_fastify_web_stream_response() {
 
 #[test]
 #[ignore = "requires npm ci in fixtures/fastify-basic"]
+fn serves_a_fastify_web_response() {
+    let (_server, mut stream) = start_fixture("fixtures/fastify-basic/server.js");
+    stream
+        .write_all(b"GET /web-response HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let response = read_response(&mut stream);
+    let headers = response.to_ascii_lowercase();
+
+    assert!(response.starts_with("HTTP/1.1 201 Created"));
+    assert!(headers.contains("x-canaryo-web: response"));
+    assert!(response.ends_with("web-response"));
+}
+
+#[test]
+#[ignore = "requires npm ci in fixtures/fastify-basic"]
 fn serves_fastify_with_pino_logging_enabled() {
     let (mut server, mut stream) =
         start_fixture_with_stdout("fixtures/fastify-logger/server.js", Stdio::piped());

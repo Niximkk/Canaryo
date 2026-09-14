@@ -1785,6 +1785,191 @@
         });
     };
 
+    function normalizeHeaderName(name) {
+        const normalized = String(name).toLowerCase();
+        if (!normalized || !/^[!#$%&'*+\-.^_`|~0-9a-z]+$/.test(normalized)) throw new TypeError(`Invalid header name: ${name}`);
+        return normalized;
+    }
+    function normalizeHeaderValue(value) {
+        const normalized = String(value).trim();
+        if (/\0|\r|\n/.test(normalized)) throw new TypeError("Invalid header value");
+        return normalized;
+    }
+    class Headers {
+        constructor(init) {
+            this._headers = new Map();
+            if (init instanceof Headers) {
+                for (const [name, values] of init._headers) this._headers.set(name, [...values]);
+            } else if (init != null && typeof init[Symbol.iterator] === "function") {
+                for (const entry of init) {
+                    if (!entry || typeof entry[Symbol.iterator] !== "function") throw new TypeError("Header entry must be iterable");
+                    const pair = [...entry];
+                    if (pair.length !== 2) throw new TypeError("Header entry must contain exactly two values");
+                    this.append(pair[0], pair[1]);
+                }
+            } else if (init != null && typeof init === "object") {
+                for (const [name, value] of Object.entries(init)) this.append(name, value);
+            }
+        }
+        append(name, value) {
+            const key = normalizeHeaderName(name);
+            const normalized = normalizeHeaderValue(value);
+            const values = this._headers.get(key);
+            if (values) values.push(normalized); else this._headers.set(key, [normalized]);
+        }
+        delete(name) { this._headers.delete(normalizeHeaderName(name)); }
+        get(name) {
+            const values = this._headers.get(normalizeHeaderName(name));
+            return values ? values.join(", ") : null;
+        }
+        getSetCookie() { return [...(this._headers.get("set-cookie") || [])]; }
+        has(name) { return this._headers.has(normalizeHeaderName(name)); }
+        set(name, value) { this._headers.set(normalizeHeaderName(name), [normalizeHeaderValue(value)]); }
+        *entries() { for (const [name, values] of this._headers) yield [name, values.join(", ")]; }
+        *keys() { for (const [name] of this._headers) yield name; }
+        *values() { for (const [, values] of this._headers) yield values.join(", "); }
+        forEach(callback, thisArg) {
+            for (const [name, value] of this) callback.call(thisArg, value, name, this);
+        }
+        [Symbol.iterator]() { return this.entries(); }
+        get [Symbol.toStringTag]() { return "Headers"; }
+    }
+
+    function bodyWithType(value) {
+        if (value === null || value === undefined) return { stream: null, type: null };
+        if (value instanceof ReadableStream) return { stream: value, type: null };
+        let bytes;
+        let type = null;
+        if (value instanceof Blob) {
+            bytes = Buffer.from(value._buffer);
+            type = value.type || null;
+        } else if (value instanceof URLSearchParams) {
+            bytes = Buffer.from(value.toString());
+            type = "application/x-www-form-urlencoded;charset=UTF-8";
+        } else if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) {
+            bytes = Buffer.from(value);
+        } else {
+            bytes = Buffer.from(String(value));
+            type = "text/plain;charset=UTF-8";
+        }
+        return {
+            stream: new ReadableStream({ start(controller) { controller.enqueue(bytes); controller.close(); } }),
+            type
+        };
+    }
+    async function consumeBody(owner) {
+        if (owner.bodyUsed) throw new TypeError("Body is unusable");
+        owner._bodyUsed = true;
+        if (owner.body === null) return Buffer.alloc(0);
+        const reader = owner.body.getReader();
+        const chunks = [];
+        try {
+            while (true) {
+                const result = await reader.read();
+                if (result.done) break;
+                chunks.push(Buffer.from(result.value));
+            }
+        } finally { reader.releaseLock(); }
+        return Buffer.concat(chunks);
+    }
+    const Body = {
+        arrayBuffer() {
+            return consumeBody(this).then(bytes => {
+                const copy = new Uint8Array(bytes);
+                return copy.buffer;
+            });
+        },
+        blob() { return consumeBody(this).then(bytes => new Blob([bytes], { type: this.headers.get("content-type") || "" })); },
+        bytes() { return consumeBody(this).then(bytes => new Uint8Array(bytes)); },
+        json() { return consumeBody(this).then(bytes => JSON.parse(bytes.toString())); },
+        text() { return consumeBody(this).then(bytes => bytes.toString()); }
+    };
+    function installBodyMethods(prototype) {
+        for (const [name, method] of Object.entries(Body)) Object.defineProperty(prototype, name, { value: method, writable: true, configurable: true });
+    }
+
+    class Request {
+        constructor(input, init = {}) {
+            const source = input instanceof Request ? input : null;
+            this.url = source ? source.url : new URL(String(input)).href;
+            this.method = String(init.method || source?.method || "GET").toUpperCase();
+            this.headers = new Headers(init.headers === undefined ? source?.headers : init.headers);
+            this.redirect = init.redirect || source?.redirect || "follow";
+            this.credentials = init.credentials || source?.credentials || "same-origin";
+            this.cache = init.cache || source?.cache || "default";
+            this.mode = init.mode || source?.mode || "cors";
+            this.referrer = init.referrer || source?.referrer || "about:client";
+            this.referrerPolicy = init.referrerPolicy || source?.referrerPolicy || "";
+            this.integrity = init.integrity || source?.integrity || "";
+            this.keepalive = Boolean(init.keepalive ?? source?.keepalive);
+            this.signal = init.signal || source?.signal || new AbortController().signal;
+            this.duplex = init.duplex || source?.duplex || "half";
+            const body = init.body === undefined ? source?.body : init.body;
+            if ((this.method === "GET" || this.method === "HEAD") && body != null) throw new TypeError("Request with GET/HEAD method cannot have body");
+            const converted = bodyWithType(body);
+            this.body = converted.stream;
+            this._bodyUsed = false;
+            if (converted.type && !this.headers.has("content-type")) this.headers.set("content-type", converted.type);
+        }
+        get bodyUsed() { return this._bodyUsed; }
+        clone() {
+            if (this.bodyUsed || this.body?.locked) throw new TypeError("Body is unusable");
+            if (this.body === null) return new Request(this);
+            const [left, right] = this.body.tee();
+            this.body = left;
+            return new Request(this, { body: right });
+        }
+        get [Symbol.toStringTag]() { return "Request"; }
+    }
+    installBodyMethods(Request.prototype);
+
+    class Response {
+        constructor(body = null, init = {}) {
+            const status = init.status === undefined ? 200 : Number(init.status);
+            if (!Number.isInteger(status) || status < 200 || status > 599) throw new RangeError("status must be between 200 and 599");
+            if ([204, 205, 304].includes(status) && body != null) throw new TypeError("Response status cannot have a body");
+            const statusText = init.statusText === undefined ? "" : String(init.statusText);
+            if (/\r|\n/.test(statusText)) throw new TypeError("Invalid status text");
+            this.status = status;
+            this.statusText = statusText;
+            this.headers = new Headers(init.headers);
+            this.type = "default";
+            this.url = "";
+            this.redirected = false;
+            const converted = bodyWithType(body);
+            this.body = converted.stream;
+            this._bodyUsed = false;
+            if (converted.type && !this.headers.has("content-type")) this.headers.set("content-type", converted.type);
+        }
+        get ok() { return this.status >= 200 && this.status <= 299; }
+        get bodyUsed() { return this._bodyUsed; }
+        clone() {
+            if (this.bodyUsed || this.body?.locked) throw new TypeError("Body is unusable");
+            if (this.body === null) return new Response(null, this);
+            const [left, right] = this.body.tee();
+            this.body = left;
+            return new Response(right, this);
+        }
+        static error() {
+            const response = new Response(null, { status: 500 });
+            response.type = "error";
+            response.status = 0;
+            return response;
+        }
+        static json(value, init = {}) {
+            const headers = new Headers(init.headers);
+            if (!headers.has("content-type")) headers.set("content-type", "application/json");
+            return new Response(JSON.stringify(value), { ...init, headers });
+        }
+        static redirect(url, status = 302) {
+            if (![301, 302, 303, 307, 308].includes(status)) throw new RangeError("Invalid redirect status");
+            return new Response(null, { status, headers: { location: new URL(String(url)).href } });
+        }
+        get [Symbol.toStringTag]() { return "Response"; }
+    }
+    installBodyMethods(Response.prototype);
+    Object.assign(globalThis, { Headers, Request, Response });
+
     const asyncLocalStorages = new Set();
     let asyncContextEnabled = false;
     function captureAsyncContext() {
