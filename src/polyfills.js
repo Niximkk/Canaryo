@@ -4943,6 +4943,26 @@
             catch (error) { callback(error); }
         });
     }
+    function hkdfSync(digest, key, salt, info, keyLength) {
+        const length = Number(keyLength);
+        if (!Number.isInteger(length) || length < 0 || length > 0x7fffffff) {
+            throw new RangeError("keylen must be a non-negative 32-bit integer");
+        }
+        return cryptoArrayBuffer(__canaryoHkdf(
+            String(digest),
+            cryptoInput(key),
+            cryptoInput(salt),
+            cryptoInput(info),
+            length
+        ));
+    }
+    function hkdf(digest, key, salt, info, keyLength, callback) {
+        if (typeof callback !== "function") throw new TypeError("callback must be a function");
+        process.nextTick(() => {
+            try { callback(null, hkdfSync(digest, key, salt, info, keyLength)); }
+            catch (error) { callback(error); }
+        });
+    }
     function randomUUID() {
         const bytes = randomBytes(16);
         bytes[6] = bytes[6] & 0x0f | 0x40;
@@ -5012,9 +5032,9 @@
         async importKey(format, keyData, algorithm, extractable, keyUsages) {
             if (String(format) !== "raw") throw new TypeError("only raw keys are supported");
             const name = webCryptoAlgorithm(algorithm);
-            if (name === "PBKDF2") {
-                if (extractable) throw new DOMException("PBKDF2 keys cannot be extractable", "SyntaxError");
-                return new CryptoKey(cryptoKeyToken, "secret", { name: "PBKDF2" }, false, keyUsages, webCryptoBytes(keyData));
+            if (name === "PBKDF2" || name === "HKDF") {
+                if (extractable) throw new DOMException(`${name} keys cannot be extractable`, "SyntaxError");
+                return new CryptoKey(cryptoKeyToken, "secret", { name }, false, keyUsages, webCryptoBytes(keyData));
             }
             if (name !== "HMAC") throw new TypeError("only HMAC and PBKDF2 keys are supported");
             const hash = webCryptoAlgorithm(algorithm.hash);
@@ -5033,19 +5053,29 @@
             return new CryptoKey(cryptoKeyToken, "secret", { name: "HMAC", hash: { name: hash }, length }, extractable, keyUsages, randomBytes(length / 8));
         }
         async deriveBits(algorithm, baseKey, length) {
-            if (webCryptoAlgorithm(algorithm) !== "PBKDF2" || !(baseKey instanceof CryptoKey) || baseKey.algorithm.name !== "PBKDF2") {
-                throw new DOMException("key and algorithm must use PBKDF2", "InvalidAccessError");
+            const name = webCryptoAlgorithm(algorithm);
+            if (!(baseKey instanceof CryptoKey) || baseKey.algorithm.name !== name || (name !== "PBKDF2" && name !== "HKDF")) {
+                throw new DOMException("key and derivation algorithm do not match", "InvalidAccessError");
             }
             const bitLength = Number(length);
             if (!Number.isInteger(bitLength) || bitLength <= 0 || bitLength % 8 !== 0) {
                 throw new DOMException("derived bit length must be a positive multiple of 8", "OperationError");
             }
-            return cryptoArrayBuffer(__canaryoPbkdf2(
+            if (name === "PBKDF2") {
+                return cryptoArrayBuffer(__canaryoPbkdf2(
+                    baseKey._bytes,
+                    webCryptoBytes(algorithm.salt),
+                    Number(algorithm.iterations),
+                    bitLength / 8,
+                    webCryptoAlgorithm(algorithm.hash)
+                ));
+            }
+            return cryptoArrayBuffer(__canaryoHkdf(
+                webCryptoAlgorithm(algorithm.hash),
                 baseKey._bytes,
                 webCryptoBytes(algorithm.salt),
-                Number(algorithm.iterations),
-                bitLength / 8,
-                webCryptoAlgorithm(algorithm.hash)
+                webCryptoBytes(algorithm.info),
+                bitLength / 8
             ));
         }
         async deriveKey(algorithm, baseKey, derivedKeyAlgorithm, extractable, keyUsages) {
@@ -5098,6 +5128,8 @@
         randomUUID,
         pbkdf2,
         pbkdf2Sync,
+        hkdf,
+        hkdfSync,
         timingSafeEqual(left, right) {
             return __canaryoTimingSafeEqual(cryptoInput(left), cryptoInput(right));
         },

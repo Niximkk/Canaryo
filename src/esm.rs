@@ -293,6 +293,8 @@ fn builtin_source(name: &str) -> Option<String> {
             "randomUUID",
             "pbkdf2",
             "pbkdf2Sync",
+            "hkdf",
+            "hkdfSync",
             "timingSafeEqual",
             "getHashes",
             "webcrypto",

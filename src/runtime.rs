@@ -983,6 +983,10 @@ fn install_host_globals<'js>(
     globals
         .set("__canaryoPbkdf2", pbkdf2)
         .map_err(|error| error.to_string())?;
+    let hkdf = Function::new(context.clone(), crypto_hkdf).map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoHkdf", hkdf)
+        .map_err(|error| error.to_string())?;
     let random_bytes =
         Function::new(context.clone(), crypto_random_bytes).map_err(|error| error.to_string())?;
     globals
@@ -2612,6 +2616,49 @@ fn crypto_pbkdf2<'js>(
     TypedArray::new(context, output)
 }
 
+struct HkdfLength(usize);
+
+impl ring::hkdf::KeyType for HkdfLength {
+    fn len(&self) -> usize {
+        self.0
+    }
+}
+
+fn crypto_hkdf<'js>(
+    context: rquickjs::Ctx<'js>,
+    digest: String,
+    key: TypedArray<'js, u8>,
+    salt: TypedArray<'js, u8>,
+    info: TypedArray<'js, u8>,
+    key_length: u32,
+) -> rquickjs::Result<TypedArray<'js, u8>> {
+    let algorithm = match digest.to_ascii_lowercase().replace('-', "").as_str() {
+        "sha1" => ring::hkdf::HKDF_SHA1_FOR_LEGACY_USE_ONLY,
+        "sha256" => ring::hkdf::HKDF_SHA256,
+        "sha384" => ring::hkdf::HKDF_SHA384,
+        "sha512" => ring::hkdf::HKDF_SHA512,
+        _ => {
+            return Err(rquickjs::Exception::throw_message(
+                &context,
+                &format!("unsupported hash: {digest}"),
+            ));
+        }
+    };
+    let key = typed_array_bytes(&context, &key)?;
+    let salt = typed_array_bytes(&context, &salt)?;
+    let info = typed_array_bytes(&context, &info)?;
+    let extracted = ring::hkdf::Salt::new(algorithm, salt).extract(key);
+    let info_parts = [info];
+    let expanded = extracted
+        .expand(&info_parts, HkdfLength(key_length as usize))
+        .map_err(|_| rquickjs::Exception::throw_message(&context, "derived key is too large"))?;
+    let mut output = vec![0; key_length as usize];
+    expanded
+        .fill(&mut output)
+        .map_err(|_| rquickjs::Exception::throw_message(&context, "could not derive key"))?;
+    TypedArray::new(context, output)
+}
+
 fn crypto_random_bytes<'js>(
     context: rquickjs::Ctx<'js>,
     size: u32,
@@ -2883,6 +2930,47 @@ mod tests {
     }
 
     #[test]
+    fn derives_keys_with_hkdf() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            let synchronous = context
+                .eval::<bool, _>(
+                    r#"
+                    const crypto = __canaryoBuiltins.crypto;
+                    const key = Buffer.from("0b".repeat(22), "hex");
+                    const salt = Buffer.from("000102030405060708090a0b0c", "hex");
+                    const info = Buffer.from("f0f1f2f3f4f5f6f7f8f9", "hex");
+                    const expected = "3cb25f25faacd57a90434f64d0362f2a" +
+                        "2d2d0a90cf1a5a4c5db02d56ecc4c5bf" +
+                        "34007208d5b887185865";
+                    const derived = Buffer.from(crypto.hkdfSync("sha256", key, salt, info, 42));
+                    globalThis.hkdfCallbackPassed = false;
+                    crypto.hkdf("sha256", key, salt, info, 42, (error, result) => {
+                        if (error) throw error;
+                        hkdfCallbackPassed = result instanceof ArrayBuffer && Buffer.from(result).toString("hex") === expected;
+                    });
+                    derived.toString("hex") === expected
+                    "#,
+                )
+                .unwrap();
+
+            while context.execute_pending_job() {}
+
+            assert!(synchronous);
+            assert!(
+                context
+                    .globals()
+                    .get::<_, bool>("hkdfCallbackPassed")
+                    .unwrap()
+            );
+        });
+    }
+
+    #[test]
     fn provides_web_crypto_digests_and_hmac_keys() {
         let runtime = Runtime::new().unwrap();
         let context = Context::full(&runtime).unwrap();
@@ -2934,6 +3022,19 @@ mod tests {
                             true,
                             ["sign"]
                         );
+                        const hkdfKey = await crypto.subtle.importKey(
+                            "raw",
+                            Buffer.from("0b".repeat(22), "hex"),
+                            "HKDF",
+                            false,
+                            ["deriveBits"]
+                        );
+                        const hkdfBits = Buffer.from(await crypto.subtle.deriveBits({
+                            name: "HKDF",
+                            hash: "SHA-256",
+                            salt: Buffer.from("000102030405060708090a0b0c", "hex"),
+                            info: Buffer.from("f0f1f2f3f4f5f6f7f8f9", "hex")
+                        }, hkdfKey, 336));
                         const integer = nodeCrypto.randomInt(10, 20);
                         const floating = nodeCrypto.randomFloat();
                         webCryptoPassed = digest.toString("hex") ===
@@ -2942,6 +3043,7 @@ mod tests {
                             generated.algorithm.length === 128 && nodeCrypto.subtle === crypto.subtle &&
                             derivedBits.toString("hex") === "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b" &&
                             derivedKey.algorithm.name === "HMAC" && derivedKey.algorithm.length === 128 &&
+                            hkdfBits.toString("hex") === "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865" &&
                             nodeCrypto.hash("sha256", "hello", "hex") === digest.toString("hex") &&
                             integer >= 10 && integer < 20 && floating >= 0 && floating < 1 &&
                             crypto instanceof Crypto && crypto.subtle instanceof SubtleCrypto;
