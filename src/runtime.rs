@@ -4073,12 +4073,28 @@ mod tests {
                     const channel = new workers.MessageChannel();
                     globalThis.workerMessage = null;
                     channel.port2.on("message", value => { workerMessage = value; });
-                    channel.port1.postMessage({ runtime: "canaryo" });
+                    const sent = { runtime: "canaryo", bytes: new Uint8Array([1, 2, 3]) };
+                    sent.self = sent;
+                    channel.port1.postMessage(sent);
+                    sent.runtime = "changed";
+                    const broadcast1 = new workers.BroadcastChannel("canaryo");
+                    const broadcast2 = new BroadcastChannel("canaryo");
+                    globalThis.broadcastMessage = null;
+                    broadcast2.onmessage = event => { broadcastMessage = event.data; };
+                    broadcast1.postMessage({ kind: "broadcast" });
+                    const marked = {};
+                    workers.markAsUntransferable(marked);
+                    const uncloneable = {};
+                    workers.markAsUncloneable(uncloneable);
+                    let cloneRejected = false;
+                    try { structuredClone(uncloneable); }
+                    catch (error) { cloneRejected = error.name === "DataCloneError"; }
                     let unsupportedWorker = false;
                     try { new workers.Worker("worker.js"); }
                     catch (error) { unsupportedWorker = error.code === "ERR_WORKER_UNSUPPORTED_OPERATION"; }
                     workers.isMainThread && workers.threadId === 0 && workers.parentPort === null &&
-                        workers.getEnvironmentData("canaryo") === 42 && unsupportedWorker
+                        workers.getEnvironmentData("canaryo") === 42 && unsupportedWorker && cloneRejected &&
+                        workers.isMarkedAsUntransferable(marked) && MessageEvent.prototype instanceof Event
                     "#,
                 )
                 .unwrap();
@@ -4089,7 +4105,9 @@ mod tests {
 
             assert!(
                 context
-                    .eval::<bool, _>("workerMessage.runtime === 'canaryo'")
+                    .eval::<bool, _>(
+                        "workerMessage.runtime === 'canaryo' && workerMessage.self === workerMessage && workerMessage.bytes[2] === 3 && broadcastMessage.kind === 'broadcast'",
+                    )
                     .unwrap()
             );
         });

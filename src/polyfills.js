@@ -40,6 +40,18 @@
     };
     Event.prototype.composedPath = function () { return this.target ? [this.target] : []; };
 
+    function MessageEvent(type, options = {}) {
+        Event.call(this, type, options);
+        this.data = options.data ?? null;
+        this.origin = String(options.origin || "");
+        this.lastEventId = String(options.lastEventId || "");
+        this.source = options.source ?? null;
+        this.ports = Array.isArray(options.ports) ? options.ports : [];
+    }
+    MessageEvent.prototype = Object.create(Event.prototype, {
+        constructor: { value: MessageEvent, writable: true, configurable: true }
+    });
+
     function EventTarget() { this._eventTargetListeners = new Map(); }
     EventTarget.prototype.addEventListener = function (type, callback, options = {}) {
         if (callback === null || callback === undefined) return;
@@ -3098,6 +3110,7 @@
     globalThis.btoa = btoa;
     globalThis.DOMException = DOMException;
     globalThis.Event = Event;
+    globalThis.MessageEvent = MessageEvent;
     globalThis.EventTarget = EventTarget;
     globalThis.AbortController = AbortController;
     globalThis.AbortSignal = AbortSignal;
@@ -3564,22 +3577,128 @@
     })();
 
     const workerEnvironment = new Map();
+    const untransferableObjects = new WeakSet();
+    const uncloneableObjects = new WeakSet();
+
+    function structuredClone(value, options = {}) {
+        const transfer = options && options.transfer === undefined ? [] : options.transfer;
+        if (!Array.isArray(transfer)) throw new TypeError("transfer must be an Array");
+        const transferSet = new Set();
+        for (const item of transfer) {
+            if ((typeof item !== "object" && typeof item !== "function") || item === null) {
+                throw new DOMException("Value is not transferable", "DataCloneError");
+            }
+            if (transferSet.has(item)) throw new DOMException("Transfer list contains duplicate values", "DataCloneError");
+            if (untransferableObjects.has(item)) throw new DOMException("Value is marked as untransferable", "DataCloneError");
+            transferSet.add(item);
+        }
+        const seen = new Map();
+        function clone(item) {
+            if (item === null || typeof item === "undefined" || typeof item === "string" ||
+                typeof item === "number" || typeof item === "boolean" || typeof item === "bigint") return item;
+            if (typeof item === "symbol" || typeof item === "function") {
+                throw new DOMException("Value could not be cloned", "DataCloneError");
+            }
+            if (uncloneableObjects.has(item)) throw new DOMException("Value is marked as uncloneable", "DataCloneError");
+            if (seen.has(item)) return seen.get(item);
+            if (item instanceof ArrayBuffer) {
+                const output = item.slice(0);
+                seen.set(item, output);
+                return output;
+            }
+            if (ArrayBuffer.isView(item)) {
+                const buffer = clone(item.buffer);
+                const output = item instanceof DataView
+                    ? new DataView(buffer, item.byteOffset, item.byteLength)
+                    : new item.constructor(buffer, item.byteOffset, item.length);
+                seen.set(item, output);
+                return output;
+            }
+            if (item instanceof Date) return new Date(item.getTime());
+            if (item instanceof RegExp) return new RegExp(item.source, item.flags);
+            if (item instanceof Blob) {
+                const output = item instanceof File
+                    ? new File([item], item.name, { type: item.type, lastModified: item.lastModified })
+                    : new Blob([item], { type: item.type });
+                seen.set(item, output);
+                return output;
+            }
+            if (item instanceof Map) {
+                const output = new Map();
+                seen.set(item, output);
+                for (const [key, mapValue] of item) output.set(clone(key), clone(mapValue));
+                return output;
+            }
+            if (item instanceof Set) {
+                const output = new Set();
+                seen.set(item, output);
+                for (const setValue of item) output.add(clone(setValue));
+                return output;
+            }
+            if (item instanceof Error) {
+                const output = new Error(item.message);
+                seen.set(item, output);
+                output.name = item.name;
+                output.stack = item.stack;
+                if ("cause" in item) output.cause = clone(item.cause);
+                return output;
+            }
+            const output = Array.isArray(item) ? [] : {};
+            seen.set(item, output);
+            for (const key of Object.keys(item)) output[key] = clone(item[key]);
+            return output;
+        }
+        return clone(value);
+    }
+
+    globalThis.structuredClone = structuredClone;
     function MessagePort() {
         EventEmitter.call(this);
         this._peer = null;
         this._messageQueue = [];
         this._closed = false;
+        this.onmessage = null;
+        this.onmessageerror = null;
+        this._eventListeners = new Map();
     }
     util.inherits(MessagePort, EventEmitter);
     MessagePort.prototype.postMessage = function (value) {
         if (this._closed || !this._peer || this._peer._closed) return;
         const peer = this._peer;
-        peer._messageQueue.push(value);
+        let message;
+        try { message = structuredClone(value); }
+        catch (error) {
+            if (typeof this.onmessageerror === "function") this.onmessageerror(new MessageEvent("messageerror", { data: value }));
+            throw error;
+        }
+        peer._messageQueue.push(message);
         setImmediate(() => {
-            const index = peer._messageQueue.indexOf(value);
+            const index = peer._messageQueue.indexOf(message);
             if (index !== -1) peer._messageQueue.splice(index, 1);
-            if (!peer._closed) peer.emit("message", value);
+            if (!peer._closed) {
+                peer.emit("message", message);
+                if (typeof peer.onmessage === "function") peer.onmessage(new MessageEvent("message", { data: message, ports: [] }));
+            }
         });
+    };
+    MessagePort.prototype.addEventListener = function (type, callback) {
+        if (typeof callback !== "function" && typeof callback?.handleEvent !== "function") return;
+        const listener = value => {
+            const event = value instanceof MessageEvent ? value : new MessageEvent(type, { data: value });
+            if (typeof callback === "function") callback.call(this, event);
+            else callback.handleEvent(event);
+        };
+        const listeners = this._eventListeners.get(callback) || [];
+        listeners.push({ type: String(type), listener });
+        this._eventListeners.set(callback, listeners);
+        this.on(String(type), listener);
+    };
+    MessagePort.prototype.removeEventListener = function (type, callback) {
+        const listeners = this._eventListeners.get(callback) || [];
+        for (const entry of listeners.filter(entry => entry.type === String(type))) this.off(entry.type, entry.listener);
+        const remaining = listeners.filter(entry => entry.type !== String(type));
+        if (remaining.length) this._eventListeners.set(callback, remaining);
+        else this._eventListeners.delete(callback);
     };
     MessagePort.prototype.start = function () {};
     MessagePort.prototype.close = function () {
@@ -3602,6 +3721,42 @@
         throw error;
     }
     util.inherits(Worker, EventEmitter);
+    const broadcastChannels = new Map();
+    function BroadcastChannel(name) {
+        EventTarget.call(this);
+        this.name = String(name);
+        this.onmessage = null;
+        this.onmessageerror = null;
+        this._closed = false;
+        const channels = broadcastChannels.get(this.name) || new Set();
+        channels.add(this);
+        broadcastChannels.set(this.name, channels);
+    }
+    BroadcastChannel.prototype = Object.create(EventTarget.prototype, {
+        constructor: { value: BroadcastChannel, writable: true, configurable: true }
+    });
+    BroadcastChannel.prototype.postMessage = function (value) {
+        if (this._closed) throw new Error("BroadcastChannel is closed");
+        const message = structuredClone(value);
+        for (const channel of broadcastChannels.get(this.name) || []) {
+            if (channel === this || channel._closed) continue;
+            const cloned = structuredClone(message);
+            setImmediate(() => {
+                if (!channel._closed) channel.dispatchEvent(new MessageEvent("message", { data: cloned }));
+            });
+        }
+    };
+    BroadcastChannel.prototype.close = function () {
+        if (this._closed) return;
+        this._closed = true;
+        const channels = broadcastChannels.get(this.name);
+        channels?.delete(this);
+        if (!channels?.size) broadcastChannels.delete(this.name);
+    };
+    BroadcastChannel.prototype.ref = function () { return this; };
+    BroadcastChannel.prototype.unref = function () { return this; };
+    BroadcastChannel.prototype.hasRef = function () { return false; };
+    globalThis.BroadcastChannel = BroadcastChannel;
     const workerThreads = {
         isMainThread: true,
         threadId: 0,
@@ -3613,20 +3768,16 @@
         Worker,
         MessageChannel,
         MessagePort,
-        BroadcastChannel: function BroadcastChannel() {
-            const error = new Error("Canaryo does not support BroadcastChannel yet");
-            error.code = "ERR_WORKER_UNSUPPORTED_OPERATION";
-            throw error;
-        },
+        BroadcastChannel,
         getEnvironmentData(key) { return workerEnvironment.get(key); },
         setEnvironmentData(key, value) { workerEnvironment.set(key, value); },
         receiveMessageOnPort(port) {
             if (!(port instanceof MessagePort)) throw new TypeError("port must be a MessagePort");
             return port._messageQueue.length ? { message: port._messageQueue.shift() } : undefined;
         },
-        markAsUntransferable() {},
-        markAsUncloneable() {},
-        isMarkedAsUntransferable: () => false,
+        markAsUntransferable(value) { untransferableObjects.add(value); },
+        markAsUncloneable(value) { uncloneableObjects.add(value); },
+        isMarkedAsUntransferable: value => untransferableObjects.has(value),
         moveMessagePortToContext(port) { return port; },
         postMessageToThread() {
             return Promise.reject(Object.assign(new Error("Canaryo does not support isolated worker threads yet"), {
