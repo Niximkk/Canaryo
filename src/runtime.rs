@@ -5280,6 +5280,7 @@ mod tests {
                         path.win32.parse("C:\\one\\file.js").root === "C:\\" &&
                         path.posix.normalize("/one/../two") === "/two" &&
                         path.posix.join("/one", "two") === "/one/two" &&
+                        path.posix.parse("/one/file.js").root === "/" &&
                         path.posix.delimiter === ":";
                     shared && (process.platform === "win32" ? path.sep === "\\" : path.sep === "/")
                     "#,

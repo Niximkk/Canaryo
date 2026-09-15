@@ -4,10 +4,15 @@ version = "0.1.0"
 edition = "2024"
 description = "A compatibility-first JavaScript runtime for existing Node.js HTTP applications."
 license = "MIT"
+default-run = "canaryo"
 
 [[bin]]
 name = "canaryo"
 path = "src/main.rs"
+
+[[bin]]
+name = "xtask"
+path = "src/bin/xtask.rs"
 
 [[bench]]
 name = "runtime"

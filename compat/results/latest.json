@@ -1,0 +1,407 @@
+{
+  "baseline": {
+    "bun": "1.4.2",
+    "canaryo": "0.1.0",
+    "node": "v22.15.1"
+  },
+  "cases": [
+    {
+      "bun": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"posix\":{\"normalize\":\"/srv/data/file.json\",\"relative\":\"../data/file.json\",\"parsed\":{\"root\":\"/\",\"dir\":\"/srv/data\",\"base\":\"file.json\",\"ext\":\".json\",\"name\":\"file\"}},\"win32\":{\"normalize\":\"C:\\\\srv\\\\data\\\\file.json\",\"relative\":\"..\\\\data\\\\file.json\",\"parsed\":{\"root\":\"C:\\\\\",\"dir\":\"C:\\\\srv\\\\data\",\"base\":\"file.json\",\"ext\":\".json\",\"name\":\"file\"}}}",
+        "timedOut": false
+      },
+      "bunMatchesNode": true,
+      "canaryo": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"posix\":{\"normalize\":\"/srv/data/file.json\",\"relative\":\"../data/file.json\",\"parsed\":{\"root\":\"/\",\"dir\":\"/srv/data\",\"base\":\"file.json\",\"ext\":\".json\",\"name\":\"file\"}},\"win32\":{\"normalize\":\"C:\\\\srv\\\\data\\\\file.json\",\"relative\":\"..\\\\data\\\\file.json\",\"parsed\":{\"root\":\"C:\\\\\",\"dir\":\"C:\\\\srv\\\\data\",\"base\":\"file.json\",\"ext\":\".json\",\"name\":\"file\"}}}",
+        "timedOut": false
+      },
+      "canaryoMatchesNode": true,
+      "expected": "pass",
+      "fixture": "compat/cases/path-platform-variants.js",
+      "id": "path-platform-variants",
+      "module": "path",
+      "node": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"posix\":{\"normalize\":\"/srv/data/file.json\",\"relative\":\"../data/file.json\",\"parsed\":{\"root\":\"/\",\"dir\":\"/srv/data\",\"base\":\"file.json\",\"ext\":\".json\",\"name\":\"file\"}},\"win32\":{\"normalize\":\"C:\\\\srv\\\\data\\\\file.json\",\"relative\":\"..\\\\data\\\\file.json\",\"parsed\":{\"root\":\"C:\\\\\",\"dir\":\"C:\\\\srv\\\\data\",\"base\":\"file.json\",\"ext\":\".json\",\"name\":\"file\"}}}",
+        "timedOut": false
+      },
+      "source": "canaryo",
+      "status": "pass"
+    },
+    {
+      "bun": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"parsed\":{\"name\":\"canaryo\",\"tag\":[\"rust\",\"http\"],\"empty\":\"\",\"encoded\":\"a b\"},\"serialized\":\"name=canaryo&tag=rust&tag=http&empty=&encoded=a%20b\",\"custom\":{\"one\":\"1\",\"two\":\"2\"}}",
+        "timedOut": false
+      },
+      "bunMatchesNode": true,
+      "canaryo": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"parsed\":{\"name\":\"canaryo\",\"tag\":[\"rust\",\"http\"],\"empty\":\"\",\"encoded\":\"a b\"},\"serialized\":\"name=canaryo&tag=rust&tag=http&empty=&encoded=a%20b\",\"custom\":{\"one\":\"1\",\"two\":\"2\"}}",
+        "timedOut": false
+      },
+      "canaryoMatchesNode": true,
+      "expected": "pass",
+      "fixture": "compat/cases/querystring-repeated-values.js",
+      "id": "querystring-repeated-values",
+      "module": "querystring",
+      "node": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"parsed\":{\"name\":\"canaryo\",\"tag\":[\"rust\",\"http\"],\"empty\":\"\",\"encoded\":\"a b\"},\"serialized\":\"name=canaryo&tag=rust&tag=http&empty=&encoded=a%20b\",\"custom\":{\"one\":\"1\",\"two\":\"2\"}}",
+        "timedOut": false
+      },
+      "source": "canaryo",
+      "status": "pass"
+    },
+    {
+      "bun": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"decoded\":\"A🐤B\",\"lastNeed\":0,\"encoding\":\"utf8\"}",
+        "timedOut": false
+      },
+      "bunMatchesNode": true,
+      "canaryo": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"decoded\":\"A🐤B\",\"lastNeed\":0,\"encoding\":\"utf8\"}",
+        "timedOut": false
+      },
+      "canaryoMatchesNode": true,
+      "expected": "pass",
+      "fixture": "compat/cases/string-decoder-boundaries.js",
+      "id": "string-decoder-boundaries",
+      "module": "string_decoder",
+      "node": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"decoded\":\"A🐤B\",\"lastNeed\":0,\"encoding\":\"utf8\"}",
+        "timedOut": false
+      },
+      "source": "canaryo",
+      "status": "pass"
+    },
+    {
+      "bun": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"order\":[\"prepend:1\",\"on:1\",\"once:1\",\"prepend:2\",\"on:2\"],\"eventNames\":[\"value\"],\"listenerCount\":2}",
+        "timedOut": false
+      },
+      "bunMatchesNode": true,
+      "canaryo": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"order\":[\"prepend:1\",\"on:1\",\"once:1\",\"prepend:2\",\"on:2\"],\"eventNames\":[\"value\"],\"listenerCount\":2}",
+        "timedOut": false
+      },
+      "canaryoMatchesNode": true,
+      "expected": "pass",
+      "fixture": "compat/cases/events-listener-order.js",
+      "id": "events-listener-order",
+      "module": "events",
+      "node": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"order\":[\"prepend:1\",\"on:1\",\"once:1\",\"prepend:2\",\"on:2\"],\"eventNames\":[\"value\"],\"listenerCount\":2}",
+        "timedOut": false
+      },
+      "source": "canaryo",
+      "status": "pass"
+    }
+  ],
+  "generatedBy": "cargo xtask compat",
+  "schemaVersion": 1,
+  "summary": {
+    "behavior": {
+      "passed": 4,
+      "total": 4,
+      "unexpectedFailures": 0
+    },
+    "surface": {
+      "matched": 237,
+      "percent": 66.20111731843575,
+      "total": 358
+    }
+  },
+  "surface": [
+    {
+      "bunLoaded": true,
+      "canaryoLoaded": true,
+      "extra": [],
+      "matched": 22,
+      "missing": [
+        "CallTracker",
+        "partialDeepStrictEqual"
+      ],
+      "module": "assert",
+      "nodeLoaded": true,
+      "percent": 91.66666666666667,
+      "total": 24
+    },
+    {
+      "bunLoaded": true,
+      "canaryoLoaded": true,
+      "extra": [],
+      "matched": 9,
+      "missing": [
+        "isAscii",
+        "isUtf8",
+        "kStringMaxLength",
+        "resolveObjectURL",
+        "transcode"
+      ],
+      "module": "buffer",
+      "nodeLoaded": true,
+      "percent": 64.28571428571429,
+      "total": 14
+    },
+    {
+      "bunLoaded": true,
+      "canaryoLoaded": true,
+      "extra": [],
+      "matched": 15,
+      "missing": [
+        "defaultMaxListeners",
+        "init",
+        "kMaxEventTargetListeners",
+        "kMaxEventTargetListenersWarned",
+        "usingDomains"
+      ],
+      "module": "events",
+      "nodeLoaded": true,
+      "percent": 75.0,
+      "total": 20
+    },
+    {
+      "bunLoaded": true,
+      "canaryoLoaded": true,
+      "extra": [
+        "FSWatcher",
+        "StatWatcher"
+      ],
+      "matched": 84,
+      "missing": [
+        "F_OK",
+        "FileReadStream",
+        "FileWriteStream",
+        "R_OK",
+        "W_OK",
+        "X_OK",
+        "_toUnixTimestamp",
+        "chown",
+        "chownSync",
+        "fchown",
+        "fchownSync",
+        "glob",
+        "globSync",
+        "lchmod",
+        "lchmodSync",
+        "lchown",
+        "lchownSync",
+        "lutimes",
+        "lutimesSync",
+        "openAsBlob",
+        "statfs",
+        "statfsSync"
+      ],
+      "module": "fs",
+      "nodeLoaded": true,
+      "percent": 79.24528301886792,
+      "total": 106
+    },
+    {
+      "bunLoaded": true,
+      "canaryoLoaded": true,
+      "extra": [],
+      "matched": 15,
+      "missing": [
+        "_makeLong",
+        "matchesGlob"
+      ],
+      "module": "path",
+      "nodeLoaded": true,
+      "percent": 88.23529411764706,
+      "total": 17
+    },
+    {
+      "bunLoaded": true,
+      "canaryoLoaded": true,
+      "extra": [
+        "_captureRejections"
+      ],
+      "matched": 31,
+      "missing": [
+        "_debugEnd",
+        "_debugProcess",
+        "_eventsCount",
+        "_exiting",
+        "_fatalException",
+        "_getActiveHandles",
+        "_getActiveRequests",
+        "_kill",
+        "_linkedBinding",
+        "_maxListeners",
+        "_preload_modules",
+        "_rawDebug",
+        "_startProfilerIdleNotifier",
+        "_stopProfilerIdleNotifier",
+        "_tickCallback",
+        "allowedNodeEnvironmentFlags",
+        "assert",
+        "availableMemory",
+        "binding",
+        "chdir",
+        "constrainedMemory",
+        "debugPort",
+        "dlopen",
+        "domain",
+        "execve",
+        "features",
+        "finalization",
+        "getActiveResourcesInfo",
+        "hasUncaughtExceptionCaptureCallback",
+        "kill",
+        "loadEnvFile",
+        "mainModule",
+        "openStdin",
+        "ppid",
+        "ref",
+        "report",
+        "setSourceMapsEnabled",
+        "setUncaughtExceptionCaptureCallback",
+        "sourceMapsEnabled",
+        "umask",
+        "unref"
+      ],
+      "module": "process",
+      "nodeLoaded": true,
+      "percent": 43.05555555555556,
+      "total": 72
+    },
+    {
+      "bunLoaded": true,
+      "canaryoLoaded": true,
+      "extra": [],
+      "matched": 7,
+      "missing": [],
+      "module": "querystring",
+      "nodeLoaded": true,
+      "percent": 100.0,
+      "total": 7
+    },
+    {
+      "bunLoaded": true,
+      "canaryoLoaded": true,
+      "extra": [
+        "super_"
+      ],
+      "matched": 22,
+      "missing": [
+        "_isArrayBufferView",
+        "compose",
+        "destroy",
+        "duplexPair"
+      ],
+      "module": "stream",
+      "nodeLoaded": true,
+      "percent": 84.61538461538461,
+      "total": 26
+    },
+    {
+      "bunLoaded": true,
+      "canaryoLoaded": true,
+      "extra": [],
+      "matched": 1,
+      "missing": [],
+      "module": "string_decoder",
+      "nodeLoaded": true,
+      "percent": 100.0,
+      "total": 1
+    },
+    {
+      "bunLoaded": true,
+      "canaryoLoaded": true,
+      "extra": [],
+      "matched": 6,
+      "missing": [
+        "_unrefActive",
+        "active",
+        "enroll",
+        "promises",
+        "unenroll"
+      ],
+      "module": "timers",
+      "nodeLoaded": true,
+      "percent": 54.54545454545455,
+      "total": 11
+    },
+    {
+      "bunLoaded": true,
+      "canaryoLoaded": true,
+      "extra": [],
+      "matched": 10,
+      "missing": [
+        "Url",
+        "resolveObject"
+      ],
+      "module": "url",
+      "nodeLoaded": true,
+      "percent": 83.33333333333333,
+      "total": 12
+    },
+    {
+      "bunLoaded": true,
+      "canaryoLoaded": true,
+      "extra": [],
+      "matched": 15,
+      "missing": [
+        "_errnoException",
+        "_exceptionWithHostPort",
+        "_extend",
+        "aborted",
+        "debug",
+        "diff",
+        "getCallSite",
+        "getCallSites",
+        "getSystemErrorMap",
+        "getSystemErrorMessage",
+        "getSystemErrorName",
+        "isArray",
+        "isBoolean",
+        "isBuffer",
+        "isDate",
+        "isDeepStrictEqual",
+        "isError",
+        "isFunction",
+        "isNull",
+        "isNullOrUndefined",
+        "isNumber",
+        "isObject",
+        "isPrimitive",
+        "isRegExp",
+        "isString",
+        "isSymbol",
+        "isUndefined",
+        "log",
+        "parseEnv",
+        "styleText",
+        "toUSVString",
+        "transferableAbortController",
+        "transferableAbortSignal"
+      ],
+      "module": "util",
+      "nodeLoaded": true,
+      "percent": 31.25,
+      "total": 48
+    }
+  ]
+}

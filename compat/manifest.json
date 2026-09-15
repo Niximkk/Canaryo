@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "baseline": {
+    "node": "22.15.1",
+    "bun": "1.4.2 (optional)"
+  },
+  "probe": "compat/probes/core.js",
+  "modules": [
+    "assert",
+    "buffer",
+    "events",
+    "fs",
+    "path",
+    "process",
+    "querystring",
+    "stream",
+    "string_decoder",
+    "timers",
+    "url",
+    "util"
+  ],
+  "cases": [
+    {
+      "id": "path-platform-variants",
+      "module": "path",
+      "fixture": "compat/cases/path-platform-variants.js",
+      "timeoutMs": 5000,
+      "source": "canaryo",
+      "expected": "pass"
+    },
+    {
+      "id": "querystring-repeated-values",
+      "module": "querystring",
+      "fixture": "compat/cases/querystring-repeated-values.js",
+      "timeoutMs": 5000,
+      "source": "canaryo",
+      "expected": "pass"
+    },
+    {
+      "id": "string-decoder-boundaries",
+      "module": "string_decoder",
+      "fixture": "compat/cases/string-decoder-boundaries.js",
+      "timeoutMs": 5000,
+      "source": "canaryo",
+      "expected": "pass"
+    },
+    {
+      "id": "events-listener-order",
+      "module": "events",
+      "fixture": "compat/cases/events-listener-order.js",
+      "timeoutMs": 5000,
+      "source": "canaryo",
+      "expected": "pass"
+    }
+  ]
+}

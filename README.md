@@ -194,8 +194,19 @@ npm ci --prefix fixtures/fastify-basic
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test
+cargo xtask compat run
 cargo test --test runtime_smoke -- --ignored
 ```
+
+Run the differential compatibility harness and regenerate the tracked scorecard:
+
+```sh
+cargo xtask compat probe
+cargo xtask compat run path
+cargo xtask compat report
+```
+
+Node.js supplies the expected behavior and Bun is included when installed. See the generated [COMPATIBILITY_REPORT.md](COMPATIBILITY_REPORT.md) for API-surface gaps and behavioral results.
 
 Reproduce the performance comparison:
 

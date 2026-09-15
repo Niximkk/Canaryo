@@ -1238,7 +1238,7 @@
                 const dir = dirname(normalized);
                 const base = basename(normalized);
                 const ext = extname(base);
-                const parsedRoot = root && rootOf(normalized).absolute ? `${root}/` : root;
+                const parsedRoot = root && rootOf(normalized).absolute && windows ? `${root}/` : root;
                 return { root: separator === "/" ? parsedRoot : parsedRoot.replace(/\//g, separator), dir, base, ext, name: base.slice(0, base.length - ext.length) };
             },
             format(value) {

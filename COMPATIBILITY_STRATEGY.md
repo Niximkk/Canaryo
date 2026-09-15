@@ -184,9 +184,9 @@ A module is marked supported when its selected upstream suite reaches the docume
 
 ### Phase 1: measurement foundation
 
-- Add `cargo xtask compat` and the manifest format.
-- Add the Node/Canaryo API-surface probe.
-- Generate the first JSON and Markdown baseline.
+- [x] Add `cargo xtask compat` and the manifest format.
+- [x] Add the Node/Canaryo API-surface probe.
+- [x] Generate the first JSON and Markdown baseline.
 - Convert current ignored framework tests into explicit compatibility cases.
 - Pin Node.js, Bun, and upstream revisions.
 
@@ -217,10 +217,10 @@ A module is marked supported when its selected upstream suite reaches the docume
 
 The fastest next sequence is:
 
-1. Differential API probe and result schema.
-2. Compatibility manifest and expected-failure rules.
-3. `xtask` runner with timeout and output normalization.
-4. Initial Node test families for `path`, `querystring`, `string_decoder`, and `events`.
+1. ~~Differential API probe and result schema.~~
+2. ~~Compatibility manifest and expected-failure rules.~~
+3. ~~`xtask` runner with timeout and output normalization.~~
+4. ~~Initial differential cases for `path`, `querystring`, `string_decoder`, and `events`.~~
 5. Split `polyfills.js` after the harness protects behavior.
 6. Import Buffer, filesystem, and stream clusters.
 7. Build and continuously expand the Express/Fastify plugin corpus.
