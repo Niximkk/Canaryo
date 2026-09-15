@@ -215,6 +215,8 @@ cargo bench --bench runtime -- --startup-only --startup-runs 15
 
 ## Roadmap
 
+The measurable execution plan is documented in [COMPATIBILITY_STRATEGY.md](COMPATIBILITY_STRATEGY.md).
+
 - Additional asynchronous I/O sources.
 - Wider Buffer, stream, filesystem, crypto, and networking support.
 - Complete ESM/CommonJS interop and the remaining Node package-resolution rules.
