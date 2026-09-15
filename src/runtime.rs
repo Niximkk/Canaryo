@@ -5132,9 +5132,14 @@ mod tests {
                     const Module = __canaryoBuiltins.module;
                     const localRequire = Module.createRequire(__filename);
                     Module === Module.Module && Module.isBuiltin("node:http") &&
+                        Module.isBuiltin("node:constants") && Module.isBuiltin("_stream_readable") &&
                         !Module.isBuiltin("left-pad") &&
                         Module.builtinModules.includes("fs/promises") &&
                         localRequire("node:path") === __canaryoBuiltins.path &&
+                        localRequire("node:constants") === __canaryoBuiltins.fs.constants &&
+                        localRequire("sys") === __canaryoBuiltins.util &&
+                        localRequire("_stream_readable") === __canaryoBuiltins.stream.Readable &&
+                        localRequire("node:_stream_writable") === __canaryoBuiltins.stream.Writable &&
                         Module._cache === localRequire.cache
                     "#,
                 )

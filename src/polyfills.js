@@ -1775,6 +1775,11 @@
         _isUint8Array: value => value instanceof Uint8Array,
         _uint8ArrayToBuffer: value => Buffer.from(value)
     });
+    Readable.Readable = Readable;
+    Writable.Writable = Writable;
+    Duplex.Duplex = Duplex;
+    Transform.Transform = Transform;
+    PassThrough.PassThrough = PassThrough;
 
     function deferred() {
         let resolve;
@@ -5028,11 +5033,12 @@
     };
 
     const builtinModules = [
-        "assert", "assert/strict", "async_hooks", "buffer", "console", "crypto", "diagnostics_channel", "dns",
+        "_stream_duplex", "_stream_passthrough", "_stream_readable", "_stream_transform", "_stream_writable",
+        "assert", "assert/strict", "async_hooks", "buffer", "console", "constants", "crypto", "diagnostics_channel", "dns",
         "dns/promises", "events", "fs", "fs/promises", "http", "https", "module", "net", "os",
         "path", "path/posix", "path/win32", "perf_hooks", "process", "querystring", "stream", "stream/consumers", "stream/promises", "stream/web", "string_decoder",
         "timers", "timers/promises", "tty",
-        "url", "util", "util/types", "worker_threads", "zlib"
+        "sys", "url", "util", "util/types", "worker_threads", "zlib"
     ];
     function isBuiltin(name) {
         return builtinModules.includes(String(name).replace(/^node:/, ""));
@@ -5484,6 +5490,11 @@
     Object.assign(globalThis, { CompressionStream, DecompressionStream });
 
     globalThis.__canaryoBuiltins = Object.freeze({
+        "_stream_duplex": Duplex,
+        "_stream_passthrough": PassThrough,
+        "_stream_readable": Readable,
+        "_stream_transform": Transform,
+        "_stream_writable": Writable,
         assert,
         "assert/strict": strictAssert,
         async_hooks: {
@@ -5506,6 +5517,7 @@
             constants: { MAX_LENGTH: 0x7fffffff, MAX_STRING_LENGTH: 0x1fffffe8 }
         },
         console: globalThis.console,
+        constants: fsConstants,
         crypto: cryptoModule,
         depd,
         diagnostics_channel: diagnosticsChannel,
@@ -5557,6 +5569,7 @@
         "stream/promises": streamPromises,
         "stream/web": streamWeb,
         string_decoder: { StringDecoder },
+        sys: util,
         timers: { setImmediate, clearImmediate: clearTimer, setTimeout, clearTimeout: clearTimer, setInterval, clearInterval: clearTimer },
         "timers/promises": timersPromises,
         tty: { isatty: () => false, ReadStream: function () {}, WriteStream: function () {} },

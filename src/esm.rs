@@ -148,11 +148,17 @@ fn is_export_identifier(name: &str) -> bool {
 fn is_builtin(name: &str) -> bool {
     matches!(
         name.strip_prefix("node:").unwrap_or(name),
-        "assert"
+        "_stream_duplex"
+            | "_stream_passthrough"
+            | "_stream_readable"
+            | "_stream_transform"
+            | "_stream_writable"
+            | "assert"
             | "assert/strict"
             | "async_hooks"
             | "buffer"
             | "console"
+            | "constants"
             | "crypto"
             | "diagnostics_channel"
             | "dns"
@@ -176,6 +182,7 @@ fn is_builtin(name: &str) -> bool {
             | "stream/promises"
             | "stream/web"
             | "string_decoder"
+            | "sys"
             | "timers"
             | "timers/promises"
             | "tty"
@@ -211,6 +218,11 @@ fn builtin_source(name: &str) -> Option<String> {
         )
     };
     let names: &[&str] = match normalized {
+        "_stream_duplex" => &["Duplex"],
+        "_stream_passthrough" => &["PassThrough"],
+        "_stream_readable" => &["Readable"],
+        "_stream_transform" => &["Transform"],
+        "_stream_writable" => &["Writable"],
         "assert" | "assert/strict" => &[
             "ok",
             "equal",
@@ -281,6 +293,10 @@ fn builtin_source(name: &str) -> Option<String> {
             "constants",
         ],
         "console" => &["Console", "log", "info", "debug", "warn", "error"],
+        "constants" => &[
+            "F_OK", "R_OK", "W_OK", "X_OK", "O_RDONLY", "O_WRONLY", "O_RDWR", "O_CREAT", "O_EXCL",
+            "O_TRUNC", "O_APPEND",
+        ],
         "crypto" => &[
             "createHash",
             "createHmac",
@@ -621,7 +637,7 @@ fn builtin_source(name: &str) -> Option<String> {
             "moveMessagePortToContext",
             "postMessageToThread",
         ],
-        "util" => &[
+        "util" | "sys" => &[
             "inherits",
             "deprecate",
             "debuglog",
@@ -715,6 +731,17 @@ mod tests {
     fn exposes_nested_node_builtins_to_esm() {
         assert!(builtin_source("node:dns/promises").is_some());
         assert!(builtin_source("node:module").is_some());
+        assert!(
+            builtin_source("node:_stream_readable")
+                .unwrap()
+                .contains("Readable")
+        );
+        assert!(
+            builtin_source("node:constants")
+                .unwrap()
+                .contains("O_RDONLY")
+        );
+        assert!(builtin_source("sys").unwrap().contains("parseArgs"));
         assert!(
             builtin_source("node:stream/web")
                 .unwrap()

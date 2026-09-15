@@ -8,12 +8,18 @@ use crate::modules;
 
 const MAX_ANALYZED_FILES: usize = 10_000;
 const NODE_BUILTINS: &[&str] = &[
+    "_stream_duplex",
+    "_stream_passthrough",
+    "_stream_readable",
+    "_stream_transform",
+    "_stream_writable",
     "assert",
     "assert/strict",
     "async_hooks",
     "buffer",
     "child_process",
     "console",
+    "constants",
     "crypto",
     "diagnostics_channel",
     "dns",
@@ -38,6 +44,7 @@ const NODE_BUILTINS: &[&str] = &[
     "stream/promises",
     "stream/web",
     "string_decoder",
+    "sys",
     "timers",
     "timers/promises",
     "tty",
