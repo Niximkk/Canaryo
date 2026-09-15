@@ -192,9 +192,9 @@ A module is marked supported when its selected upstream suite reaches the docume
 
 ### Phase 2: split and standardize
 
-- Split the polyfill monolith by subsystem without changing behavior.
+- [x] Split the polyfill monolith by subsystem without changing behavior.
 - Centralize errors, validation, encodings, callbacks, aborts, and resource handles.
-- Add per-module test entry points and ownership boundaries.
+- [x] Add per-module test entry points and ownership boundaries.
 
 ### Phase 3: high-impact Node tests
 
@@ -221,7 +221,7 @@ The fastest next sequence is:
 2. ~~Compatibility manifest and expected-failure rules.~~
 3. ~~`xtask` runner with timeout and output normalization.~~
 4. ~~Initial differential cases for `path`, `querystring`, `string_decoder`, and `events`.~~
-5. Split `polyfills.js` after the harness protects behavior.
+5. ~~Split `polyfills.js` after the harness protects behavior.~~
 6. Import Buffer, filesystem, and stream clusters.
 7. Build and continuously expand the Express/Fastify plugin corpus.
 

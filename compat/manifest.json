@@ -51,6 +51,30 @@
       "timeoutMs": 5000,
       "source": "canaryo",
       "expected": "pass"
+    },
+    {
+      "id": "util-legacy-and-modern-helpers",
+      "module": "util",
+      "fixture": "compat/cases/util-legacy-and-modern-helpers.js",
+      "timeoutMs": 5000,
+      "source": "canaryo",
+      "expected": "pass"
+    },
+    {
+      "id": "buffer-validation-and-transcode",
+      "module": "buffer",
+      "fixture": "compat/cases/buffer-validation-and-transcode.js",
+      "timeoutMs": 5000,
+      "source": "canaryo",
+      "expected": "pass"
+    },
+    {
+      "id": "filesystem-export-aliases",
+      "module": "fs",
+      "fixture": "compat/cases/filesystem-export-aliases.js",
+      "timeoutMs": 5000,
+      "source": "canaryo",
+      "expected": "pass"
     }
   ]
 }

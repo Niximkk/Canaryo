@@ -93,14 +93,14 @@
       "bun": {
         "exitCode": 0,
         "stderr": "",
-        "stdout": "{\"order\":[\"prepend:1\",\"on:1\",\"once:1\",\"prepend:2\",\"on:2\"],\"eventNames\":[\"value\"],\"listenerCount\":2}",
+        "stdout": "{\"order\":[\"prepend:1\",\"on:1\",\"once:1\",\"prepend:2\",\"on:2\"],\"eventNames\":[\"value\"],\"listenerCount\":2,\"defaults\":{\"inheritedMaximum\":13,\"initialized\":true,\"staticMaximum\":17,\"usingDomains\":false}}",
         "timedOut": false
       },
       "bunMatchesNode": true,
       "canaryo": {
         "exitCode": 0,
         "stderr": "",
-        "stdout": "{\"order\":[\"prepend:1\",\"on:1\",\"once:1\",\"prepend:2\",\"on:2\"],\"eventNames\":[\"value\"],\"listenerCount\":2}",
+        "stdout": "{\"order\":[\"prepend:1\",\"on:1\",\"once:1\",\"prepend:2\",\"on:2\"],\"eventNames\":[\"value\"],\"listenerCount\":2,\"defaults\":{\"inheritedMaximum\":13,\"initialized\":true,\"staticMaximum\":17,\"usingDomains\":false}}",
         "timedOut": false
       },
       "canaryoMatchesNode": true,
@@ -111,7 +111,91 @@
       "node": {
         "exitCode": 0,
         "stderr": "",
-        "stdout": "{\"order\":[\"prepend:1\",\"on:1\",\"once:1\",\"prepend:2\",\"on:2\"],\"eventNames\":[\"value\"],\"listenerCount\":2}",
+        "stdout": "{\"order\":[\"prepend:1\",\"on:1\",\"once:1\",\"prepend:2\",\"on:2\"],\"eventNames\":[\"value\"],\"listenerCount\":2,\"defaults\":{\"inheritedMaximum\":13,\"initialized\":true,\"staticMaximum\":17,\"usingDomains\":false}}",
+        "timedOut": false
+      },
+      "source": "canaryo",
+      "status": "pass"
+    },
+    {
+      "bun": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"predicates\":[[\"isArray\",[false,false,false,false,false,false,false,true,false,false,false,false]],[\"isBoolean\",[false,false,true,false,false,false,false,false,false,false,false,false]],[\"isNull\",[false,true,false,false,false,false,false,false,false,false,false,false]],[\"isNullOrUndefined\",[true,true,false,false,false,false,false,false,false,false,false,false]],[\"isNumber\",[false,false,false,true,false,false,false,false,false,false,false,false]],[\"isString\",[false,false,false,false,true,false,false,false,false,false,false,false]],[\"isSymbol\",[false,false,false,false,false,true,false,false,false,false,false,false]],[\"isUndefined\",[true,false,false,false,false,false,false,false,false,false,false,false]],[\"isRegExp\",[false,false,false,false,false,false,false,false,false,true,false,false]],[\"isObject\",[false,false,false,false,false,false,false,true,true,true,true,true]],[\"isDate\",[false,false,false,false,false,false,false,false,true,false,false,false]],[\"isError\",[false,false,false,false,false,false,false,false,false,false,true,false]],[\"isFunction\",[false,false,false,false,false,false,true,false,false,false,false,false]],[\"isPrimitive\",[true,true,true,true,true,true,false,false,false,false,false,false]],[\"isBuffer\",[false,false,false,false,false,false,false,false,false,false,false,true]]],\"deep\":[true,false],\"usv\":\"�A�\",\"extended\":{\"first\":1,\"replaced\":true,\"second\":2},\"environment\":{\"A\":\"one\",\"B\":\"two words\",\"C\":\"three\",\"D\":\"hello\"},\"environmentEdges\":{\"HASH\":\"\",\"SINGLE\":\"one # two\",\"DOUBLE\":\"line one\\nline two\",\"EMPTY\":\"\",\"SPACED\":\"trimmed\"}}",
+        "timedOut": false
+      },
+      "bunMatchesNode": false,
+      "canaryo": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"predicates\":[[\"isArray\",[false,false,false,false,false,false,false,true,false,false,false,false]],[\"isBoolean\",[false,false,true,false,false,false,false,false,false,false,false,false]],[\"isNull\",[false,true,false,false,false,false,false,false,false,false,false,false]],[\"isNullOrUndefined\",[true,true,false,false,false,false,false,false,false,false,false,false]],[\"isNumber\",[false,false,false,true,false,false,false,false,false,false,false,false]],[\"isString\",[false,false,false,false,true,false,false,false,false,false,false,false]],[\"isSymbol\",[false,false,false,false,false,true,false,false,false,false,false,false]],[\"isUndefined\",[true,false,false,false,false,false,false,false,false,false,false,false]],[\"isRegExp\",[false,false,false,false,false,false,false,false,false,true,false,false]],[\"isObject\",[false,false,false,false,false,false,false,true,true,true,true,true]],[\"isDate\",[false,false,false,false,false,false,false,false,true,false,false,false]],[\"isError\",[false,false,false,false,false,false,false,false,false,false,true,false]],[\"isFunction\",[false,false,false,false,false,false,true,false,false,false,false,false]],[\"isPrimitive\",[true,true,true,true,true,true,false,false,false,false,false,false]],[\"isBuffer\",[false,false,false,false,false,false,false,false,false,false,false,true]]],\"deep\":[true,false],\"usv\":\"�A�\",\"extended\":{\"first\":1,\"replaced\":true,\"second\":2},\"environment\":{\"A\":\"one\",\"B\":\"two words\",\"C\":\"three\",\"D\":\"hello # comment\"},\"environmentEdges\":{\"DOUBLE\":\"line one\\nline two\",\"EMPTY\":\"\",\"HASH\":\"\",\"SINGLE\":\"one # two\",\"SPACED\":\"trimmed\"}}",
+        "timedOut": false
+      },
+      "canaryoMatchesNode": true,
+      "expected": "pass",
+      "fixture": "compat/cases/util-legacy-and-modern-helpers.js",
+      "id": "util-legacy-and-modern-helpers",
+      "module": "util",
+      "node": {
+        "exitCode": 0,
+        "stderr": "(node:34696) [DEP0044] DeprecationWarning: The `util.isArray` API is deprecated. Please use `Array.isArray()` instead.\n(Use `node --trace-deprecation ...` to show where the warning was created)\n(node:34696) [DEP0045] DeprecationWarning: The `util.isBoolean` API is deprecated.  Please use `typeof arg === \"boolean\"` instead.\n(node:34696) [DEP0050] DeprecationWarning: The `util.isNull` API is deprecated. Please use `arg === null` instead.\n(node:34696) [DEP0051] DeprecationWarning: The `util.isNullOrUndefined` API is deprecated. Please use `arg === null || arg === undefined` instead.\n(node:34696) [DEP0052] DeprecationWarning: The `util.isNumber` API is deprecated. Please use `typeof arg === \"number\"` instead.\n(node:34696) [DEP0056] DeprecationWarning: The `util.isString` API is deprecated.  Please use `typeof arg === \"string\"` instead.\n(node:34696) [DEP0057] DeprecationWarning: The `util.isSymbol` API is deprecated.  Please use `arg === \"symbol\"` instead.\n(node:34696) [DEP0058] DeprecationWarning: The `util.isUndefined` API is deprecated. Please use `arg === undefined` instead.\n(node:34696) [DEP0055] DeprecationWarning: The `util.isRegExp` API is deprecated. Please use `arg instanceof RegExp` instead.\n(node:34696) [DEP0053] DeprecationWarning: The `util.isObject` API is deprecated. Please use `arg !== null && typeof arg === \"object\"` instead.\n(node:34696) [DEP0047] DeprecationWarning: The `util.isDate` API is deprecated.  Please use `arg instanceof Date` instead.\n(node:34696) [DEP0048] DeprecationWarning: The `util.isError` API is deprecated. Please use `ObjectPrototypeToString(e) === \"[object Error]\" || e instanceof Error` instead.\n(node:34696) [DEP0049] DeprecationWarning: The `util.isFunction` API is deprecated.  Please use `typeof arg === \"function\"` instead.\n(node:34696) [DEP0054] DeprecationWarning: The `util.isPrimitive` API is deprecated. Please use `arg === null || (typeof arg !== \"object\" && typeof arg !== \"function\")` instead.\n(node:34696) [DEP0046] DeprecationWarning: The `util.isBuffer` API is deprecated. Please use `Buffer.isBuffer()` instead.\n(node:34696) [DEP0060] DeprecationWarning: The `util._extend` API is deprecated. Please use Object.assign() instead.",
+        "stdout": "{\"predicates\":[[\"isArray\",[false,false,false,false,false,false,false,true,false,false,false,false]],[\"isBoolean\",[false,false,true,false,false,false,false,false,false,false,false,false]],[\"isNull\",[false,true,false,false,false,false,false,false,false,false,false,false]],[\"isNullOrUndefined\",[true,true,false,false,false,false,false,false,false,false,false,false]],[\"isNumber\",[false,false,false,true,false,false,false,false,false,false,false,false]],[\"isString\",[false,false,false,false,true,false,false,false,false,false,false,false]],[\"isSymbol\",[false,false,false,false,false,true,false,false,false,false,false,false]],[\"isUndefined\",[true,false,false,false,false,false,false,false,false,false,false,false]],[\"isRegExp\",[false,false,false,false,false,false,false,false,false,true,false,false]],[\"isObject\",[false,false,false,false,false,false,false,true,true,true,true,true]],[\"isDate\",[false,false,false,false,false,false,false,false,true,false,false,false]],[\"isError\",[false,false,false,false,false,false,false,false,false,false,true,false]],[\"isFunction\",[false,false,false,false,false,false,true,false,false,false,false,false]],[\"isPrimitive\",[true,true,true,true,true,true,false,false,false,false,false,false]],[\"isBuffer\",[false,false,false,false,false,false,false,false,false,false,false,true]]],\"deep\":[true,false],\"usv\":\"�A�\",\"extended\":{\"first\":1,\"replaced\":true,\"second\":2},\"environment\":{\"A\":\"one\",\"B\":\"two words\",\"C\":\"three\",\"D\":\"hello # comment\"},\"environmentEdges\":{\"DOUBLE\":\"line one\\nline two\",\"EMPTY\":\"\",\"HASH\":\"\",\"SINGLE\":\"one # two\",\"SPACED\":\"trimmed\"}}",
+        "timedOut": false
+      },
+      "source": "canaryo",
+      "status": "pass"
+    },
+    {
+      "bun": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"ascii\":[true,false,true,true],\"utf8\":[true,false,false,true],\"transcoded\":{\"hex\":\"430061006e00e100720069006f00\",\"roundTrip\":\"Canário\"},\"kStringMaxLength\":2147483647}",
+        "timedOut": false
+      },
+      "bunMatchesNode": false,
+      "canaryo": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"ascii\":[true,false,true,true],\"utf8\":[true,false,false,true],\"transcoded\":{\"hex\":\"430061006e00e100720069006f00\",\"roundTrip\":\"Canário\"},\"kStringMaxLength\":536870888}",
+        "timedOut": false
+      },
+      "canaryoMatchesNode": true,
+      "expected": "pass",
+      "fixture": "compat/cases/buffer-validation-and-transcode.js",
+      "id": "buffer-validation-and-transcode",
+      "module": "buffer",
+      "node": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"ascii\":[true,false,true,true],\"utf8\":[true,false,false,true],\"transcoded\":{\"hex\":\"430061006e00e100720069006f00\",\"roundTrip\":\"Canário\"},\"kStringMaxLength\":536870888}",
+        "timedOut": false
+      },
+      "source": "canaryo",
+      "status": "pass"
+    },
+    {
+      "bun": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"access\":[0,4,2,1],\"constants\":[0,4,2,1],\"streamAliases\":[true,true]}",
+        "timedOut": false
+      },
+      "bunMatchesNode": true,
+      "canaryo": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"access\":[0,4,2,1],\"constants\":[0,4,2,1],\"streamAliases\":[true,true]}",
+        "timedOut": false
+      },
+      "canaryoMatchesNode": true,
+      "expected": "pass",
+      "fixture": "compat/cases/filesystem-export-aliases.js",
+      "id": "filesystem-export-aliases",
+      "module": "fs",
+      "node": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"access\":[0,4,2,1],\"constants\":[0,4,2,1],\"streamAliases\":[true,true]}",
         "timedOut": false
       },
       "source": "canaryo",
@@ -122,13 +206,13 @@
   "schemaVersion": 1,
   "summary": {
     "behavior": {
-      "passed": 4,
-      "total": 4,
+      "passed": 7,
+      "total": 7,
       "unexpectedFailures": 0
     },
     "surface": {
-      "matched": 237,
-      "percent": 66.20111731843575,
+      "matched": 270,
+      "percent": 75.41899441340782,
       "total": 358
     }
   },
@@ -151,34 +235,27 @@
       "bunLoaded": true,
       "canaryoLoaded": true,
       "extra": [],
-      "matched": 9,
+      "matched": 13,
       "missing": [
-        "isAscii",
-        "isUtf8",
-        "kStringMaxLength",
-        "resolveObjectURL",
-        "transcode"
+        "resolveObjectURL"
       ],
       "module": "buffer",
       "nodeLoaded": true,
-      "percent": 64.28571428571429,
+      "percent": 92.85714285714286,
       "total": 14
     },
     {
       "bunLoaded": true,
       "canaryoLoaded": true,
       "extra": [],
-      "matched": 15,
+      "matched": 18,
       "missing": [
-        "defaultMaxListeners",
-        "init",
         "kMaxEventTargetListeners",
-        "kMaxEventTargetListenersWarned",
-        "usingDomains"
+        "kMaxEventTargetListenersWarned"
       ],
       "module": "events",
       "nodeLoaded": true,
-      "percent": 75.0,
+      "percent": 90.0,
       "total": 20
     },
     {
@@ -186,16 +263,17 @@
       "canaryoLoaded": true,
       "extra": [
         "FSWatcher",
+        "O_APPEND",
+        "O_CREAT",
+        "O_EXCL",
+        "O_RDONLY",
+        "O_RDWR",
+        "O_TRUNC",
+        "O_WRONLY",
         "StatWatcher"
       ],
-      "matched": 84,
+      "matched": 90,
       "missing": [
-        "F_OK",
-        "FileReadStream",
-        "FileWriteStream",
-        "R_OK",
-        "W_OK",
-        "X_OK",
         "_toUnixTimestamp",
         "chown",
         "chownSync",
@@ -215,7 +293,7 @@
       ],
       "module": "fs",
       "nodeLoaded": true,
-      "percent": 79.24528301886792,
+      "percent": 84.90566037735849,
       "total": 106
     },
     {
@@ -331,17 +409,16 @@
       "bunLoaded": true,
       "canaryoLoaded": true,
       "extra": [],
-      "matched": 6,
+      "matched": 7,
       "missing": [
         "_unrefActive",
         "active",
         "enroll",
-        "promises",
         "unenroll"
       ],
       "module": "timers",
       "nodeLoaded": true,
-      "percent": 54.54545454545455,
+      "percent": 63.63636363636363,
       "total": 11
     },
     {
@@ -362,11 +439,10 @@
       "bunLoaded": true,
       "canaryoLoaded": true,
       "extra": [],
-      "matched": 15,
+      "matched": 34,
       "missing": [
         "_errnoException",
         "_exceptionWithHostPort",
-        "_extend",
         "aborted",
         "debug",
         "diff",
@@ -375,32 +451,14 @@
         "getSystemErrorMap",
         "getSystemErrorMessage",
         "getSystemErrorName",
-        "isArray",
-        "isBoolean",
-        "isBuffer",
-        "isDate",
-        "isDeepStrictEqual",
-        "isError",
-        "isFunction",
-        "isNull",
-        "isNullOrUndefined",
-        "isNumber",
-        "isObject",
-        "isPrimitive",
-        "isRegExp",
-        "isString",
-        "isSymbol",
-        "isUndefined",
         "log",
-        "parseEnv",
         "styleText",
-        "toUSVString",
         "transferableAbortController",
         "transferableAbortSignal"
       ],
       "module": "util",
       "nodeLoaded": true,
-      "percent": 31.25,
+      "percent": 70.83333333333333,
       "total": 48
     }
   ]

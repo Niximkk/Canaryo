@@ -805,7 +805,18 @@ globalThis.__canaryoServerControl = () => {
 })();
 "#;
 
-const POLYFILLS: &str = include_str!("polyfills.js");
+const POLYFILLS: &str = concat!(
+    include_str!("polyfills/00_web_events.part.js"),
+    include_str!("polyfills/10_buffer_text.part.js"),
+    include_str!("polyfills/20_util_path_url.part.js"),
+    include_str!("polyfills/30_streams.part.js"),
+    include_str!("polyfills/40_fetch.part.js"),
+    include_str!("polyfills/50_async_process.part.js"),
+    include_str!("polyfills/60_performance_timers.part.js"),
+    include_str!("polyfills/70_filesystem.part.js"),
+    include_str!("polyfills/80_dns_workers_net.part.js"),
+    include_str!("polyfills/90_crypto_compression_registry.part.js"),
+);
 
 pub fn execute(path: &str, arguments: &[String]) -> Result<u8, String> {
     fs::metadata(path).map_err(|error| format!("não foi possível ler {path}: {error}"))?;
