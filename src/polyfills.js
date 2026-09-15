@@ -3171,8 +3171,65 @@
         if (normalized === "http") return globalThis.__canaryoHttpModule;
         return globalThis.__canaryoBuiltins[normalized];
     };
-    process.stdout = { isTTY: false, write(value) { __canaryoWrite(String(value)); return true; } };
-    process.stderr = { isTTY: false, write(value) { __canaryoWriteError(String(value)); return true; } };
+    function terminalStatus(fd) {
+        if (Number(fd) === 0) return Boolean(__canaryoOsInfo.stdinIsTerminal);
+        if (Number(fd) === 1) return Boolean(__canaryoOsInfo.stdoutIsTerminal);
+        if (Number(fd) === 2) return Boolean(__canaryoOsInfo.stderrIsTerminal);
+        return false;
+    }
+    function TTYReadStream(fd = 0, options = {}) {
+        if (!(this instanceof TTYReadStream)) return new TTYReadStream(fd, options);
+        Readable.call(this, options);
+        this.fd = Number(fd);
+        this.isTTY = terminalStatus(this.fd);
+        this.isRaw = false;
+    }
+    util.inherits(TTYReadStream, Readable);
+    TTYReadStream.prototype.setRawMode = function (mode) { this.isRaw = Boolean(mode); return this; };
+    TTYReadStream.prototype.ref = function () { this._referenced = true; return this; };
+    TTYReadStream.prototype.unref = function () { this._referenced = false; return this; };
+    TTYReadStream.prototype.hasRef = function () { return this._referenced !== false; };
+    function TTYWriteStream(fd = 1) {
+        if (!(this instanceof TTYWriteStream)) return new TTYWriteStream(fd);
+        EventEmitter.call(this);
+        this.fd = Number(fd);
+        this.isTTY = terminalStatus(this.fd);
+        this.writable = true;
+        this.columns = this.isTTY ? 80 : undefined;
+        this.rows = this.isTTY ? 24 : undefined;
+    }
+    util.inherits(TTYWriteStream, EventEmitter);
+    TTYWriteStream.prototype.write = function (value, encoding, callback) {
+        if (typeof encoding === "function") { callback = encoding; encoding = undefined; }
+        const output = typeof value === "string" ? value : Buffer.from(value).toString(encoding);
+        if (this.fd === 2) __canaryoWriteError(output);
+        else __canaryoWrite(output);
+        if (typeof callback === "function") process.nextTick(callback, null);
+        return true;
+    };
+    TTYWriteStream.prototype.getColorDepth = function (environment = process.env) {
+        if (environment && (environment.FORCE_COLOR === "0" || environment.NO_COLOR !== undefined)) return 1;
+        if (!this.isTTY && !(environment && environment.FORCE_COLOR)) return 1;
+        if (environment && environment.COLORTERM === "truecolor") return 24;
+        return 8;
+    };
+    TTYWriteStream.prototype.hasColors = function (count = 16, environment) {
+        return 2 ** this.getColorDepth(environment) >= Number(count);
+    };
+    TTYWriteStream.prototype.getWindowSize = function () { return [this.columns || 80, this.rows || 24]; };
+    for (const method of ["clearLine", "clearScreenDown", "cursorTo", "moveCursor"]) {
+        TTYWriteStream.prototype[method] = function (...args) {
+            const callback = typeof args[args.length - 1] === "function" ? args.pop() : undefined;
+            if (callback) process.nextTick(callback, null);
+            return true;
+        };
+    }
+    TTYWriteStream.prototype.ref = function () { this._referenced = true; return this; };
+    TTYWriteStream.prototype.unref = function () { this._referenced = false; return this; };
+    TTYWriteStream.prototype.hasRef = function () { return this._referenced !== false; };
+    process.stdin = new TTYReadStream(0);
+    process.stdout = new TTYWriteStream(1);
+    process.stderr = new TTYWriteStream(2);
     const performanceTimeOrigin = Date.now() - __canaryoPerformanceNow();
     const performanceEntries = [];
     const performanceObservers = new Set();
@@ -4090,6 +4147,23 @@
         return bytesRead;
     }
     function writeSync(fd, value, offsetOrPosition, lengthOrEncoding, position) {
+        if (Number(fd) === 1 || Number(fd) === 2) {
+            let bytes;
+            if (typeof value === "string") {
+                bytes = Buffer.from(value, typeof lengthOrEncoding === "string" ? lengthOrEncoding : "utf8");
+            } else {
+                if (!ArrayBuffer.isView(value)) throw new TypeError("buffer must be an ArrayBuffer view");
+                const offset = offsetOrPosition === undefined ? 0 : Number(offsetOrPosition);
+                const length = lengthOrEncoding === undefined ? value.byteLength - offset : Number(lengthOrEncoding);
+                if (!Number.isInteger(offset) || !Number.isInteger(length) || offset < 0 || length < 0 || offset + length > value.byteLength) {
+                    throw new RangeError("offset and length are outside the buffer");
+                }
+                bytes = Buffer.from(value).subarray(offset, offset + length);
+            }
+            if (Number(fd) === 2) __canaryoWriteError(bytes.toString());
+            else __canaryoWrite(bytes.toString());
+            return bytes.length;
+        }
         const file = fileDescriptor(fd);
         if (!file.writable) throw new Error(`EBADF: file is not open for writing, fd ${fd}`);
         let bytes;
@@ -5572,7 +5646,7 @@
         sys: util,
         timers: { setImmediate, clearImmediate: clearTimer, setTimeout, clearTimeout: clearTimer, setInterval, clearInterval: clearTimer },
         "timers/promises": timersPromises,
-        tty: { isatty: () => false, ReadStream: function () {}, WriteStream: function () {} },
+        tty: { isatty: terminalStatus, ReadStream: TTYReadStream, WriteStream: TTYWriteStream },
         url: {
             URL,
             URLSearchParams,

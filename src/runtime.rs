@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, VecDeque},
     env, fs,
-    io::{self, Read, Write},
+    io::{self, IsTerminal, Read, Write},
     net::{IpAddr, Shutdown, TcpStream, ToSocketAddrs},
     path::Path,
     sync::{
@@ -1212,6 +1212,15 @@ fn install_host_globals<'js>(
                 "BE"
             },
         )
+        .map_err(|error| error.to_string())?;
+    os_info
+        .set("stdinIsTerminal", io::stdin().is_terminal())
+        .map_err(|error| error.to_string())?;
+    os_info
+        .set("stdoutIsTerminal", io::stdout().is_terminal())
+        .map_err(|error| error.to_string())?;
+    os_info
+        .set("stderrIsTerminal", io::stderr().is_terminal())
         .map_err(|error| error.to_string())?;
     globals
         .set("__canaryoOsInfo", os_info)
@@ -5161,6 +5170,7 @@ mod tests {
                 .eval::<bool, _>(
                     r#"
                     const os = __canaryoBuiltins.os;
+                    const tty = __canaryoBuiltins.tty;
                     os.platform() === process.platform && os.arch() === process.arch &&
                         typeof os.type() === "string" && os.type().length > 0 &&
                         typeof os.tmpdir() === "string" && os.tmpdir().length > 0 &&
@@ -5168,7 +5178,15 @@ mod tests {
                         ["LE", "BE"].includes(os.endianness()) &&
                         os.availableParallelism() >= 1 &&
                         os.cpus().length === os.availableParallelism() &&
-                        os.uptime() >= 0 && typeof os.userInfo().username === "string"
+                        os.uptime() >= 0 && typeof os.userInfo().username === "string" &&
+                        process.stdin instanceof tty.ReadStream && process.stdout instanceof tty.WriteStream &&
+                        process.stderr instanceof tty.WriteStream && process.stdin.fd === 0 &&
+                        process.stdout.fd === 1 && process.stderr.fd === 2 &&
+                        tty.isatty(0) === process.stdin.isTTY && tty.isatty(1) === process.stdout.isTTY &&
+                        tty.isatty(2) === process.stderr.isTTY && process.stdin.setRawMode(true).isRaw &&
+                        process.stdout.getWindowSize().length === 2 &&
+                        !process.stdout.hasColors(16, { FORCE_COLOR: "0" }) &&
+                        typeof process.stdout.on === "function"
                     "#,
                 )
                 .unwrap()

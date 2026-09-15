@@ -550,6 +550,7 @@ fn builtin_source(name: &str) -> Option<String> {
             "resourceUsage",
             "emitWarning",
             "getBuiltinModule",
+            "stdin",
             "stdout",
             "stderr",
         ],
