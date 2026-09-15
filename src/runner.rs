@@ -9,8 +9,8 @@ pub fn run(
 ) -> Result<ExitCode, String> {
     match runtime_mode {
         RuntimeMode::Native => {
-            runtime::execute(path, arguments)?;
-            Ok(ExitCode::SUCCESS)
+            let exit_code = runtime::execute(path, arguments)?;
+            Ok(ExitCode::from(exit_code))
         }
         RuntimeMode::Node => run_with_node(path, arguments),
     }

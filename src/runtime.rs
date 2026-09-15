@@ -807,7 +807,7 @@ globalThis.__canaryoServerControl = () => {
 
 const POLYFILLS: &str = include_str!("polyfills.js");
 
-pub fn execute(path: &str, arguments: &[String]) -> Result<(), String> {
+pub fn execute(path: &str, arguments: &[String]) -> Result<u8, String> {
     fs::metadata(path).map_err(|error| format!("não foi possível ler {path}: {error}"))?;
     let entry = Path::new(path)
         .canonicalize()
@@ -847,15 +847,31 @@ pub fn execute(path: &str, arguments: &[String]) -> Result<(), String> {
             None
         };
 
-        while context.execute_pending_job() {}
+        let should_exit: Function = context
+            .globals()
+            .get("__canaryoProcessShouldExit")
+            .map_err(|error| error.to_string())?;
+        if !should_exit
+            .call::<_, bool>(())
+            .catch(&context)
+            .map_err(|error| error.to_string())?
+        {
+            while context.execute_pending_job() {}
+        }
         let start_server: Function = context
             .globals()
             .get("__canaryoStartPendingServer")
             .map_err(|error| error.to_string())?;
-        start_server
-            .call::<_, ()>(())
+        if !should_exit
+            .call::<_, bool>(())
             .catch(&context)
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| error.to_string())?
+        {
+            start_server
+                .call::<_, ()>(())
+                .catch(&context)
+                .map_err(|error| error.to_string())?;
+        }
         if let Some(module_evaluation) = module_evaluation {
             module_evaluation
                 .finish::<()>()
@@ -863,8 +879,21 @@ pub fn execute(path: &str, arguments: &[String]) -> Result<(), String> {
                 .map_err(|error| error.to_string())?;
         }
         while context.execute_pending_job() {}
-        drain_event_loop(&context)?;
-        Ok(())
+        if !should_exit
+            .call::<_, bool>(())
+            .catch(&context)
+            .map_err(|error| error.to_string())?
+        {
+            drain_event_loop(&context)?;
+        }
+        let exit_code: Function = context
+            .globals()
+            .get("__canaryoProcessExitCode")
+            .map_err(|error| error.to_string())?;
+        exit_code
+            .call::<_, u8>(())
+            .catch(&context)
+            .map_err(|error| error.to_string())
     })
 }
 
@@ -885,7 +914,18 @@ fn drain_event_loop(context: &rquickjs::Ctx<'_>) -> Result<(), String> {
         .globals()
         .get("__canaryoHasReferencedTimers")
         .map_err(|error| error.to_string())?;
+    let should_exit: Function = context
+        .globals()
+        .get("__canaryoProcessShouldExit")
+        .map_err(|error| error.to_string())?;
     loop {
+        if should_exit
+            .call::<_, bool>(())
+            .catch(context)
+            .map_err(|error| error.to_string())?
+        {
+            return Ok(());
+        }
         let pending_http = poll_http
             .call::<_, usize>(())
             .catch(context)
@@ -2759,6 +2799,33 @@ fn read_compressed(mut reader: impl Read) -> io::Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn returns_explicit_process_exit_codes() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let id = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let filename = env::temp_dir().join(format!(
+            "canaryo-process-exit-{}-{id}.js",
+            std::process::id()
+        ));
+        fs::write(
+            &filename,
+            "setTimeout(() => { throw new Error('timer should not run'); }, 10000); process.exit(7);",
+        )
+        .unwrap();
+
+        let exit_code = execute(filename.to_string_lossy().as_ref(), &[]).unwrap();
+        fs::write(&filename, "process.exitCode = 9;").unwrap();
+        let passive_exit_code = execute(filename.to_string_lossy().as_ref(), &[]).unwrap();
+
+        fs::remove_file(filename).unwrap();
+        assert_eq!(exit_code, 7);
+        assert_eq!(passive_exit_code, 9);
+    }
 
     #[test]
     fn executes_javascript() {

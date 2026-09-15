@@ -3131,6 +3131,31 @@
     process.config = { variables: {} };
     process.moduleLoadList = [];
     process.exitCode = undefined;
+    let processExitRequested = false;
+    let processExitEmitted = false;
+    function normalizedExitCode(value) {
+        if (value === undefined || value === null || value === "") return 0;
+        const number = Number(value);
+        if (!Number.isInteger(number)) throw new TypeError("exit code must be an integer");
+        return number & 255;
+    }
+    process.exit = code => {
+        if (code !== undefined) process.exitCode = normalizedExitCode(code);
+        else process.exitCode = normalizedExitCode(process.exitCode);
+        processExitRequested = true;
+        if (globalThis.__canaryoActiveServer) {
+            globalThis.__canaryoActiveServer.__canaryoCloseRequested = true;
+            globalThis.__canaryoActiveServer.__canaryoCloseAllConnectionsRequested = true;
+        }
+        if (!processExitEmitted) {
+            processExitEmitted = true;
+            process.emit("exit", process.exitCode);
+        }
+    };
+    process.reallyExit = process.exit;
+    process.abort = () => process.exit(134);
+    globalThis.__canaryoProcessShouldExit = () => processExitRequested;
+    globalThis.__canaryoProcessExitCode = () => normalizedExitCode(process.exitCode);
     process.nextTick = (callback, ...args) => {
         if (!asyncContextEnabled) {
             Promise.resolve().then(() => callback(...args));
