@@ -138,7 +138,7 @@
       "module": "util",
       "node": {
         "exitCode": 0,
-        "stderr": "(node:34696) [DEP0044] DeprecationWarning: The `util.isArray` API is deprecated. Please use `Array.isArray()` instead.\n(Use `node --trace-deprecation ...` to show where the warning was created)\n(node:34696) [DEP0045] DeprecationWarning: The `util.isBoolean` API is deprecated.  Please use `typeof arg === \"boolean\"` instead.\n(node:34696) [DEP0050] DeprecationWarning: The `util.isNull` API is deprecated. Please use `arg === null` instead.\n(node:34696) [DEP0051] DeprecationWarning: The `util.isNullOrUndefined` API is deprecated. Please use `arg === null || arg === undefined` instead.\n(node:34696) [DEP0052] DeprecationWarning: The `util.isNumber` API is deprecated. Please use `typeof arg === \"number\"` instead.\n(node:34696) [DEP0056] DeprecationWarning: The `util.isString` API is deprecated.  Please use `typeof arg === \"string\"` instead.\n(node:34696) [DEP0057] DeprecationWarning: The `util.isSymbol` API is deprecated.  Please use `arg === \"symbol\"` instead.\n(node:34696) [DEP0058] DeprecationWarning: The `util.isUndefined` API is deprecated. Please use `arg === undefined` instead.\n(node:34696) [DEP0055] DeprecationWarning: The `util.isRegExp` API is deprecated. Please use `arg instanceof RegExp` instead.\n(node:34696) [DEP0053] DeprecationWarning: The `util.isObject` API is deprecated. Please use `arg !== null && typeof arg === \"object\"` instead.\n(node:34696) [DEP0047] DeprecationWarning: The `util.isDate` API is deprecated.  Please use `arg instanceof Date` instead.\n(node:34696) [DEP0048] DeprecationWarning: The `util.isError` API is deprecated. Please use `ObjectPrototypeToString(e) === \"[object Error]\" || e instanceof Error` instead.\n(node:34696) [DEP0049] DeprecationWarning: The `util.isFunction` API is deprecated.  Please use `typeof arg === \"function\"` instead.\n(node:34696) [DEP0054] DeprecationWarning: The `util.isPrimitive` API is deprecated. Please use `arg === null || (typeof arg !== \"object\" && typeof arg !== \"function\")` instead.\n(node:34696) [DEP0046] DeprecationWarning: The `util.isBuffer` API is deprecated. Please use `Buffer.isBuffer()` instead.\n(node:34696) [DEP0060] DeprecationWarning: The `util._extend` API is deprecated. Please use Object.assign() instead.",
+        "stderr": "(node:20224) [DEP0044] DeprecationWarning: The `util.isArray` API is deprecated. Please use `Array.isArray()` instead.\n(Use `node --trace-deprecation ...` to show where the warning was created)\n(node:20224) [DEP0045] DeprecationWarning: The `util.isBoolean` API is deprecated.  Please use `typeof arg === \"boolean\"` instead.\n(node:20224) [DEP0050] DeprecationWarning: The `util.isNull` API is deprecated. Please use `arg === null` instead.\n(node:20224) [DEP0051] DeprecationWarning: The `util.isNullOrUndefined` API is deprecated. Please use `arg === null || arg === undefined` instead.\n(node:20224) [DEP0052] DeprecationWarning: The `util.isNumber` API is deprecated. Please use `typeof arg === \"number\"` instead.\n(node:20224) [DEP0056] DeprecationWarning: The `util.isString` API is deprecated.  Please use `typeof arg === \"string\"` instead.\n(node:20224) [DEP0057] DeprecationWarning: The `util.isSymbol` API is deprecated.  Please use `arg === \"symbol\"` instead.\n(node:20224) [DEP0058] DeprecationWarning: The `util.isUndefined` API is deprecated. Please use `arg === undefined` instead.\n(node:20224) [DEP0055] DeprecationWarning: The `util.isRegExp` API is deprecated. Please use `arg instanceof RegExp` instead.\n(node:20224) [DEP0053] DeprecationWarning: The `util.isObject` API is deprecated. Please use `arg !== null && typeof arg === \"object\"` instead.\n(node:20224) [DEP0047] DeprecationWarning: The `util.isDate` API is deprecated.  Please use `arg instanceof Date` instead.\n(node:20224) [DEP0048] DeprecationWarning: The `util.isError` API is deprecated. Please use `ObjectPrototypeToString(e) === \"[object Error]\" || e instanceof Error` instead.\n(node:20224) [DEP0049] DeprecationWarning: The `util.isFunction` API is deprecated.  Please use `typeof arg === \"function\"` instead.\n(node:20224) [DEP0054] DeprecationWarning: The `util.isPrimitive` API is deprecated. Please use `arg === null || (typeof arg !== \"object\" && typeof arg !== \"function\")` instead.\n(node:20224) [DEP0046] DeprecationWarning: The `util.isBuffer` API is deprecated. Please use `Buffer.isBuffer()` instead.\n(node:20224) [DEP0060] DeprecationWarning: The `util._extend` API is deprecated. Please use Object.assign() instead.",
         "stdout": "{\"predicates\":[[\"isArray\",[false,false,false,false,false,false,false,true,false,false,false,false]],[\"isBoolean\",[false,false,true,false,false,false,false,false,false,false,false,false]],[\"isNull\",[false,true,false,false,false,false,false,false,false,false,false,false]],[\"isNullOrUndefined\",[true,true,false,false,false,false,false,false,false,false,false,false]],[\"isNumber\",[false,false,false,true,false,false,false,false,false,false,false,false]],[\"isString\",[false,false,false,false,true,false,false,false,false,false,false,false]],[\"isSymbol\",[false,false,false,false,false,true,false,false,false,false,false,false]],[\"isUndefined\",[true,false,false,false,false,false,false,false,false,false,false,false]],[\"isRegExp\",[false,false,false,false,false,false,false,false,false,true,false,false]],[\"isObject\",[false,false,false,false,false,false,false,true,true,true,true,true]],[\"isDate\",[false,false,false,false,false,false,false,false,true,false,false,false]],[\"isError\",[false,false,false,false,false,false,false,false,false,false,true,false]],[\"isFunction\",[false,false,false,false,false,false,true,false,false,false,false,false]],[\"isPrimitive\",[true,true,true,true,true,true,false,false,false,false,false,false]],[\"isBuffer\",[false,false,false,false,false,false,false,false,false,false,false,true]]],\"deep\":[true,false],\"usv\":\"�A�\",\"extended\":{\"first\":1,\"replaced\":true,\"second\":2},\"environment\":{\"A\":\"one\",\"B\":\"two words\",\"C\":\"three\",\"D\":\"hello # comment\"},\"environmentEdges\":{\"DOUBLE\":\"line one\\nline two\",\"EMPTY\":\"\",\"HASH\":\"\",\"SINGLE\":\"one # two\",\"SPACED\":\"trimmed\"}}",
         "timedOut": false
       },
@@ -200,20 +200,216 @@
       },
       "source": "canaryo",
       "status": "pass"
+    },
+    {
+      "bun": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"changedDirectory\":\"cases\",\"restoredDirectory\":true,\"environment\":[\"first\",\"second value\"],\"loadResult\":\"undefined\"}",
+        "timedOut": false
+      },
+      "bunMatchesNode": true,
+      "canaryo": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"changedDirectory\":\"cases\",\"restoredDirectory\":true,\"environment\":[\"first\",\"second value\"],\"loadResult\":\"undefined\"}",
+        "timedOut": false
+      },
+      "canaryoMatchesNode": true,
+      "expected": "pass",
+      "fixture": "compat/cases/process-directory-and-env.js",
+      "id": "process-directory-and-env",
+      "module": "process",
+      "node": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"changedDirectory\":\"cases\",\"restoredDirectory\":true,\"environment\":[\"first\",\"second value\"],\"loadResult\":\"undefined\"}",
+        "timedOut": false
+      },
+      "source": "canaryo",
+      "status": "pass"
+    },
+    {
+      "bun": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"read\":{\"name\":\"Error\",\"code\":\"ENOENT\",\"syscall\":\"open\",\"path\":\"D:\\\\Projetos\\\\Github\\\\Canaryo\\\\compat\\\\cases\\\\.definitely-missing-canaryo-file\"},\"open\":{\"name\":\"Error\",\"code\":\"ENOENT\",\"syscall\":\"open\",\"path\":\"D:\\\\Projetos\\\\Github\\\\Canaryo\\\\compat\\\\cases\\\\.definitely-missing-canaryo-file\"},\"stat\":{\"name\":\"Error\",\"code\":\"ENOENT\",\"syscall\":\"stat\",\"path\":\"D:\\\\Projetos\\\\Github\\\\Canaryo\\\\compat\\\\cases\\\\.definitely-missing-canaryo-file\"},\"lstat\":{\"name\":\"Error\",\"code\":\"ENOENT\",\"syscall\":\"lstat\",\"path\":\"D:\\\\Projetos\\\\Github\\\\Canaryo\\\\compat\\\\cases\\\\.definitely-missing-canaryo-file\"},\"access\":{\"name\":\"Error\",\"code\":\"ENOENT\",\"syscall\":\"access\",\"path\":\"D:\\\\Projetos\\\\Github\\\\Canaryo\\\\compat\\\\cases\\\\.definitely-missing-canaryo-file\"},\"unlink\":{\"name\":\"Error\",\"code\":\"ENOENT\",\"syscall\":\"unlink\",\"path\":\"D:\\\\Projetos\\\\Github\\\\Canaryo\\\\compat\\\\cases\\\\.definitely-missing-canaryo-file\"},\"callback\":{\"name\":\"Error\",\"code\":\"ENOENT\",\"syscall\":\"open\",\"path\":\"D:\\\\Projetos\\\\Github\\\\Canaryo\\\\compat\\\\cases\\\\.definitely-missing-canaryo-file\"},\"promise\":{\"name\":\"Error\",\"code\":\"ENOENT\",\"syscall\":\"open\",\"path\":\"D:\\\\Projetos\\\\Github\\\\Canaryo\\\\compat\\\\cases\\\\.definitely-missing-canaryo-file\"}}",
+        "timedOut": false
+      },
+      "bunMatchesNode": true,
+      "canaryo": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"read\":{\"name\":\"Error\",\"code\":\"ENOENT\",\"syscall\":\"open\",\"path\":\"D:\\\\Projetos\\\\Github\\\\Canaryo\\\\compat\\\\cases\\\\.definitely-missing-canaryo-file\"},\"open\":{\"name\":\"Error\",\"code\":\"ENOENT\",\"syscall\":\"open\",\"path\":\"D:\\\\Projetos\\\\Github\\\\Canaryo\\\\compat\\\\cases\\\\.definitely-missing-canaryo-file\"},\"stat\":{\"name\":\"Error\",\"code\":\"ENOENT\",\"syscall\":\"stat\",\"path\":\"D:\\\\Projetos\\\\Github\\\\Canaryo\\\\compat\\\\cases\\\\.definitely-missing-canaryo-file\"},\"lstat\":{\"name\":\"Error\",\"code\":\"ENOENT\",\"syscall\":\"lstat\",\"path\":\"D:\\\\Projetos\\\\Github\\\\Canaryo\\\\compat\\\\cases\\\\.definitely-missing-canaryo-file\"},\"access\":{\"name\":\"Error\",\"code\":\"ENOENT\",\"syscall\":\"access\",\"path\":\"D:\\\\Projetos\\\\Github\\\\Canaryo\\\\compat\\\\cases\\\\.definitely-missing-canaryo-file\"},\"unlink\":{\"name\":\"Error\",\"code\":\"ENOENT\",\"syscall\":\"unlink\",\"path\":\"D:\\\\Projetos\\\\Github\\\\Canaryo\\\\compat\\\\cases\\\\.definitely-missing-canaryo-file\"},\"callback\":{\"name\":\"Error\",\"code\":\"ENOENT\",\"syscall\":\"open\",\"path\":\"D:\\\\Projetos\\\\Github\\\\Canaryo\\\\compat\\\\cases\\\\.definitely-missing-canaryo-file\"},\"promise\":{\"name\":\"Error\",\"code\":\"ENOENT\",\"syscall\":\"open\",\"path\":\"D:\\\\Projetos\\\\Github\\\\Canaryo\\\\compat\\\\cases\\\\.definitely-missing-canaryo-file\"}}",
+        "timedOut": false
+      },
+      "canaryoMatchesNode": true,
+      "expected": "pass",
+      "fixture": "compat/cases/filesystem-error-metadata.js",
+      "id": "filesystem-error-metadata",
+      "module": "fs",
+      "node": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"read\":{\"name\":\"Error\",\"code\":\"ENOENT\",\"syscall\":\"open\",\"path\":\"D:\\\\Projetos\\\\Github\\\\Canaryo\\\\compat\\\\cases\\\\.definitely-missing-canaryo-file\"},\"open\":{\"name\":\"Error\",\"code\":\"ENOENT\",\"syscall\":\"open\",\"path\":\"D:\\\\Projetos\\\\Github\\\\Canaryo\\\\compat\\\\cases\\\\.definitely-missing-canaryo-file\"},\"stat\":{\"name\":\"Error\",\"code\":\"ENOENT\",\"syscall\":\"stat\",\"path\":\"D:\\\\Projetos\\\\Github\\\\Canaryo\\\\compat\\\\cases\\\\.definitely-missing-canaryo-file\"},\"lstat\":{\"name\":\"Error\",\"code\":\"ENOENT\",\"syscall\":\"lstat\",\"path\":\"D:\\\\Projetos\\\\Github\\\\Canaryo\\\\compat\\\\cases\\\\.definitely-missing-canaryo-file\"},\"access\":{\"name\":\"Error\",\"code\":\"ENOENT\",\"syscall\":\"access\",\"path\":\"D:\\\\Projetos\\\\Github\\\\Canaryo\\\\compat\\\\cases\\\\.definitely-missing-canaryo-file\"},\"unlink\":{\"name\":\"Error\",\"code\":\"ENOENT\",\"syscall\":\"unlink\",\"path\":\"D:\\\\Projetos\\\\Github\\\\Canaryo\\\\compat\\\\cases\\\\.definitely-missing-canaryo-file\"},\"callback\":{\"name\":\"Error\",\"code\":\"ENOENT\",\"syscall\":\"open\",\"path\":\"D:\\\\Projetos\\\\Github\\\\Canaryo\\\\compat\\\\cases\\\\.definitely-missing-canaryo-file\"},\"promise\":{\"name\":\"Error\",\"code\":\"ENOENT\",\"syscall\":\"open\",\"path\":\"D:\\\\Projetos\\\\Github\\\\Canaryo\\\\compat\\\\cases\\\\.definitely-missing-canaryo-file\"}}",
+        "timedOut": false
+      },
+      "source": "canaryo",
+      "status": "pass"
+    },
+    {
+      "bun": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"output\":[\"hello 2\\n\",\"job: 1\\n\",\"job: 2\\n\",\"job: 1\\n\",\"scope\\n\",\"  inside\\n\",\"outside\\n\"],\"errors\":[\"careful\\n\",\"Assertion failed: failed 3\\n\"],\"globalMethods\":true}",
+        "timedOut": false
+      },
+      "bunMatchesNode": true,
+      "canaryo": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"output\":[\"hello 2\\n\",\"job: 1\\n\",\"job: 2\\n\",\"job: 1\\n\",\"scope\\n\",\"  inside\\n\",\"outside\\n\"],\"errors\":[\"careful\\n\",\"Assertion failed: failed 3\\n\"],\"globalMethods\":true}",
+        "timedOut": false
+      },
+      "canaryoMatchesNode": true,
+      "expected": "pass",
+      "fixture": "compat/cases/console-state-and-groups.js",
+      "id": "console-state-and-groups",
+      "module": "console",
+      "node": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"output\":[\"hello 2\\n\",\"job: 1\\n\",\"job: 2\\n\",\"job: 1\\n\",\"scope\\n\",\"  inside\\n\",\"outside\\n\"],\"errors\":[\"careful\\n\",\"Assertion failed: failed 3\\n\"],\"globalMethods\":true}",
+        "timedOut": false
+      },
+      "source": "canaryo",
+      "status": "pass"
+    },
+    {
+      "bun": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"devNull\":\"\\\\\\\\.\\\\nul\",\"loadAverageShape\":true,\"internalThread\":false}",
+        "timedOut": false
+      },
+      "bunMatchesNode": true,
+      "canaryo": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"devNull\":\"\\\\\\\\.\\\\nul\",\"loadAverageShape\":true,\"internalThread\":false}",
+        "timedOut": false
+      },
+      "canaryoMatchesNode": true,
+      "expected": "pass",
+      "fixture": "compat/cases/os-and-worker-portable-shapes.js",
+      "id": "os-and-worker-portable-shapes",
+      "module": "os",
+      "node": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"devNull\":\"\\\\\\\\.\\\\nul\",\"loadAverageShape\":true,\"internalThread\":false}",
+        "timedOut": false
+      },
+      "source": "canaryo",
+      "status": "pass"
+    },
+    {
+      "bun": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"constants\":{\"ADDRCONFIG\":1024,\"ALL\":256,\"V4MAPPED\":2048,\"NODATA\":\"ENODATA\",\"FORMERR\":\"EFORMERR\",\"SERVFAIL\":\"ESERVFAIL\",\"NOTFOUND\":\"ENOTFOUND\",\"NOTIMP\":\"ENOTIMP\",\"REFUSED\":\"EREFUSED\",\"BADQUERY\":\"EBADQUERY\",\"BADNAME\":\"EBADNAME\",\"BADFAMILY\":\"EBADFAMILY\",\"BADRESP\":\"EBADRESP\",\"CONNREFUSED\":\"ECONNREFUSED\",\"TIMEOUT\":\"ETIMEOUT\",\"EOF\":\"EOF\",\"FILE\":\"EFILE\",\"NOMEM\":\"ENOMEM\",\"DESTRUCTION\":\"EDESTRUCTION\",\"BADSTR\":\"EBADSTR\",\"BADFLAGS\":\"EBADFLAGS\",\"NONAME\":\"ENONAME\",\"BADHINTS\":\"EBADHINTS\",\"NOTINITIALIZED\":\"ENOTINITIALIZED\",\"LOADIPHLPAPI\":\"ELOADIPHLPAPI\",\"ADDRGETNETWORKPARAMS\":\"EADDRGETNETWORKPARAMS\",\"CANCELLED\":\"ECANCELLED\"},\"promisesMatch\":false,\"resultOrderMethods\":[\"function\",\"function\"]}",
+        "timedOut": false
+      },
+      "bunMatchesNode": true,
+      "canaryo": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"constants\":{\"ADDRCONFIG\":1024,\"ALL\":256,\"V4MAPPED\":2048,\"NODATA\":\"ENODATA\",\"FORMERR\":\"EFORMERR\",\"SERVFAIL\":\"ESERVFAIL\",\"NOTFOUND\":\"ENOTFOUND\",\"NOTIMP\":\"ENOTIMP\",\"REFUSED\":\"EREFUSED\",\"BADQUERY\":\"EBADQUERY\",\"BADNAME\":\"EBADNAME\",\"BADFAMILY\":\"EBADFAMILY\",\"BADRESP\":\"EBADRESP\",\"CONNREFUSED\":\"ECONNREFUSED\",\"TIMEOUT\":\"ETIMEOUT\",\"EOF\":\"EOF\",\"FILE\":\"EFILE\",\"NOMEM\":\"ENOMEM\",\"DESTRUCTION\":\"EDESTRUCTION\",\"BADSTR\":\"EBADSTR\",\"BADFLAGS\":\"EBADFLAGS\",\"NONAME\":\"ENONAME\",\"BADHINTS\":\"EBADHINTS\",\"NOTINITIALIZED\":\"ENOTINITIALIZED\",\"LOADIPHLPAPI\":\"ELOADIPHLPAPI\",\"ADDRGETNETWORKPARAMS\":\"EADDRGETNETWORKPARAMS\",\"CANCELLED\":\"ECANCELLED\"},\"promisesMatch\":false,\"resultOrderMethods\":[\"function\",\"function\"]}",
+        "timedOut": false
+      },
+      "canaryoMatchesNode": true,
+      "expected": "pass",
+      "fixture": "compat/cases/dns-public-constants.js",
+      "id": "dns-public-constants",
+      "module": "dns",
+      "node": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"constants\":{\"ADDRCONFIG\":1024,\"ALL\":256,\"V4MAPPED\":2048,\"NODATA\":\"ENODATA\",\"FORMERR\":\"EFORMERR\",\"SERVFAIL\":\"ESERVFAIL\",\"NOTFOUND\":\"ENOTFOUND\",\"NOTIMP\":\"ENOTIMP\",\"REFUSED\":\"EREFUSED\",\"BADQUERY\":\"EBADQUERY\",\"BADNAME\":\"EBADNAME\",\"BADFAMILY\":\"EBADFAMILY\",\"BADRESP\":\"EBADRESP\",\"CONNREFUSED\":\"ECONNREFUSED\",\"TIMEOUT\":\"ETIMEOUT\",\"EOF\":\"EOF\",\"FILE\":\"EFILE\",\"NOMEM\":\"ENOMEM\",\"DESTRUCTION\":\"EDESTRUCTION\",\"BADSTR\":\"EBADSTR\",\"BADFLAGS\":\"EBADFLAGS\",\"NONAME\":\"ENONAME\",\"BADHINTS\":\"EBADHINTS\",\"NOTINITIALIZED\":\"ENOTINITIALIZED\",\"LOADIPHLPAPI\":\"ELOADIPHLPAPI\",\"ADDRGETNETWORKPARAMS\":\"EADDRGETNETWORKPARAMS\",\"CANCELLED\":\"ECANCELLED\"},\"promisesMatch\":false,\"resultOrderMethods\":[\"function\",\"function\"]}",
+        "timedOut": false
+      },
+      "source": "canaryo",
+      "status": "pass"
+    },
+    {
+      "bun": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"values\":{\"Z_NO_FLUSH\":0,\"Z_SYNC_FLUSH\":2,\"Z_FULL_FLUSH\":3,\"Z_FINISH\":4,\"Z_DEFAULT_COMPRESSION\":-1,\"Z_BEST_SPEED\":1,\"Z_BEST_COMPRESSION\":9,\"Z_DEFAULT_STRATEGY\":0},\"matchConstantsObject\":false}",
+        "timedOut": false
+      },
+      "bunMatchesNode": true,
+      "canaryo": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"values\":{\"Z_NO_FLUSH\":0,\"Z_SYNC_FLUSH\":2,\"Z_FULL_FLUSH\":3,\"Z_FINISH\":4,\"Z_DEFAULT_COMPRESSION\":-1,\"Z_BEST_SPEED\":1,\"Z_BEST_COMPRESSION\":9,\"Z_DEFAULT_STRATEGY\":0},\"matchConstantsObject\":false}",
+        "timedOut": false
+      },
+      "canaryoMatchesNode": true,
+      "expected": "pass",
+      "fixture": "compat/cases/zlib-legacy-constants.js",
+      "id": "zlib-legacy-constants",
+      "module": "zlib",
+      "node": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"values\":{\"Z_NO_FLUSH\":0,\"Z_SYNC_FLUSH\":2,\"Z_FULL_FLUSH\":3,\"Z_FINISH\":4,\"Z_DEFAULT_COMPRESSION\":-1,\"Z_BEST_SPEED\":1,\"Z_BEST_COMPRESSION\":9,\"Z_DEFAULT_STRATEGY\":0},\"matchConstantsObject\":false}",
+        "timedOut": false
+      },
+      "source": "canaryo",
+      "status": "pass"
+    },
+    {
+      "bun": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"httpServer\":true,\"httpsServer\":true,\"httpsIsHttpServer\":true,\"responseIsOutgoing\":true,\"requestIsOutgoing\":true}",
+        "timedOut": false
+      },
+      "bunMatchesNode": false,
+      "canaryo": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"httpServer\":true,\"httpsServer\":true,\"httpsIsHttpServer\":false,\"responseIsOutgoing\":true,\"requestIsOutgoing\":true}",
+        "timedOut": false
+      },
+      "canaryoMatchesNode": true,
+      "expected": "pass",
+      "fixture": "compat/cases/http-exported-class-hierarchy.js",
+      "id": "http-exported-class-hierarchy",
+      "module": "http",
+      "node": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"httpServer\":true,\"httpsServer\":true,\"httpsIsHttpServer\":false,\"responseIsOutgoing\":true,\"requestIsOutgoing\":true}",
+        "timedOut": false
+      },
+      "source": "canaryo",
+      "status": "pass"
     }
   ],
   "generatedBy": "cargo xtask compat",
   "schemaVersion": 1,
   "summary": {
     "behavior": {
-      "passed": 7,
-      "total": 7,
+      "passed": 14,
+      "total": 14,
       "unexpectedFailures": 0
     },
     "surface": {
-      "matched": 270,
-      "percent": 75.41899441340782,
-      "total": 358
+      "matched": 576,
+      "percent": 62.608695652173914,
+      "total": 920
     }
   },
   "surface": [
@@ -235,6 +431,19 @@
       "bunLoaded": true,
       "canaryoLoaded": true,
       "extra": [],
+      "matched": 6,
+      "missing": [
+        "asyncWrapProviders"
+      ],
+      "module": "async_hooks",
+      "nodeLoaded": true,
+      "percent": 85.71428571428571,
+      "total": 7
+    },
+    {
+      "bunLoaded": true,
+      "canaryoLoaded": true,
+      "extra": [],
       "matched": 13,
       "missing": [
         "resolveObjectURL"
@@ -243,6 +452,166 @@
       "nodeLoaded": true,
       "percent": 92.85714285714286,
       "total": 14
+    },
+    {
+      "bunLoaded": true,
+      "canaryoLoaded": true,
+      "extra": [
+        "_counts",
+        "_groupIndent"
+      ],
+      "matched": 28,
+      "missing": [
+        "_ignoreErrors",
+        "_stderrErrorHandler",
+        "_stdoutErrorHandler"
+      ],
+      "module": "console",
+      "nodeLoaded": true,
+      "percent": 90.3225806451613,
+      "total": 31
+    },
+    {
+      "bunLoaded": true,
+      "canaryoLoaded": true,
+      "extra": [
+        "Crypto",
+        "CryptoKey",
+        "SubtleCrypto",
+        "randomFloat"
+      ],
+      "matched": 17,
+      "missing": [
+        "Certificate",
+        "Cipher",
+        "Cipheriv",
+        "Decipher",
+        "Decipheriv",
+        "DiffieHellman",
+        "DiffieHellmanGroup",
+        "ECDH",
+        "Hash",
+        "Hmac",
+        "KeyObject",
+        "Sign",
+        "Verify",
+        "X509Certificate",
+        "checkPrime",
+        "checkPrimeSync",
+        "createCipheriv",
+        "createDecipheriv",
+        "createDiffieHellman",
+        "createDiffieHellmanGroup",
+        "createECDH",
+        "createPrivateKey",
+        "createPublicKey",
+        "createSecretKey",
+        "createSign",
+        "createVerify",
+        "diffieHellman",
+        "fips",
+        "generateKey",
+        "generateKeyPair",
+        "generateKeyPairSync",
+        "generateKeySync",
+        "generatePrime",
+        "generatePrimeSync",
+        "getCipherInfo",
+        "getCiphers",
+        "getCurves",
+        "getDiffieHellman",
+        "getFips",
+        "getRandomValues",
+        "privateDecrypt",
+        "privateEncrypt",
+        "prng",
+        "pseudoRandomBytes",
+        "publicDecrypt",
+        "publicEncrypt",
+        "rng",
+        "scrypt",
+        "scryptSync",
+        "secureHeapUsed",
+        "setEngine",
+        "setFips",
+        "sign",
+        "verify"
+      ],
+      "module": "crypto",
+      "nodeLoaded": true,
+      "percent": 23.943661971830984,
+      "total": 71
+    },
+    {
+      "bunLoaded": true,
+      "canaryoLoaded": true,
+      "extra": [],
+      "matched": 5,
+      "missing": [
+        "Channel"
+      ],
+      "module": "diagnostics_channel",
+      "nodeLoaded": true,
+      "percent": 83.33333333333333,
+      "total": 6
+    },
+    {
+      "bunLoaded": true,
+      "canaryoLoaded": true,
+      "extra": [],
+      "matched": 34,
+      "missing": [
+        "Resolver",
+        "getServers",
+        "lookupService",
+        "resolveAny",
+        "resolveCaa",
+        "resolveCname",
+        "resolveMx",
+        "resolveNaptr",
+        "resolveNs",
+        "resolvePtr",
+        "resolveSoa",
+        "resolveSrv",
+        "resolveTlsa",
+        "resolveTxt",
+        "reverse",
+        "setServers"
+      ],
+      "module": "dns",
+      "nodeLoaded": true,
+      "percent": 68.0,
+      "total": 50
+    },
+    {
+      "bunLoaded": true,
+      "canaryoLoaded": true,
+      "extra": [],
+      "matched": 28,
+      "missing": [
+        "Resolver",
+        "getServers",
+        "lookupService",
+        "resolve4",
+        "resolve6",
+        "resolveAny",
+        "resolveCaa",
+        "resolveCname",
+        "resolveMx",
+        "resolveNaptr",
+        "resolveNs",
+        "resolvePtr",
+        "resolveSoa",
+        "resolveSrv",
+        "resolveTlsa",
+        "resolveTxt",
+        "reverse",
+        "setServers"
+      ],
+      "module": "dns/promises",
+      "nodeLoaded": true,
+      "percent": 60.869565217391305,
+      "total": 46
     },
     {
       "bunLoaded": true,
@@ -300,6 +669,140 @@
       "bunLoaded": true,
       "canaryoLoaded": true,
       "extra": [],
+      "matched": 25,
+      "missing": [
+        "chown",
+        "glob",
+        "lchmod",
+        "lchown",
+        "lutimes",
+        "statfs",
+        "watch"
+      ],
+      "module": "fs/promises",
+      "nodeLoaded": true,
+      "percent": 78.125,
+      "total": 32
+    },
+    {
+      "bunLoaded": true,
+      "canaryoLoaded": true,
+      "extra": [],
+      "matched": 15,
+      "missing": [
+        "CloseEvent",
+        "MessageEvent",
+        "WebSocket",
+        "_connectionListener",
+        "setMaxIdleHTTPParsers"
+      ],
+      "module": "http",
+      "nodeLoaded": true,
+      "percent": 75.0,
+      "total": 20
+    },
+    {
+      "bunLoaded": true,
+      "canaryoLoaded": true,
+      "extra": [
+        "ClientRequest",
+        "IncomingMessage",
+        "METHODS",
+        "OutgoingMessage",
+        "STATUS_CODES",
+        "ServerResponse",
+        "maxHeaderSize",
+        "validateHeaderName",
+        "validateHeaderValue"
+      ],
+      "matched": 6,
+      "missing": [],
+      "module": "https",
+      "nodeLoaded": true,
+      "percent": 100.0,
+      "total": 6
+    },
+    {
+      "bunLoaded": true,
+      "canaryoLoaded": true,
+      "extra": [
+        "createRequireFromPath"
+      ],
+      "matched": 9,
+      "missing": [
+        "SourceMap",
+        "_debug",
+        "_extensions",
+        "_findPath",
+        "_initPaths",
+        "_load",
+        "_nodeModulePaths",
+        "_pathCache",
+        "_preloadModules",
+        "_readPackage",
+        "_resolveFilename",
+        "_resolveLookupPaths",
+        "_stat",
+        "constants",
+        "enableCompileCache",
+        "findPackageJSON",
+        "findSourceMap",
+        "flushCompileCache",
+        "getCompileCacheDir",
+        "getSourceMapsSupport",
+        "globalPaths",
+        "register",
+        "registerHooks",
+        "runMain",
+        "setSourceMapsSupport",
+        "stripTypeScriptTypes",
+        "wrap",
+        "wrapper"
+      ],
+      "module": "module",
+      "nodeLoaded": true,
+      "percent": 24.324324324324323,
+      "total": 37
+    },
+    {
+      "bunLoaded": true,
+      "canaryoLoaded": true,
+      "extra": [],
+      "matched": 9,
+      "missing": [
+        "BlockList",
+        "SocketAddress",
+        "_createServerHandle",
+        "_normalizeArgs",
+        "_setSimultaneousAccepts",
+        "getDefaultAutoSelectFamily",
+        "getDefaultAutoSelectFamilyAttemptTimeout",
+        "setDefaultAutoSelectFamily",
+        "setDefaultAutoSelectFamilyAttemptTimeout"
+      ],
+      "module": "net",
+      "nodeLoaded": true,
+      "percent": 50.0,
+      "total": 18
+    },
+    {
+      "bunLoaded": true,
+      "canaryoLoaded": true,
+      "extra": [],
+      "matched": 21,
+      "missing": [
+        "getPriority",
+        "setPriority"
+      ],
+      "module": "os",
+      "nodeLoaded": true,
+      "percent": 91.30434782608695,
+      "total": 23
+    },
+    {
+      "bunLoaded": true,
+      "canaryoLoaded": true,
+      "extra": [],
       "matched": 15,
       "missing": [
         "_makeLong",
@@ -313,10 +816,24 @@
     {
       "bunLoaded": true,
       "canaryoLoaded": true,
+      "extra": [],
+      "matched": 9,
+      "missing": [
+        "Performance",
+        "PerformanceResourceTiming"
+      ],
+      "module": "perf_hooks",
+      "nodeLoaded": true,
+      "percent": 81.81818181818181,
+      "total": 11
+    },
+    {
+      "bunLoaded": true,
+      "canaryoLoaded": true,
       "extra": [
         "_captureRejections"
       ],
-      "matched": 31,
+      "matched": 33,
       "missing": [
         "_debugEnd",
         "_debugProcess",
@@ -337,7 +854,6 @@
         "assert",
         "availableMemory",
         "binding",
-        "chdir",
         "constrainedMemory",
         "debugPort",
         "dlopen",
@@ -348,7 +864,6 @@
         "getActiveResourcesInfo",
         "hasUncaughtExceptionCaptureCallback",
         "kill",
-        "loadEnvFile",
         "mainModule",
         "openStdin",
         "ppid",
@@ -362,7 +877,7 @@
       ],
       "module": "process",
       "nodeLoaded": true,
-      "percent": 43.05555555555556,
+      "percent": 45.833333333333336,
       "total": 72
     },
     {
@@ -398,6 +913,43 @@
       "bunLoaded": true,
       "canaryoLoaded": true,
       "extra": [],
+      "matched": 5,
+      "missing": [],
+      "module": "stream/consumers",
+      "nodeLoaded": true,
+      "percent": 100.0,
+      "total": 5
+    },
+    {
+      "bunLoaded": true,
+      "canaryoLoaded": true,
+      "extra": [],
+      "matched": 2,
+      "missing": [],
+      "module": "stream/promises",
+      "nodeLoaded": true,
+      "percent": 100.0,
+      "total": 2
+    },
+    {
+      "bunLoaded": true,
+      "canaryoLoaded": true,
+      "extra": [],
+      "matched": 14,
+      "missing": [
+        "ReadableByteStreamController",
+        "ReadableStreamBYOBReader",
+        "ReadableStreamBYOBRequest"
+      ],
+      "module": "stream/web",
+      "nodeLoaded": true,
+      "percent": 82.3529411764706,
+      "total": 17
+    },
+    {
+      "bunLoaded": true,
+      "canaryoLoaded": true,
+      "extra": [],
       "matched": 1,
       "missing": [],
       "module": "string_decoder",
@@ -420,6 +972,28 @@
       "nodeLoaded": true,
       "percent": 63.63636363636363,
       "total": 11
+    },
+    {
+      "bunLoaded": true,
+      "canaryoLoaded": true,
+      "extra": [],
+      "matched": 4,
+      "missing": [],
+      "module": "timers/promises",
+      "nodeLoaded": true,
+      "percent": 100.0,
+      "total": 4
+    },
+    {
+      "bunLoaded": true,
+      "canaryoLoaded": true,
+      "extra": [],
+      "matched": 3,
+      "missing": [],
+      "module": "tty",
+      "nodeLoaded": true,
+      "percent": 100.0,
+      "total": 3
     },
     {
       "bunLoaded": true,
@@ -460,6 +1034,140 @@
       "nodeLoaded": true,
       "percent": 70.83333333333333,
       "total": 48
+    },
+    {
+      "bunLoaded": true,
+      "canaryoLoaded": true,
+      "extra": [
+        "threadName"
+      ],
+      "matched": 19,
+      "missing": [],
+      "module": "worker_threads",
+      "nodeLoaded": true,
+      "percent": 100.0,
+      "total": 19
+    },
+    {
+      "bunLoaded": true,
+      "canaryoLoaded": true,
+      "extra": [],
+      "matched": 45,
+      "missing": [
+        "DEFLATE",
+        "DEFLATERAW",
+        "GUNZIP",
+        "GZIP",
+        "INFLATE",
+        "INFLATERAW",
+        "UNZIP",
+        "ZLIB_VERNUM",
+        "ZSTD_CLEVEL_DEFAULT",
+        "ZSTD_COMPRESS",
+        "ZSTD_DECOMPRESS",
+        "ZSTD_btlazy2",
+        "ZSTD_btopt",
+        "ZSTD_btultra",
+        "ZSTD_btultra2",
+        "ZSTD_c_chainLog",
+        "ZSTD_c_checksumFlag",
+        "ZSTD_c_compressionLevel",
+        "ZSTD_c_contentSizeFlag",
+        "ZSTD_c_dictIDFlag",
+        "ZSTD_c_enableLongDistanceMatching",
+        "ZSTD_c_hashLog",
+        "ZSTD_c_jobSize",
+        "ZSTD_c_ldmBucketSizeLog",
+        "ZSTD_c_ldmHashLog",
+        "ZSTD_c_ldmHashRateLog",
+        "ZSTD_c_ldmMinMatch",
+        "ZSTD_c_minMatch",
+        "ZSTD_c_nbWorkers",
+        "ZSTD_c_overlapLog",
+        "ZSTD_c_searchLog",
+        "ZSTD_c_strategy",
+        "ZSTD_c_targetLength",
+        "ZSTD_c_windowLog",
+        "ZSTD_d_windowLogMax",
+        "ZSTD_dfast",
+        "ZSTD_e_continue",
+        "ZSTD_e_end",
+        "ZSTD_e_flush",
+        "ZSTD_error_GENERIC",
+        "ZSTD_error_checksum_wrong",
+        "ZSTD_error_corruption_detected",
+        "ZSTD_error_dictionaryCreation_failed",
+        "ZSTD_error_dictionary_corrupted",
+        "ZSTD_error_dictionary_wrong",
+        "ZSTD_error_dstBuffer_null",
+        "ZSTD_error_dstSize_tooSmall",
+        "ZSTD_error_frameParameter_unsupported",
+        "ZSTD_error_frameParameter_windowTooLarge",
+        "ZSTD_error_init_missing",
+        "ZSTD_error_literals_headerWrong",
+        "ZSTD_error_maxSymbolValue_tooLarge",
+        "ZSTD_error_maxSymbolValue_tooSmall",
+        "ZSTD_error_memory_allocation",
+        "ZSTD_error_noForwardProgress_destFull",
+        "ZSTD_error_noForwardProgress_inputEmpty",
+        "ZSTD_error_no_error",
+        "ZSTD_error_parameter_combination_unsupported",
+        "ZSTD_error_parameter_outOfBound",
+        "ZSTD_error_parameter_unsupported",
+        "ZSTD_error_prefix_unknown",
+        "ZSTD_error_srcSize_wrong",
+        "ZSTD_error_stabilityCondition_notRespected",
+        "ZSTD_error_stage_wrong",
+        "ZSTD_error_tableLog_tooLarge",
+        "ZSTD_error_version_unsupported",
+        "ZSTD_error_workSpace_tooSmall",
+        "ZSTD_fast",
+        "ZSTD_greedy",
+        "ZSTD_lazy",
+        "ZSTD_lazy2",
+        "Z_BLOCK",
+        "Z_BUF_ERROR",
+        "Z_DATA_ERROR",
+        "Z_DEFAULT_CHUNK",
+        "Z_DEFAULT_LEVEL",
+        "Z_DEFAULT_MEMLEVEL",
+        "Z_DEFAULT_WINDOWBITS",
+        "Z_ERRNO",
+        "Z_FILTERED",
+        "Z_FIXED",
+        "Z_HUFFMAN_ONLY",
+        "Z_MAX_CHUNK",
+        "Z_MAX_LEVEL",
+        "Z_MAX_MEMLEVEL",
+        "Z_MAX_WINDOWBITS",
+        "Z_MEM_ERROR",
+        "Z_MIN_CHUNK",
+        "Z_MIN_LEVEL",
+        "Z_MIN_MEMLEVEL",
+        "Z_MIN_WINDOWBITS",
+        "Z_NEED_DICT",
+        "Z_NO_COMPRESSION",
+        "Z_OK",
+        "Z_PARTIAL_FLUSH",
+        "Z_RLE",
+        "Z_STREAM_END",
+        "Z_STREAM_ERROR",
+        "Z_VERSION_ERROR",
+        "ZstdCompress",
+        "ZstdDecompress",
+        "codes",
+        "crc32",
+        "createZstdCompress",
+        "createZstdDecompress",
+        "zstdCompress",
+        "zstdCompressSync",
+        "zstdDecompress",
+        "zstdDecompressSync"
+      ],
+      "module": "zlib",
+      "nodeLoaded": true,
+      "percent": 29.22077922077922,
+      "total": 154
     }
   ]
 }

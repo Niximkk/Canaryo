@@ -41,7 +41,7 @@
     function fileDescriptor(value) {
         const fd = Number(value);
         const file = openFiles.get(fd);
-        if (!Number.isInteger(fd) || !file) throw new Error(`EBADF: bad file descriptor, fd ${value}`);
+        if (!Number.isInteger(fd) || !file) throw nodeSystemError("EBADF", "read");
         return file;
     }
     function normalizeOpenFlags(flags = "r") {
@@ -75,8 +75,8 @@
         const path = normalizeFsPath(filename);
         const options = normalizeOpenFlags(flags);
         const exists = existsSync(path);
-        if (!exists && !options.create) throw new Error(`ENOENT: no such file or directory, open '${path}'`);
-        if (exists && options.exclusive && options.create) throw new Error(`EEXIST: file already exists, open '${path}'`);
+        if (!exists && !options.create) throw nodeSystemError("ENOENT", "open", path);
+        if (exists && options.exclusive && options.create) throw nodeSystemError("EEXIST", "open", path);
         if (!exists) writeFileSync(path, Buffer.alloc(0));
         else if (options.truncate) writeFileSync(path, Buffer.alloc(0));
         const fd = nextFileDescriptor++;
@@ -95,7 +95,11 @@
             const contents = Buffer.from(__canaryoFsRead(file.path));
             buffer = contents.subarray(file.position);
             file.position = contents.length;
-        } else buffer = Buffer.from(__canaryoFsRead(normalizeFsPath(filename)));
+        } else {
+            const path = normalizeFsPath(filename);
+            if (!existsSync(path)) throw nodeSystemError("ENOENT", "open", path);
+            buffer = Buffer.from(__canaryoFsRead(path));
+        }
         return encodingFrom(options) ? buffer.toString(encodingFrom(options)) : buffer;
     }
     function writeFileSync(filename, value, options) {
@@ -121,16 +125,19 @@
     function statSync(filename, options = {}) {
         const path = normalizeFsPath(filename);
         if (options.throwIfNoEntry === false && !existsSync(path)) return undefined;
+        if (!existsSync(path)) throw nodeSystemError("ENOENT", "stat", path);
         return new Stats(__canaryoFsStat(path), Boolean(options.bigint));
     }
     function lstatSync(filename, options = {}) {
         const path = normalizeFsPath(filename);
         if (options.throwIfNoEntry === false && !existsSync(path)) return undefined;
+        if (!existsSync(path)) throw nodeSystemError("ENOENT", "lstat", path);
         return new Stats(__canaryoFsLstat(path), Boolean(options.bigint));
     }
     function existsSync(filename) { return __canaryoFsExists(normalizeFsPath(filename)); }
     function accessSync(filename) {
-        if (!existsSync(filename)) throw new Error(`ENOENT: no such file or directory, access '${filename}'`);
+        const path = normalizeFsPath(filename);
+        if (!existsSync(path)) throw nodeSystemError("ENOENT", "access", path);
     }
     function mkdirSync(filename, options) {
         const recursive = options === true || Boolean(options && options.recursive);
@@ -214,7 +221,11 @@
         };
     };
     function opendirSync(filename, options) { return new Dir(filename, options); }
-    function unlinkSync(filename) { __canaryoFsUnlink(normalizeFsPath(filename)); }
+    function unlinkSync(filename) {
+        const path = normalizeFsPath(filename);
+        if (!existsSync(path)) throw nodeSystemError("ENOENT", "unlink", path);
+        __canaryoFsUnlink(path);
+    }
     function renameSync(from, to) { __canaryoFsRename(normalizeFsPath(from), normalizeFsPath(to)); }
     function copyFileSync(from, to, _mode) { __canaryoFsCopy(normalizeFsPath(from), normalizeFsPath(to)); }
     function cpSync(source, destination, options = {}) {

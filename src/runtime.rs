@@ -31,32 +31,64 @@ function Console(stdout, stderr = stdout) {
     }
     this._stdout = stdout;
     this._stderr = stderr;
+    this._times = new Map();
+    this._counts = new Map();
+    this._groupIndent = "";
 }
 Console.prototype.log = Console.prototype.info = Console.prototype.debug = function (...values) {
-    this._stdout.write(values.map(formatValue).join(" ") + "\n");
+    this._stdout.write(this._groupIndent + values.map(formatValue).join(" ") + "\n");
 };
 Console.prototype.error = Console.prototype.warn = function (...values) {
-    this._stderr.write(values.map(formatValue).join(" ") + "\n");
+    this._stderr.write(this._groupIndent + values.map(formatValue).join(" ") + "\n");
 };
+Console.prototype.assert = function (condition, ...values) {
+    if (!condition) this.error(`Assertion failed${values.length ? `: ${values.map(formatValue).join(" ")}` : ""}`);
+};
+Console.prototype.clear = function () {};
+Console.prototype.count = function (label = "default") {
+    label = String(label);
+    const value = (this._counts.get(label) || 0) + 1;
+    this._counts.set(label, value);
+    this.log(`${label}: ${value}`);
+};
+Console.prototype.countReset = function (label = "default") { this._counts.delete(String(label)); };
+Console.prototype.dir = function (value) { this.log(formatValue(value)); };
+Console.prototype.dirxml = Console.prototype.dir;
+Console.prototype.group = Console.prototype.groupCollapsed = function (...label) {
+    if (label.length) this.log(...label);
+    this._groupIndent += "  ";
+};
+Console.prototype.groupEnd = function () { this._groupIndent = this._groupIndent.slice(0, -2); };
+Console.prototype.table = function (value) { this.dir(value); };
+Console.prototype.time = function (label = "default") { this._times.set(String(label), __canaryoPerformanceNow()); };
+Console.prototype.timeLog = function (label = "default", ...values) {
+    label = String(label);
+    if (!this._times.has(label)) return;
+    this.log(`${label}: ${(__canaryoPerformanceNow() - this._times.get(label)).toFixed(3)}ms`, ...values);
+};
+Console.prototype.timeEnd = function (label = "default") {
+    label = String(label);
+    this.timeLog(label);
+    this._times.delete(label);
+};
+Console.prototype.timeStamp = Console.prototype.profile = Console.prototype.profileEnd = function () {};
+Console.prototype.trace = function (...values) { this.error("Trace:", ...values); };
+Console.prototype.createTask = function () { return { run: callback => callback() }; };
+Console.prototype.context = function () { return this; };
 
-globalThis.console = Object.freeze({
-    log(...values) {
-        __canaryoPrint(values.map(formatValue).join(" "));
-    },
-    info(...values) {
-        __canaryoPrint(values.map(formatValue).join(" "));
-    },
-    debug(...values) {
-        __canaryoPrint(values.map(formatValue).join(" "));
-    },
-    error(...values) {
-        __canaryoPrintError(values.map(formatValue).join(" "));
-    },
-    warn(...values) {
-        __canaryoPrintError(values.map(formatValue).join(" "));
-    },
-    Console
-});
+const hostConsole = new Console(
+    { write: value => __canaryoWrite(String(value)) },
+    { write: value => __canaryoWriteError(String(value)) }
+);
+for (const name of [
+    "log", "info", "debug", "error", "warn", "assert", "clear", "count", "countReset",
+    "dir", "dirxml", "group", "groupCollapsed", "groupEnd", "table", "time", "timeLog",
+    "timeEnd", "timeStamp", "trace", "profile", "profileEnd", "createTask", "context"
+]) {
+    hostConsole[name] = Console.prototype[name].bind(hostConsole);
+}
+hostConsole.Console = Console;
+globalThis.console = Object.freeze(hostConsole);
 
 function formatValue(value) {
     if (typeof value === "string") return value;
@@ -69,8 +101,11 @@ function formatValue(value) {
 }
 
 function IncomingMessage() {}
+function OutgoingMessage() {}
 function ServerResponse() {}
 function Socket() {}
+function Server() {}
+function HttpsServer() {}
 
 IncomingMessage.prototype.setEncoding = function(encoding) {
     this.__canaryoEncoding = String(encoding);
@@ -247,7 +282,15 @@ ServerResponse.prototype.end = function(chunk) {
 
 function ensureHttpEventPrototypes() {
     const EventEmitter = __canaryoBuiltins.events.EventEmitter;
-    for (const constructor of [IncomingMessage, ServerResponse, Socket, ClientRequest]) {
+    if (!(OutgoingMessage.prototype instanceof EventEmitter)) {
+        Object.setPrototypeOf(OutgoingMessage.prototype, EventEmitter.prototype);
+    }
+    for (const constructor of [ServerResponse, ClientRequest]) {
+        if (!(constructor.prototype instanceof OutgoingMessage)) {
+            Object.setPrototypeOf(constructor.prototype, OutgoingMessage.prototype);
+        }
+    }
+    for (const constructor of [IncomingMessage, Socket, Server, HttpsServer]) {
         if (!(constructor.prototype instanceof EventEmitter)) {
             Object.setPrototypeOf(constructor.prototype, EventEmitter.prototype);
         }
@@ -555,8 +598,10 @@ globalThis.__canaryoPendingHttpRequests = () => pendingClientRequests.size;
 
 const httpModule = Object.freeze({
     IncomingMessage,
+    OutgoingMessage,
     ServerResponse,
     ClientRequest,
+    Server,
     Agent,
     globalAgent,
     METHODS: ["GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH"],
@@ -655,12 +700,13 @@ const httpModule = Object.freeze({
         };
         const EventEmitter = ensureHttpEventPrototypes();
         EventEmitter.call(server);
-        Object.setPrototypeOf(server, EventEmitter.prototype);
+        Object.setPrototypeOf(server, tlsOptions ? HttpsServer.prototype : Server.prototype);
         return server;
     }
 });
 const httpsModule = Object.freeze(Object.assign({}, httpModule, {
     Agent: HttpsAgent,
+    Server: HttpsServer,
     globalAgent: httpsGlobalAgent,
     request(input, options, callback) { return clientRequest("https:", httpsGlobalAgent, input, options, callback); },
     get(input, options, callback) {
@@ -1020,6 +1066,10 @@ fn install_host_globals<'js>(
     let cwd = Function::new(context.clone(), cwd).map_err(|error| error.to_string())?;
     globals
         .set("__canaryoCwd", cwd)
+        .map_err(|error| error.to_string())?;
+    let chdir = Function::new(context.clone(), change_dir).map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoChdir", chdir)
         .map_err(|error| error.to_string())?;
     let hash = Function::new(context.clone(), crypto_digest).map_err(|error| error.to_string())?;
     globals
@@ -2583,6 +2633,15 @@ fn cwd() -> String {
     env::current_dir()
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_else(|_| ".".into())
+}
+
+fn change_dir<'js>(context: rquickjs::Ctx<'js>, path: String) -> rquickjs::Result<()> {
+    env::set_current_dir(&path).map_err(|error| {
+        rquickjs::Exception::throw_message(
+            &context,
+            &format!("cannot change directory to '{path}': {error}"),
+        )
+    })
 }
 
 fn typed_array_bytes<'a, 'js>(

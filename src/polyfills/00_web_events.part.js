@@ -2,6 +2,23 @@
     const disposeSymbol = Symbol.dispose || Symbol.for("nodejs.dispose");
     let defaultMaxListeners = 10;
 
+    function nodeSystemError(code, syscall, path, destination) {
+        const descriptions = {
+            EBADF: "bad file descriptor",
+            EEXIST: "file already exists",
+            ENOENT: "no such file or directory"
+        };
+        const operands = path === undefined
+            ? ""
+            : ` '${path}'${destination === undefined ? "" : ` -> '${destination}'`}`;
+        const error = new Error(`${code}: ${descriptions[code] || "operation failed"}, ${syscall}${operands}`);
+        error.code = code;
+        error.syscall = syscall;
+        if (path !== undefined) error.path = path;
+        if (destination !== undefined) error.dest = destination;
+        return error;
+    }
+
     function DOMException(message = "", name = "Error") {
         const error = new Error(String(message));
         Object.setPrototypeOf(error, DOMException.prototype);

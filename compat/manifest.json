@@ -7,17 +7,37 @@
   "probe": "compat/probes/core.js",
   "modules": [
     "assert",
+    "async_hooks",
     "buffer",
+    "console",
+    "crypto",
+    "diagnostics_channel",
+    "dns",
+    "dns/promises",
     "events",
     "fs",
+    "fs/promises",
+    "http",
+    "https",
+    "module",
+    "net",
+    "os",
     "path",
+    "perf_hooks",
     "process",
     "querystring",
     "stream",
+    "stream/consumers",
+    "stream/promises",
+    "stream/web",
     "string_decoder",
     "timers",
+    "timers/promises",
+    "tty",
     "url",
-    "util"
+    "util",
+    "worker_threads",
+    "zlib"
   ],
   "cases": [
     {
@@ -72,6 +92,62 @@
       "id": "filesystem-export-aliases",
       "module": "fs",
       "fixture": "compat/cases/filesystem-export-aliases.js",
+      "timeoutMs": 5000,
+      "source": "canaryo",
+      "expected": "pass"
+    },
+    {
+      "id": "process-directory-and-env",
+      "module": "process",
+      "fixture": "compat/cases/process-directory-and-env.js",
+      "timeoutMs": 5000,
+      "source": "canaryo",
+      "expected": "pass"
+    },
+    {
+      "id": "filesystem-error-metadata",
+      "module": "fs",
+      "fixture": "compat/cases/filesystem-error-metadata.js",
+      "timeoutMs": 5000,
+      "source": "canaryo",
+      "expected": "pass"
+    },
+    {
+      "id": "console-state-and-groups",
+      "module": "console",
+      "fixture": "compat/cases/console-state-and-groups.js",
+      "timeoutMs": 5000,
+      "source": "canaryo",
+      "expected": "pass"
+    },
+    {
+      "id": "os-and-worker-portable-shapes",
+      "module": "os",
+      "fixture": "compat/cases/os-and-worker-portable-shapes.js",
+      "timeoutMs": 5000,
+      "source": "canaryo",
+      "expected": "pass"
+    },
+    {
+      "id": "dns-public-constants",
+      "module": "dns",
+      "fixture": "compat/cases/dns-public-constants.js",
+      "timeoutMs": 5000,
+      "source": "canaryo",
+      "expected": "pass"
+    },
+    {
+      "id": "zlib-legacy-constants",
+      "module": "zlib",
+      "fixture": "compat/cases/zlib-legacy-constants.js",
+      "timeoutMs": 5000,
+      "source": "canaryo",
+      "expected": "pass"
+    },
+    {
+      "id": "http-exported-class-hierarchy",
+      "module": "http",
+      "fixture": "compat/cases/http-exported-class-hierarchy.js",
       "timeoutMs": 5000,
       "source": "canaryo",
       "expected": "pass"

@@ -533,6 +533,7 @@
     EventEmitter.call(process);
     Object.setPrototypeOf(process, EventEmitter.prototype);
     process.cwd = () => __canaryoCwd();
+    process.chdir = path => __canaryoChdir(String(path));
     process.platform = __canaryoOsInfo.platform;
     process.arch = __canaryoOsInfo.arch;
     process.version = "v22.0.0-canaryo";
@@ -608,6 +609,10 @@
         const normalized = String(name).replace(/^node:/, "");
         if (normalized === "http") return globalThis.__canaryoHttpModule;
         return globalThis.__canaryoBuiltins[normalized];
+    };
+    process.loadEnvFile = path => {
+        const parsed = parseEnv(readFileSync(path === undefined ? ".env" : path, "utf8"));
+        Object.assign(process.env, parsed);
     };
     function terminalStatus(fd) {
         if (Number(fd) === 0) return Boolean(__canaryoOsInfo.stdinIsTerminal);

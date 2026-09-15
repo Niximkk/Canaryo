@@ -1,5 +1,37 @@
     const dnsModule = (() => {
         let defaultResultOrder = "verbatim";
+        const lookupConstants = {
+            ADDRCONFIG: 1024,
+            ALL: 256,
+            V4MAPPED: 2048
+        };
+        const errorConstants = {
+            NODATA: "ENODATA",
+            FORMERR: "EFORMERR",
+            SERVFAIL: "ESERVFAIL",
+            NOTFOUND: "ENOTFOUND",
+            NOTIMP: "ENOTIMP",
+            REFUSED: "EREFUSED",
+            BADQUERY: "EBADQUERY",
+            BADNAME: "EBADNAME",
+            BADFAMILY: "EBADFAMILY",
+            BADRESP: "EBADRESP",
+            CONNREFUSED: "ECONNREFUSED",
+            TIMEOUT: "ETIMEOUT",
+            EOF: "EOF",
+            FILE: "EFILE",
+            NOMEM: "ENOMEM",
+            DESTRUCTION: "EDESTRUCTION",
+            BADSTR: "EBADSTR",
+            BADFLAGS: "EBADFLAGS",
+            NONAME: "ENONAME",
+            BADHINTS: "EBADHINTS",
+            NOTINITIALIZED: "ENOTINITIALIZED",
+            LOADIPHLPAPI: "ELOADIPHLPAPI",
+            ADDRGETNETWORKPARAMS: "EADDRGETNETWORKPARAMS",
+            CANCELLED: "ECANCELLED"
+        };
+        const constants = Object.assign({}, lookupConstants, errorConstants);
         function lookup(hostname, options, callback) {
             if (typeof options === "function") { callback = options; options = {}; }
             if (typeof options === "number") options = { family: options };
@@ -30,7 +62,12 @@
                 callback(error, error ? undefined : addresses.map(item => item.address));
             });
         }
-        const promises = {
+        function getDefaultResultOrder() { return defaultResultOrder; }
+        function setDefaultResultOrder(value) {
+            if (!["verbatim", "ipv4first", "ipv6first"].includes(value)) throw new TypeError("invalid DNS result order");
+            defaultResultOrder = value;
+        }
+        const promises = Object.assign({
             lookup(hostname, options) {
                 return new Promise((resolvePromise, reject) => lookup(hostname, options || {}, (error, address, family) => {
                     if (error) reject(error);
@@ -39,20 +76,19 @@
             },
             resolve(hostname, recordType) {
                 return new Promise((resolvePromise, reject) => resolve(hostname, recordType || "A", (error, addresses) => error ? reject(error) : resolvePromise(addresses)));
-            }
-        };
-        return {
+            },
+            getDefaultResultOrder,
+            setDefaultResultOrder
+        }, errorConstants);
+        return Object.assign({
             lookup,
             resolve,
             resolve4: (hostname, callback) => resolve(hostname, "A", callback),
             resolve6: (hostname, callback) => resolve(hostname, "AAAA", callback),
             promises,
-            getDefaultResultOrder: () => defaultResultOrder,
-            setDefaultResultOrder(value) {
-                if (!["verbatim", "ipv4first", "ipv6first"].includes(value)) throw new TypeError("invalid DNS result order");
-                defaultResultOrder = value;
-            }
-        };
+            getDefaultResultOrder,
+            setDefaultResultOrder
+        }, constants);
     })();
 
     const workerEnvironment = new Map();
@@ -238,6 +274,7 @@
     globalThis.BroadcastChannel = BroadcastChannel;
     const workerThreads = {
         isMainThread: true,
+        isInternalThread: false,
         threadId: 0,
         threadName: "",
         workerData: null,
@@ -542,4 +579,3 @@
         syncBuiltinESMExports: NodeModule.syncBuiltinESMExports,
         _cache: NodeModule._cache
     });
-

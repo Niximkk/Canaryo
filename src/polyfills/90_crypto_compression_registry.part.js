@@ -370,6 +370,12 @@
             BROTLI_OPERATION_FINISH: 2
         }
     };
+    for (const name of [
+        "Z_NO_FLUSH", "Z_SYNC_FLUSH", "Z_FULL_FLUSH", "Z_FINISH",
+        "Z_DEFAULT_COMPRESSION", "Z_BEST_SPEED", "Z_BEST_COMPRESSION", "Z_DEFAULT_STRATEGY"
+    ]) {
+        zlibModule[name] = zlibModule.constants[name];
+    }
 
     function webCompressionOperation(format, decompress) {
         const normalized = String(format);
@@ -462,6 +468,7 @@
         net: netModule,
         os: {
             EOL: process.platform === "win32" ? "\r\n" : "\n",
+            devNull: process.platform === "win32" ? "\\\\.\\nul" : "/dev/null",
             constants: { signals: {}, errno: {}, priority: {}, dlopen: {} },
             arch: () => __canaryoOsInfo.arch,
             platform: () => __canaryoOsInfo.platform,
@@ -487,7 +494,8 @@
                 homedir: __canaryoOsInfo.homeDir,
                 shell: null
             }),
-            networkInterfaces: () => ({})
+            networkInterfaces: () => ({}),
+            loadavg: () => [0, 0, 0]
         },
         path,
         "path/posix": posixPath,
