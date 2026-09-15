@@ -5236,4 +5236,47 @@ mod tests {
 
         assert!(supported);
     }
+
+    #[test]
+    fn parses_structured_command_line_arguments() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        let supported = context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            context
+                .eval::<bool, _>(
+                    r#"
+                    const { parseArgs } = __canaryoBuiltins.util;
+                    const parsed = parseArgs({
+                        args: ["--port=3000", "-vv", "--name", "canaryo", "server.js", "--no-color", "--", "--literal"],
+                        options: {
+                            port: { type: "string" },
+                            verbose: { type: "boolean", short: "v", multiple: true },
+                            name: { type: "string", short: "n", default: "default" },
+                            color: { type: "boolean", default: true }
+                        },
+                        strict: true,
+                        allowPositionals: true,
+                        allowNegative: true,
+                        tokens: true
+                    });
+                    let strictError = false;
+                    try { parseArgs({ args: ["--unknown"], options: {} }); }
+                    catch (error) { strictError = error instanceof TypeError; }
+                    Object.getPrototypeOf(parsed.values) === null &&
+                        parsed.values.port === "3000" && parsed.values.name === "canaryo" &&
+                        parsed.values.color === false && parsed.values.verbose.length === 2 &&
+                        parsed.values.verbose.every(Boolean) &&
+                        parsed.positionals.join(",") === "server.js,--literal" &&
+                        parsed.tokens.length === 8 && parsed.tokens[0].inlineValue === true &&
+                        parsed.tokens.some(token => token.kind === "option-terminator") && strictError
+                    "#,
+                )
+                .unwrap()
+        });
+
+        assert!(supported);
+    }
 }

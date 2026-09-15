@@ -913,6 +913,113 @@
             );
         };
     }
+    function parseArgs(config = {}) {
+        const args = config.args === undefined ? process.argv.slice(2) : Array.from(config.args, String);
+        const definitions = config.options || {};
+        const strict = config.strict !== false;
+        const allowPositionals = config.allowPositionals === undefined ? !strict : Boolean(config.allowPositionals);
+        const allowNegative = Boolean(config.allowNegative);
+        const values = Object.create(null);
+        const positionals = [];
+        const tokens = [];
+        const shortNames = new Map();
+        for (const [name, definition] of Object.entries(definitions)) {
+            if (!definition || (definition.type !== "string" && definition.type !== "boolean")) {
+                throw new TypeError(`option '${name}' must declare type 'string' or 'boolean'`);
+            }
+            if (definition.short !== undefined) shortNames.set(String(definition.short), name);
+            if (definition.default !== undefined) {
+                values[name] = definition.multiple && Array.isArray(definition.default)
+                    ? definition.default.slice()
+                    : definition.default;
+            }
+        }
+        const setOption = (name, value, definition) => {
+            if (definition?.multiple) {
+                if (!Array.isArray(values[name])) values[name] = [];
+                values[name].push(value);
+            } else values[name] = value;
+        };
+        const unknownOption = rawName => {
+            if (strict) throw new TypeError(`Unknown option '${rawName}'`);
+        };
+        let index = 0;
+        while (index < args.length) {
+            const argumentIndex = index;
+            const argument = args[index];
+            if (argument === "--") {
+                if (config.tokens) tokens.push({ kind: "option-terminator", index: argumentIndex });
+                for (index += 1; index < args.length; index++) {
+                    positionals.push(args[index]);
+                    if (config.tokens) tokens.push({ kind: "positional", index, value: args[index] });
+                }
+                break;
+            }
+            if (argument.startsWith("--") && argument.length > 2) {
+                const equal = argument.indexOf("=");
+                const rawName = equal < 0 ? argument.slice(2) : argument.slice(2, equal);
+                let name = rawName;
+                let negative = false;
+                if (allowNegative && rawName.startsWith("no-") && definitions[rawName.slice(3)]?.type === "boolean") {
+                    name = rawName.slice(3);
+                    negative = true;
+                }
+                const definition = definitions[name];
+                if (!definition) unknownOption(`--${rawName}`);
+                let value;
+                let inlineValue = false;
+                if (!definition) {
+                    value = equal < 0 ? true : argument.slice(equal + 1);
+                    inlineValue = equal >= 0;
+                } else if (definition.type === "boolean") {
+                    if (equal >= 0 && strict) throw new TypeError(`Option '--${rawName}' does not take an argument`);
+                    value = negative ? false : equal < 0 ? true : argument.slice(equal + 1) !== "false";
+                    inlineValue = equal >= 0;
+                } else {
+                    if (negative) throw new TypeError(`Option '--${rawName}' cannot be negated`);
+                    if (equal >= 0) { value = argument.slice(equal + 1); inlineValue = true; }
+                    else if (index + 1 < args.length) value = args[++index];
+                    else throw new TypeError(`Option '--${rawName}' argument is missing`);
+                }
+                setOption(name, value, definition);
+                if (config.tokens) tokens.push({ kind: "option", index: argumentIndex, name, rawName: `--${rawName}`, value, inlineValue });
+                index++;
+                continue;
+            }
+            if (argument.startsWith("-") && argument !== "-") {
+                const group = argument.slice(1);
+                let consumedValue = false;
+                for (let offset = 0; offset < group.length; offset++) {
+                    const short = group[offset];
+                    const name = shortNames.get(short) || short;
+                    const definition = definitions[name];
+                    if (!definition) unknownOption(`-${short}`);
+                    let value = true;
+                    let inlineValue = false;
+                    if (definition?.type === "string") {
+                        if (offset + 1 < group.length) {
+                            value = group.slice(offset + 1);
+                            inlineValue = true;
+                        } else if (index + 1 < args.length) value = args[++index];
+                        else throw new TypeError(`Option '-${short}' argument is missing`);
+                        consumedValue = true;
+                    }
+                    setOption(name, value, definition);
+                    if (config.tokens) tokens.push({ kind: "option", index: argumentIndex, name, rawName: `-${short}`, value, inlineValue });
+                    if (consumedValue) break;
+                }
+                index++;
+                continue;
+            }
+            if (!allowPositionals) throw new TypeError(`Unexpected argument '${argument}'`);
+            positionals.push(argument);
+            if (config.tokens) tokens.push({ kind: "positional", index, value: argument });
+            index++;
+        }
+        const result = { values, positionals };
+        if (config.tokens) result.tokens = tokens;
+        return result;
+    }
     const utilTypes = {
         isDate: value => value instanceof Date,
         isRegExp: value => value instanceof RegExp,
@@ -937,6 +1044,7 @@
         inspect,
         promisify,
         callbackify,
+        parseArgs,
         stripVTControlCharacters(value) { return String(value).replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, ""); },
         TextEncoder,
         TextDecoder,

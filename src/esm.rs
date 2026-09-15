@@ -630,6 +630,7 @@ fn builtin_source(name: &str) -> Option<String> {
             "inspect",
             "promisify",
             "callbackify",
+            "parseArgs",
             "stripVTControlCharacters",
             "TextEncoder",
             "TextDecoder",
