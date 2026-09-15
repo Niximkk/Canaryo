@@ -1020,6 +1020,102 @@
         if (config.tokens) result.tokens = tokens;
         return result;
     }
+    const mimeTokenPattern = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+    function splitMimeSegments(value) {
+        const segments = [];
+        let current = "";
+        let quoted = false;
+        let escaped = false;
+        for (const character of String(value)) {
+            if (escaped) { current += character; escaped = false; continue; }
+            if (quoted && character === "\\") { current += character; escaped = true; continue; }
+            if (character === '"') quoted = !quoted;
+            if (character === ";" && !quoted) { segments.push(current); current = ""; }
+            else current += character;
+        }
+        segments.push(current);
+        return segments;
+    }
+    function parseMimeParameter(value) {
+        const source = value.trim();
+        if (source.startsWith('"') && source.endsWith('"')) {
+            return source.slice(1, -1).replace(/\\([\\"])/g, "$1");
+        }
+        return source;
+    }
+    function serializeMimeParameter(value) {
+        const source = String(value);
+        return source && mimeTokenPattern.test(source)
+            ? source
+            : `"${source.replace(/([\\"])/g, "\\$1")}"`;
+    }
+    class MIMEParams {
+        constructor(entries) {
+            this._values = new Map();
+            if (entries) {
+                for (const [name, value] of entries) this.set(name, value);
+            }
+        }
+        delete(name) { this._values.delete(String(name).toLowerCase()); }
+        entries() { return this._values.entries(); }
+        get(name) { return this._values.get(String(name).toLowerCase()) ?? null; }
+        has(name) { return this._values.has(String(name).toLowerCase()); }
+        keys() { return this._values.keys(); }
+        set(name, value) {
+            const normalized = String(name).toLowerCase();
+            if (!mimeTokenPattern.test(normalized)) throw new TypeError(`Invalid MIME parameter name: ${name}`);
+            const contents = String(value);
+            if (/[^\t\x20-\x7e\x80-\xff]/.test(contents)) throw new TypeError(`Invalid MIME parameter value: ${value}`);
+            this._values.set(normalized, contents);
+            return this;
+        }
+        values() { return this._values.values(); }
+        toString() {
+            return [...this._values].map(([name, value]) => `${name}=${serializeMimeParameter(value)}`).join(";");
+        }
+        [Symbol.iterator]() { return this.entries(); }
+        get [Symbol.toStringTag]() { return "MIMEParams"; }
+    }
+    class MIMEType {
+        constructor(input) {
+            const segments = splitMimeSegments(input);
+            const essence = segments.shift().trim();
+            const slash = essence.indexOf("/");
+            if (slash <= 0 || slash === essence.length - 1) throw new TypeError(`Invalid MIME type: ${input}`);
+            this._type = essence.slice(0, slash).trim().toLowerCase();
+            this._subtype = essence.slice(slash + 1).trim().toLowerCase();
+            if (!mimeTokenPattern.test(this._type) || !mimeTokenPattern.test(this._subtype)) {
+                throw new TypeError(`Invalid MIME type: ${input}`);
+            }
+            this.params = new MIMEParams();
+            for (const segment of segments) {
+                const equal = segment.indexOf("=");
+                if (equal <= 0) continue;
+                const name = segment.slice(0, equal).trim().toLowerCase();
+                if (!mimeTokenPattern.test(name) || this.params.has(name)) continue;
+                this.params.set(name, parseMimeParameter(segment.slice(equal + 1)));
+            }
+        }
+        get type() { return this._type; }
+        set type(value) {
+            const normalized = String(value).toLowerCase();
+            if (!mimeTokenPattern.test(normalized)) throw new TypeError(`Invalid MIME type: ${value}`);
+            this._type = normalized;
+        }
+        get subtype() { return this._subtype; }
+        set subtype(value) {
+            const normalized = String(value).toLowerCase();
+            if (!mimeTokenPattern.test(normalized)) throw new TypeError(`Invalid MIME subtype: ${value}`);
+            this._subtype = normalized;
+        }
+        get essence() { return `${this._type}/${this._subtype}`; }
+        toString() {
+            const parameters = this.params.toString();
+            return `${this.essence}${parameters ? `;${parameters}` : ""}`;
+        }
+        toJSON() { return this.toString(); }
+        get [Symbol.toStringTag]() { return "MIMEType"; }
+    }
     const utilTypes = {
         isDate: value => value instanceof Date,
         isRegExp: value => value instanceof RegExp,
@@ -1045,6 +1141,8 @@
         promisify,
         callbackify,
         parseArgs,
+        MIMEType,
+        MIMEParams,
         stripVTControlCharacters(value) { return String(value).replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, ""); },
         TextEncoder,
         TextDecoder,

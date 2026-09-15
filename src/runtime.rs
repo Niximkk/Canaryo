@@ -5279,4 +5279,38 @@ mod tests {
 
         assert!(supported);
     }
+
+    #[test]
+    fn parses_and_serializes_mime_types() {
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        let supported = context.with(|context| {
+            install_host_globals(&context, "fixture.js", &[]).unwrap();
+            context.eval::<(), _>(POLYFILLS).unwrap();
+            context
+                .eval::<bool, _>(
+                    r#"
+                    const { MIMEType, MIMEParams } = __canaryoBuiltins.util;
+                    const mime = new MIMEType('Text/HTML; Charset="utf-8"; boundary="a;b"; charset=ignored');
+                    mime.type = "application";
+                    mime.subtype = "json";
+                    mime.params.set("Foo", "a b");
+                    const entries = [...mime.params];
+                    const standalone = new MIMEParams([["version", "1"]]);
+                    let invalid = false;
+                    try { new MIMEType("invalid"); } catch (error) { invalid = error instanceof TypeError; }
+                    mime.essence === "application/json" && mime.params.get("CHARSET") === "utf-8" &&
+                        mime.params.get("boundary") === "a;b" && mime.params.has("foo") &&
+                        entries.length === 3 && mime.toString() === 'application/json;charset=utf-8;boundary="a;b";foo="a b"' &&
+                        JSON.stringify(mime) === '"application/json;charset=utf-8;boundary=\\"a;b\\";foo=\\"a b\\""' &&
+                        standalone.toString() === "version=1" && mime instanceof MIMEType &&
+                        mime.params instanceof MIMEParams && invalid
+                    "#,
+                )
+                .unwrap()
+        });
+
+        assert!(supported);
+    }
 }

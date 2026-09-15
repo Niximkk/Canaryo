@@ -631,6 +631,8 @@ fn builtin_source(name: &str) -> Option<String> {
             "promisify",
             "callbackify",
             "parseArgs",
+            "MIMEType",
+            "MIMEParams",
             "stripVTControlCharacters",
             "TextEncoder",
             "TextDecoder",
