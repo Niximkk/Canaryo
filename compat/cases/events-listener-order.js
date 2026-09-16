@@ -27,5 +27,11 @@ console.log(JSON.stringify({
         initialized: Object.getPrototypeOf(initialized._events) === null,
         staticMaximum,
         usingDomains: events.usingDomains
-    }
+    },
+    eventTargetSymbols: [
+        typeof events.kMaxEventTargetListeners,
+        String(events.kMaxEventTargetListeners),
+        typeof events.kMaxEventTargetListenersWarned,
+        String(events.kMaxEventTargetListenersWarned)
+    ]
 }));

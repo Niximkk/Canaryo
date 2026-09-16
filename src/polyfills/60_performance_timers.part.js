@@ -355,6 +355,35 @@
     function setImmediate(callback, ...args) {
         return scheduleTimer(callback, 0, false, args);
     }
+    function enroll() {
+        const item = arguments[0];
+        const delay = Number(arguments[1]);
+        if (!item || (typeof item !== "object" && typeof item !== "function")) throw new TypeError("item must be an object");
+        if (item._idleHandle) clearTimer(item._idleHandle);
+        item._idleTimeout = Number.isFinite(delay) && delay >= 0 ? delay : -1;
+        item._idleNext = item;
+        item._idlePrev = item;
+    }
+    function unenroll() {
+        const item = arguments[0];
+        if (!item || (typeof item !== "object" && typeof item !== "function")) return;
+        const hadHandle = Boolean(item._idleHandle);
+        const pending = hadHandle && scheduledTimers.has(Number(item._idleHandle));
+        if (item._idleHandle) clearTimer(item._idleHandle);
+        item._idleHandle = undefined;
+        if (!hadHandle || pending) item._idleTimeout = -1;
+    }
+    function active() {
+        const item = arguments[0];
+        if (!item || typeof item._onTimeout !== "function" || item._idleTimeout < 0) return;
+        if (item._idleHandle) clearTimer(item._idleHandle);
+        item._idleHandle = setTimeout(() => item._onTimeout(), item._idleTimeout);
+    }
+    function unrefActive() {
+        const item = arguments[0];
+        active(item);
+        item?._idleHandle?.unref();
+    }
 
     globalThis.__canaryoRunTimers = () => {
         const now = Date.now();

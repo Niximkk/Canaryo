@@ -232,6 +232,8 @@
 
     const captureRejectionSymbol = Symbol.for("nodejs.rejection");
     const errorMonitor = Symbol("events.errorMonitor");
+    const kMaxEventTargetListeners = Symbol("events.maxEventTargetListeners");
+    const kMaxEventTargetListenersWarned = Symbol("events.maxEventTargetListenersWarned");
     function EventEmitter(options) {
         this._events = Object.create(null);
         this._captureRejections = options && Object.prototype.hasOwnProperty.call(options, "captureRejections")
@@ -241,6 +243,8 @@
     EventEmitter.captureRejections = false;
     EventEmitter.captureRejectionSymbol = captureRejectionSymbol;
     EventEmitter.errorMonitor = errorMonitor;
+    EventEmitter.kMaxEventTargetListeners = kMaxEventTargetListeners;
+    EventEmitter.kMaxEventTargetListenersWarned = kMaxEventTargetListenersWarned;
     EventEmitter.usingDomains = false;
     EventEmitter.init = function (options) { EventEmitter.call(this, options); };
     Object.defineProperty(EventEmitter, "defaultMaxListeners", {

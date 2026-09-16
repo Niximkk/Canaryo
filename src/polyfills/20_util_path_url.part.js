@@ -539,13 +539,45 @@
     posixPath.posix = posixPath;
     const path = __canaryoOsInfo.platform === "win32" ? win32Path : posixPath;
 
-    function parseUrl(value) {
-        const hashIndex = value.indexOf("#");
-        const href = hashIndex < 0 ? value : value.slice(0, hashIndex);
-        const queryIndex = href.indexOf("?");
-        const pathname = queryIndex < 0 ? href : href.slice(0, queryIndex);
-        const search = queryIndex < 0 ? null : href.slice(queryIndex);
-        return { href: value, path: href, pathname, search, query: search ? search.slice(1) : null };
+    function Url() {
+        for (const name of [
+            "protocol", "slashes", "auth", "host", "port", "hostname", "hash", "search",
+            "query", "pathname", "path", "href"
+        ]) this[name] = null;
+    }
+    function parseUrl(value, parseQueryString = false) {
+        const source = String(value);
+        const result = new Url();
+        const hasProtocol = /^[A-Za-z][A-Za-z\d+.-]*:/.test(source);
+        let pathnameSource = source;
+        if (hasProtocol) {
+            const modern = new URL(source);
+            result.protocol = modern.protocol;
+            result.slashes = source.startsWith(`${modern.protocol}//`);
+            result.auth = modern.username
+                ? `${modern.username}${modern.password ? `:${modern.password}` : ""}`
+                : null;
+            result.host = modern.host || null;
+            result.port = modern.port || null;
+            result.hostname = modern.hostname || null;
+            result.hash = modern.hash || null;
+            result.search = modern.search || null;
+            result.pathname = modern.pathname || null;
+            result.path = `${modern.pathname}${modern.search}`;
+            result.href = modern.href;
+        } else {
+            const hashIndex = pathnameSource.indexOf("#");
+            result.hash = hashIndex < 0 ? null : pathnameSource.slice(hashIndex);
+            if (hashIndex >= 0) pathnameSource = pathnameSource.slice(0, hashIndex);
+            const queryIndex = pathnameSource.indexOf("?");
+            result.search = queryIndex < 0 ? null : pathnameSource.slice(queryIndex);
+            result.pathname = queryIndex < 0 ? pathnameSource : pathnameSource.slice(0, queryIndex);
+            result.path = pathnameSource;
+            result.href = source;
+        }
+        const query = result.search ? result.search.slice(1) : "";
+        result.query = parseQueryString ? querystringModule.parse(query) : (result.search ? query : null);
+        return result;
     }
     class URLSearchParams {
         constructor(value = "", onChange) {
@@ -658,6 +690,29 @@
     }
     const objectUrlRegistry = new Map();
     function resolveObjectURL(identifier) { return objectUrlRegistry.get(String(identifier)); }
+    function formatLegacyUrl(value) {
+        if (value instanceof URL) return value.href;
+        if (value && value.href) return value.href;
+        const protocol = value?.protocol || "";
+        const slashes = value?.slashes || value?.host ? "//" : "";
+        const auth = value?.auth ? `${value.auth}@` : "";
+        const host = value?.host || value?.hostname || "";
+        const pathname = value?.pathname || "";
+        const search = value?.search || (value?.query && typeof value.query === "object"
+            ? `?${querystringModule.stringify(value.query)}`
+            : value?.query ? `?${value.query}` : "");
+        return `${protocol}${slashes}${auth}${host}${pathname}${search}${value?.hash || ""}`;
+    }
+    function resolveUrlObject(base, target) {
+        const baseValue = formatLegacyUrl(typeof base === "string" ? parseUrl(base) : base);
+        return parseUrl(new URL(String(target), baseValue).href);
+    }
+    Url.prototype.parse = function (value, parseQueryString) {
+        return Object.assign(this, parseUrl(value, parseQueryString));
+    };
+    Url.prototype.format = function () { return formatLegacyUrl(this); };
+    Url.prototype.resolve = function (target) { return resolveUrlObject(this, target).href; };
+    Url.prototype.resolveObject = function (target) { return resolveUrlObject(this, target); };
     function fileURLToPath(value) {
         const url = value instanceof URL ? value : new URL(value);
         if (url.protocol !== "file:") throw new TypeError("URL must use file: protocol");

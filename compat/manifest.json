@@ -215,6 +215,22 @@
       "timeoutMs": 5000,
       "source": "canaryo",
       "expected": "pass"
+    },
+    {
+      "id": "url-legacy-object",
+      "module": "url",
+      "fixture": "compat/cases/url-legacy-object.js",
+      "timeoutMs": 5000,
+      "source": "canaryo",
+      "expected": "pass"
+    },
+    {
+      "id": "timers-legacy-scheduling",
+      "module": "timers",
+      "fixture": "compat/cases/timers-legacy-scheduling.js",
+      "timeoutMs": 5000,
+      "source": "canaryo",
+      "expected": "pass"
     }
   ]
 }
