@@ -34,6 +34,60 @@
         }
     }
 
+    class Performance {
+        constructor() {
+            const error = new TypeError("Illegal constructor");
+            error.code = "ERR_ILLEGAL_CONSTRUCTOR";
+            throw error;
+        }
+    }
+
+    const resourceTimingToken = {};
+    class PerformanceResourceTiming extends PerformanceEntry {
+        constructor(token, timingInfo = {}, requestedUrl = "", initiatorType = "fetch") {
+            if (token !== resourceTimingToken) {
+                const error = new TypeError("Illegal constructor");
+                error.code = "ERR_ILLEGAL_CONSTRUCTOR";
+                throw error;
+            }
+            const startTime = Number(timingInfo.startTime) || 0;
+            const responseEnd = Number(timingInfo.responseEnd) || startTime;
+            super(requestedUrl, "resource", startTime, Math.max(0, responseEnd - startTime));
+            this.initiatorType = String(initiatorType);
+            for (const name of [
+                "workerStart", "redirectStart", "redirectEnd", "fetchStart", "domainLookupStart",
+                "domainLookupEnd", "connectStart", "connectEnd", "secureConnectionStart",
+                "requestStart", "responseStart", "responseEnd", "encodedBodySize",
+                "decodedBodySize", "transferSize", "responseStatus"
+            ]) this[name] = Number(timingInfo[name]) || 0;
+            this.nextHopProtocol = String(timingInfo.nextHopProtocol || "");
+            this.deliveryType = String(timingInfo.deliveryType || "");
+        }
+        toJSON() {
+            return Object.assign(super.toJSON(), {
+                initiatorType: this.initiatorType,
+                workerStart: this.workerStart,
+                redirectStart: this.redirectStart,
+                redirectEnd: this.redirectEnd,
+                fetchStart: this.fetchStart,
+                domainLookupStart: this.domainLookupStart,
+                domainLookupEnd: this.domainLookupEnd,
+                connectStart: this.connectStart,
+                connectEnd: this.connectEnd,
+                secureConnectionStart: this.secureConnectionStart,
+                nextHopProtocol: this.nextHopProtocol,
+                requestStart: this.requestStart,
+                responseStart: this.responseStart,
+                responseEnd: this.responseEnd,
+                encodedBodySize: this.encodedBodySize,
+                decodedBodySize: this.decodedBodySize,
+                transferSize: this.transferSize,
+                deliveryType: this.deliveryType,
+                responseStatus: this.responseStatus
+            });
+        }
+    }
+
     class PerformanceObserverEntryList {
         constructor(entries) { this._entries = entries; }
         getEntries() { return this._entries.slice().sort((left, right) => left.startTime - right.startTime); }
@@ -173,8 +227,12 @@
         clearResourceTimings() { clearPerformanceEntries("resource"); },
         setResourceTimingBufferSize() {},
         markResourceTiming(timingInfo, requestedUrl, initiatorType = "fetch") {
-            const startTime = timingInfo && Number(timingInfo.startTime) || this.now();
-            return publishPerformanceEntry(new PerformanceEntry(requestedUrl, "resource", startTime, 0, { initiatorType }));
+            return publishPerformanceEntry(new PerformanceResourceTiming(
+                resourceTimingToken,
+                timingInfo,
+                requestedUrl,
+                initiatorType
+            ));
         },
         timerify(fn, options = {}) {
             if (typeof fn !== "function") throw new TypeError("fn must be a function");
@@ -204,6 +262,23 @@
         },
         nodeTiming: new PerformanceEntry("node", "node", 0, 0)
     };
+    for (const name of Object.keys(performance)) {
+        if (typeof performance[name] !== "function") continue;
+        Object.defineProperty(Performance.prototype, name, {
+            value: performance[name],
+            configurable: true,
+            writable: true
+        });
+        delete performance[name];
+    }
+    Performance.prototype.toJSON = function () {
+        return {
+            nodeTiming: this.nodeTiming,
+            timeOrigin: this.timeOrigin,
+            eventLoopUtilization: this.eventLoopUtilization()
+        };
+    };
+    Object.setPrototypeOf(performance, Performance.prototype);
 
     function clearPerformanceEntries(type, name) {
         for (let index = performanceEntries.length - 1; index >= 0; index--) {
@@ -224,11 +299,13 @@
 
     const perfHooksModule = {
         performance,
+        Performance,
         PerformanceEntry,
         PerformanceMark,
         PerformanceMeasure,
         PerformanceObserver,
         PerformanceObserverEntryList,
+        PerformanceResourceTiming,
         monitorEventLoopDelay,
         createHistogram,
         constants: {}
@@ -487,4 +564,3 @@
         async json(stream) { return JSON.parse((await consumeStream(stream)).toString()); },
         async text(stream) { return (await consumeStream(stream)).toString(); }
     };
-

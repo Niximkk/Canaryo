@@ -445,6 +445,7 @@
             SlowBuffer: Buffer,
             atob,
             btoa,
+            resolveObjectURL,
             isAscii,
             isUtf8,
             transcode,

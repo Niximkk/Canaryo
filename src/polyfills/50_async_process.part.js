@@ -428,6 +428,58 @@
             this.generatedMessage = options.message === undefined;
         }
     }
+    class CallTracker {
+        constructor() {
+            this._tracked = new Map();
+        }
+        calls(fn = () => {}, exact = 1) {
+            if (typeof fn === "number") { exact = fn; fn = () => {}; }
+            if (typeof fn !== "function") throw new TypeError("fn must be a function");
+            const expected = Number(exact);
+            if (!Number.isInteger(expected) || expected < 0) throw new RangeError("exact must be a non-negative integer");
+            const tracker = this;
+            function tracked(...args) {
+                const record = tracker._tracked.get(tracked);
+                record.calls.push({ thisArg: this, arguments: args });
+                return fn.apply(this, args);
+            }
+            Object.defineProperty(tracked, "name", { value: fn.name, configurable: true });
+            this._tracked.set(tracked, { expected, calls: [], operator: fn.name || "calls" });
+            return tracked;
+        }
+        getCalls(fn) {
+            const record = this._tracked.get(fn);
+            if (!record) throw new Error("Function is not being tracked");
+            return record.calls.slice();
+        }
+        report() {
+            const output = [];
+            for (const record of this._tracked.values()) {
+                if (record.calls.length === record.expected) continue;
+                output.push({
+                    message: `Expected the ${record.operator} function to be executed ${record.expected} time(s) but was executed ${record.calls.length} time(s).`,
+                    actual: record.calls.length,
+                    expected: record.expected,
+                    operator: record.operator,
+                    stack: {}
+                });
+            }
+            return output;
+        }
+        verify() {
+            const [failure] = this.report();
+            if (failure) throw new AssertionError(failure);
+        }
+        reset(fn) {
+            if (fn !== undefined) {
+                const record = this._tracked.get(fn);
+                if (!record) throw new Error("Function is not being tracked");
+                record.calls = [];
+                return;
+            }
+            for (const record of this._tracked.values()) record.calls = [];
+        }
+    }
     function assertionError(message, actual, expected, operator) {
         return new AssertionError({ message, actual, expected, operator });
     }
@@ -558,6 +610,7 @@
     assert.doesNotMatch = (value, regexp, message) => { if (!(regexp instanceof RegExp) || regexp.test(String(value))) throw assertionError(message, value, regexp, "doesNotMatch"); };
     assert.ifError = value => { if (value !== null && value !== undefined) throw assertionError(`ifError got unwanted exception: ${value.message || value}`, value, null, "ifError"); };
     assert.AssertionError = AssertionError;
+    assert.CallTracker = CallTracker;
     function strictAssert(value, message) { return assert(value, message); }
     Object.assign(strictAssert, assert, {
         equal: assert.strictEqual,

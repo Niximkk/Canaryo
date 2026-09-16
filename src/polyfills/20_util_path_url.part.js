@@ -646,7 +646,18 @@
         set href(value) { const parsed = new URL(value); Object.assign(this, parsed); }
         toString() { return this.href; }
         toJSON() { return this.href; }
+        static createObjectURL(blob) {
+            if (!(blob instanceof Blob)) throw new TypeError("The object must be a Blob");
+            const identifier = `blob:nodedata:${randomUUID()}`;
+            objectUrlRegistry.set(identifier, blob);
+            return identifier;
+        }
+        static revokeObjectURL(identifier) {
+            objectUrlRegistry.delete(String(identifier));
+        }
     }
+    const objectUrlRegistry = new Map();
+    function resolveObjectURL(identifier) { return objectUrlRegistry.get(String(identifier)); }
     function fileURLToPath(value) {
         const url = value instanceof URL ? value : new URL(value);
         if (url.protocol !== "file:") throw new TypeError("URL must use file: protocol");

@@ -191,6 +191,30 @@
       "timeoutMs": 5000,
       "source": "canaryo",
       "expected": "pass"
+    },
+    {
+      "id": "assert-call-tracker",
+      "module": "assert",
+      "fixture": "compat/cases/assert-call-tracker.js",
+      "timeoutMs": 5000,
+      "source": "canaryo",
+      "expected": "pass"
+    },
+    {
+      "id": "buffer-object-url",
+      "module": "buffer",
+      "fixture": "compat/cases/buffer-object-url.js",
+      "timeoutMs": 5000,
+      "source": "canaryo",
+      "expected": "pass"
+    },
+    {
+      "id": "performance-public-classes",
+      "module": "perf_hooks",
+      "fixture": "compat/cases/performance-public-classes.js",
+      "timeoutMs": 5000,
+      "source": "canaryo",
+      "expected": "pass"
     }
   ]
 }

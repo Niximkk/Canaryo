@@ -26,7 +26,7 @@
       "module": "path",
       "node": {
         "exitCode": 0,
-        "stderr": "(node:31996) ExperimentalWarning: glob is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)",
+        "stderr": "(node:20448) ExperimentalWarning: glob is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)",
         "stdout": "{\"posix\":{\"normalize\":\"/srv/data/file.json\",\"relative\":\"../data/file.json\",\"parsed\":{\"root\":\"/\",\"dir\":\"/srv/data\",\"base\":\"file.json\",\"ext\":\".json\",\"name\":\"file\"}},\"win32\":{\"normalize\":\"C:\\\\srv\\\\data\\\\file.json\",\"relative\":\"..\\\\data\\\\file.json\",\"parsed\":{\"root\":\"C:\\\\\",\"dir\":\"C:\\\\srv\\\\data\",\"base\":\"file.json\",\"ext\":\".json\",\"name\":\"file\"},\"namespacedDrive\":\"\\\\\\\\?\\\\C:\\\\srv\\\\data\",\"namespacedUnc\":\"\\\\\\\\?\\\\UNC\\\\server\\\\share\\\\data\"},\"makeLongAliases\":[true,true,true],\"globMatches\":[true,false,true,true,true,false,true]}",
         "timedOut": false
       },
@@ -138,7 +138,7 @@
       "module": "util",
       "node": {
         "exitCode": 0,
-        "stderr": "(node:17240) [DEP0044] DeprecationWarning: The `util.isArray` API is deprecated. Please use `Array.isArray()` instead.\n(Use `node --trace-deprecation ...` to show where the warning was created)\n(node:17240) [DEP0045] DeprecationWarning: The `util.isBoolean` API is deprecated.  Please use `typeof arg === \"boolean\"` instead.\n(node:17240) [DEP0050] DeprecationWarning: The `util.isNull` API is deprecated. Please use `arg === null` instead.\n(node:17240) [DEP0051] DeprecationWarning: The `util.isNullOrUndefined` API is deprecated. Please use `arg === null || arg === undefined` instead.\n(node:17240) [DEP0052] DeprecationWarning: The `util.isNumber` API is deprecated. Please use `typeof arg === \"number\"` instead.\n(node:17240) [DEP0056] DeprecationWarning: The `util.isString` API is deprecated.  Please use `typeof arg === \"string\"` instead.\n(node:17240) [DEP0057] DeprecationWarning: The `util.isSymbol` API is deprecated.  Please use `arg === \"symbol\"` instead.\n(node:17240) [DEP0058] DeprecationWarning: The `util.isUndefined` API is deprecated. Please use `arg === undefined` instead.\n(node:17240) [DEP0055] DeprecationWarning: The `util.isRegExp` API is deprecated. Please use `arg instanceof RegExp` instead.\n(node:17240) [DEP0053] DeprecationWarning: The `util.isObject` API is deprecated. Please use `arg !== null && typeof arg === \"object\"` instead.\n(node:17240) [DEP0047] DeprecationWarning: The `util.isDate` API is deprecated.  Please use `arg instanceof Date` instead.\n(node:17240) [DEP0048] DeprecationWarning: The `util.isError` API is deprecated. Please use `ObjectPrototypeToString(e) === \"[object Error]\" || e instanceof Error` instead.\n(node:17240) [DEP0049] DeprecationWarning: The `util.isFunction` API is deprecated.  Please use `typeof arg === \"function\"` instead.\n(node:17240) [DEP0054] DeprecationWarning: The `util.isPrimitive` API is deprecated. Please use `arg === null || (typeof arg !== \"object\" && typeof arg !== \"function\")` instead.\n(node:17240) [DEP0046] DeprecationWarning: The `util.isBuffer` API is deprecated. Please use `Buffer.isBuffer()` instead.\n(node:17240) [DEP0060] DeprecationWarning: The `util._extend` API is deprecated. Please use Object.assign() instead.",
+        "stderr": "(node:6576) [DEP0044] DeprecationWarning: The `util.isArray` API is deprecated. Please use `Array.isArray()` instead.\n(Use `node --trace-deprecation ...` to show where the warning was created)\n(node:6576) [DEP0045] DeprecationWarning: The `util.isBoolean` API is deprecated.  Please use `typeof arg === \"boolean\"` instead.\n(node:6576) [DEP0050] DeprecationWarning: The `util.isNull` API is deprecated. Please use `arg === null` instead.\n(node:6576) [DEP0051] DeprecationWarning: The `util.isNullOrUndefined` API is deprecated. Please use `arg === null || arg === undefined` instead.\n(node:6576) [DEP0052] DeprecationWarning: The `util.isNumber` API is deprecated. Please use `typeof arg === \"number\"` instead.\n(node:6576) [DEP0056] DeprecationWarning: The `util.isString` API is deprecated.  Please use `typeof arg === \"string\"` instead.\n(node:6576) [DEP0057] DeprecationWarning: The `util.isSymbol` API is deprecated.  Please use `arg === \"symbol\"` instead.\n(node:6576) [DEP0058] DeprecationWarning: The `util.isUndefined` API is deprecated. Please use `arg === undefined` instead.\n(node:6576) [DEP0055] DeprecationWarning: The `util.isRegExp` API is deprecated. Please use `arg instanceof RegExp` instead.\n(node:6576) [DEP0053] DeprecationWarning: The `util.isObject` API is deprecated. Please use `arg !== null && typeof arg === \"object\"` instead.\n(node:6576) [DEP0047] DeprecationWarning: The `util.isDate` API is deprecated.  Please use `arg instanceof Date` instead.\n(node:6576) [DEP0048] DeprecationWarning: The `util.isError` API is deprecated. Please use `ObjectPrototypeToString(e) === \"[object Error]\" || e instanceof Error` instead.\n(node:6576) [DEP0049] DeprecationWarning: The `util.isFunction` API is deprecated.  Please use `typeof arg === \"function\"` instead.\n(node:6576) [DEP0054] DeprecationWarning: The `util.isPrimitive` API is deprecated. Please use `arg === null || (typeof arg !== \"object\" && typeof arg !== \"function\")` instead.\n(node:6576) [DEP0046] DeprecationWarning: The `util.isBuffer` API is deprecated. Please use `Buffer.isBuffer()` instead.\n(node:6576) [DEP0060] DeprecationWarning: The `util._extend` API is deprecated. Please use Object.assign() instead.",
         "stdout": "{\"predicates\":[[\"isArray\",[false,false,false,false,false,false,false,true,false,false,false,false]],[\"isBoolean\",[false,false,true,false,false,false,false,false,false,false,false,false]],[\"isNull\",[false,true,false,false,false,false,false,false,false,false,false,false]],[\"isNullOrUndefined\",[true,true,false,false,false,false,false,false,false,false,false,false]],[\"isNumber\",[false,false,false,true,false,false,false,false,false,false,false,false]],[\"isString\",[false,false,false,false,true,false,false,false,false,false,false,false]],[\"isSymbol\",[false,false,false,false,false,true,false,false,false,false,false,false]],[\"isUndefined\",[true,false,false,false,false,false,false,false,false,false,false,false]],[\"isRegExp\",[false,false,false,false,false,false,false,false,false,true,false,false]],[\"isObject\",[false,false,false,false,false,false,false,true,true,true,true,true]],[\"isDate\",[false,false,false,false,false,false,false,false,true,false,false,false]],[\"isError\",[false,false,false,false,false,false,false,false,false,false,true,false]],[\"isFunction\",[false,false,false,false,false,false,true,false,false,false,false,false]],[\"isPrimitive\",[true,true,true,true,true,true,false,false,false,false,false,false]],[\"isBuffer\",[false,false,false,false,false,false,false,false,false,false,false,true]]],\"deep\":[true,false],\"usv\":\"�A�\",\"extended\":{\"first\":1,\"replaced\":true,\"second\":2},\"environment\":{\"A\":\"one\",\"B\":\"two words\",\"C\":\"three\",\"D\":\"hello # comment\"},\"environmentEdges\":{\"DOUBLE\":\"line one\\nline two\",\"EMPTY\":\"\",\"HASH\":\"\",\"SINGLE\":\"one # two\",\"SPACED\":\"trimmed\"}}",
         "timedOut": false
       },
@@ -474,7 +474,7 @@
       "module": "assert",
       "node": {
         "exitCode": 0,
-        "stderr": "(node:23032) ExperimentalWarning: assert.partialDeepStrictEqual is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)",
+        "stderr": "(node:34308) ExperimentalWarning: assert.partialDeepStrictEqual is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)",
         "stdout": "[true,true,true,true,true,false,false]",
         "timedOut": false
       },
@@ -536,19 +536,103 @@
       },
       "source": "canaryo",
       "status": "pass"
+    },
+    {
+      "bun": {
+        "exitCode": 0,
+        "stderr": "(node:34192) [DEP0173] DeprecationWarning: assert.CallTracker is deprecated.\n(Use `bun --trace-warnings ...` to show where the warning was created)",
+        "stdout": "{\"result\":7,\"calls\":[{\"thisArg\":{\"base\":3},\"arguments\":[4]}],\"report\":[{\"message\":\"Expected the add function to be executed 2 time(s) but was executed 1 time(s).\",\"actual\":1,\"expected\":2,\"operator\":\"add\"}],\"verification\":{\"name\":\"AssertionError\",\"code\":\"ERR_ASSERTION\",\"message\":\"Expected the add function to be executed 2 time(s) but was executed 1 time(s).\"},\"finalReport\":[]}",
+        "timedOut": false
+      },
+      "bunMatchesNode": true,
+      "canaryo": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"result\":7,\"calls\":[{\"thisArg\":{\"base\":3},\"arguments\":[4]}],\"report\":[{\"message\":\"Expected the add function to be executed 2 time(s) but was executed 1 time(s).\",\"actual\":1,\"expected\":2,\"operator\":\"add\"}],\"verification\":{\"name\":\"AssertionError\",\"code\":\"ERR_ASSERTION\",\"message\":\"Expected the add function to be executed 2 time(s) but was executed 1 time(s).\"},\"finalReport\":[]}",
+        "timedOut": false
+      },
+      "canaryoMatchesNode": true,
+      "expected": "pass",
+      "fixture": "compat/cases/assert-call-tracker.js",
+      "id": "assert-call-tracker",
+      "module": "assert",
+      "node": {
+        "exitCode": 0,
+        "stderr": "(node:6032) [DEP0173] DeprecationWarning: assert.CallTracker is deprecated.\n(Use `node --trace-deprecation ...` to show where the warning was created)",
+        "stdout": "{\"result\":7,\"calls\":[{\"thisArg\":{\"base\":3},\"arguments\":[4]}],\"report\":[{\"message\":\"Expected the add function to be executed 2 time(s) but was executed 1 time(s).\",\"actual\":1,\"expected\":2,\"operator\":\"add\"}],\"verification\":{\"name\":\"AssertionError\",\"code\":\"ERR_ASSERTION\",\"message\":\"Expected the add function to be executed 2 time(s) but was executed 1 time(s).\"},\"finalReport\":[]}",
+        "timedOut": false
+      },
+      "source": "canaryo",
+      "status": "pass"
+    },
+    {
+      "bun": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"prefix\":false,\"resolved\":true,\"size\":7,\"type\":\"text/plain;charset=utf-8\",\"revoked\":true}",
+        "timedOut": false
+      },
+      "bunMatchesNode": false,
+      "canaryo": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"prefix\":true,\"resolved\":true,\"size\":7,\"type\":\"text/plain\",\"revoked\":true}",
+        "timedOut": false
+      },
+      "canaryoMatchesNode": true,
+      "expected": "pass",
+      "fixture": "compat/cases/buffer-object-url.js",
+      "id": "buffer-object-url",
+      "module": "buffer",
+      "node": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"prefix\":true,\"resolved\":true,\"size\":7,\"type\":\"text/plain\",\"revoked\":true}",
+        "timedOut": false
+      },
+      "source": "canaryo",
+      "status": "pass"
+    },
+    {
+      "bun": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"performanceInstance\":true,\"performanceConstructor\":{\"name\":\"TypeError\",\"code\":\"ERR_ILLEGAL_CONSTRUCTOR\",\"message\":\"Illegal constructor\"},\"resourceConstructor\":{\"name\":\"TypeError\",\"code\":\"ERR_ILLEGAL_CONSTRUCTOR\",\"message\":\"Illegal constructor\"},\"methods\":[\"function\",\"function\",\"function\",\"function\"],\"jsonKeys\":[\"timeOrigin\",\"timing\"]}",
+        "timedOut": false
+      },
+      "bunMatchesNode": false,
+      "canaryo": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"performanceInstance\":true,\"performanceConstructor\":{\"name\":\"TypeError\",\"code\":\"ERR_ILLEGAL_CONSTRUCTOR\",\"message\":\"Illegal constructor\"},\"resourceConstructor\":{\"name\":\"TypeError\",\"code\":\"ERR_ILLEGAL_CONSTRUCTOR\",\"message\":\"Illegal constructor\"},\"methods\":[\"function\",\"function\",\"function\",\"function\"],\"jsonKeys\":[\"eventLoopUtilization\",\"nodeTiming\",\"timeOrigin\"]}",
+        "timedOut": false
+      },
+      "canaryoMatchesNode": true,
+      "expected": "pass",
+      "fixture": "compat/cases/performance-public-classes.js",
+      "id": "performance-public-classes",
+      "module": "perf_hooks",
+      "node": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"performanceInstance\":true,\"performanceConstructor\":{\"name\":\"TypeError\",\"code\":\"ERR_ILLEGAL_CONSTRUCTOR\",\"message\":\"Illegal constructor\"},\"resourceConstructor\":{\"name\":\"TypeError\",\"code\":\"ERR_ILLEGAL_CONSTRUCTOR\",\"message\":\"Illegal constructor\"},\"methods\":[\"function\",\"function\",\"function\",\"function\"],\"jsonKeys\":[\"eventLoopUtilization\",\"nodeTiming\",\"timeOrigin\"]}",
+        "timedOut": false
+      },
+      "source": "canaryo",
+      "status": "pass"
     }
   ],
   "generatedBy": "cargo xtask compat",
   "schemaVersion": 1,
   "summary": {
     "behavior": {
-      "passed": 19,
-      "total": 19,
+      "passed": 22,
+      "total": 22,
       "unexpectedFailures": 0
     },
     "surface": {
-      "matched": 594,
-      "percent": 64.56521739130434,
+      "matched": 598,
+      "percent": 65.0,
       "total": 920
     }
   },
@@ -557,13 +641,11 @@
       "bunLoaded": true,
       "canaryoLoaded": true,
       "extra": [],
-      "matched": 23,
-      "missing": [
-        "CallTracker"
-      ],
+      "matched": 24,
+      "missing": [],
       "module": "assert",
       "nodeLoaded": true,
-      "percent": 95.83333333333333,
+      "percent": 100.0,
       "total": 24
     },
     {
@@ -583,13 +665,11 @@
       "bunLoaded": true,
       "canaryoLoaded": true,
       "extra": [],
-      "matched": 13,
-      "missing": [
-        "resolveObjectURL"
-      ],
+      "matched": 14,
+      "missing": [],
       "module": "buffer",
       "nodeLoaded": true,
-      "percent": 92.85714285714286,
+      "percent": 100.0,
       "total": 14
     },
     {
@@ -941,14 +1021,11 @@
       "bunLoaded": true,
       "canaryoLoaded": true,
       "extra": [],
-      "matched": 9,
-      "missing": [
-        "Performance",
-        "PerformanceResourceTiming"
-      ],
+      "matched": 11,
+      "missing": [],
       "module": "perf_hooks",
       "nodeLoaded": true,
-      "percent": 81.81818181818181,
+      "percent": 100.0,
       "total": 11
     },
     {
