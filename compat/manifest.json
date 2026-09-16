@@ -151,6 +151,30 @@
       "timeoutMs": 5000,
       "source": "canaryo",
       "expected": "pass"
+    },
+    {
+      "id": "net-block-list-and-address",
+      "module": "net",
+      "fixture": "compat/cases/net-block-list-and-address.js",
+      "timeoutMs": 5000,
+      "source": "canaryo",
+      "expected": "pass"
+    },
+    {
+      "id": "diagnostics-channel-class",
+      "module": "diagnostics_channel",
+      "fixture": "compat/cases/diagnostics-channel-class.js",
+      "timeoutMs": 5000,
+      "source": "canaryo",
+      "expected": "pass"
+    },
+    {
+      "id": "assert-partial-deep-strict",
+      "module": "assert",
+      "fixture": "compat/cases/assert-partial-deep-strict.js",
+      "timeoutMs": 5000,
+      "source": "canaryo",
+      "expected": "pass"
     }
   ]
 }

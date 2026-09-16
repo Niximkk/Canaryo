@@ -302,6 +302,107 @@
         }
     };
 
+    function normalizedIpFamily(value, address) {
+        if (value === undefined) return String(address).includes(":") ? "ipv6" : "ipv4";
+        const family = String(value).toLowerCase();
+        if (family === "ipv4" || family === "4") return "ipv4";
+        if (family === "ipv6" || family === "6") return "ipv6";
+        throw new TypeError("family must be 'ipv4' or 'ipv6'");
+    }
+    function ipv4Number(address) {
+        const parts = String(address).split(".");
+        if (parts.length !== 4 || parts.some(part => !/^\d+$/.test(part) || Number(part) > 255)) {
+            throw new TypeError(`Invalid IPv4 address: ${address}`);
+        }
+        return parts.reduce((value, part) => (value << 8n) | BigInt(part), 0n);
+    }
+    function ipv6Number(address) {
+        let source = String(address).toLowerCase().split("%")[0];
+        if (source.includes(".")) {
+            const separator = source.lastIndexOf(":");
+            const ipv4 = ipv4Number(source.slice(separator + 1));
+            source = `${source.slice(0, separator)}:${(ipv4 >> 16n).toString(16)}:${(ipv4 & 0xffffn).toString(16)}`;
+        }
+        const halves = source.split("::");
+        if (halves.length > 2) throw new TypeError(`Invalid IPv6 address: ${address}`);
+        const left = halves[0] ? halves[0].split(":") : [];
+        const right = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+        const omitted = 8 - left.length - right.length;
+        if (omitted < 0 || (halves.length === 1 && omitted !== 0)) throw new TypeError(`Invalid IPv6 address: ${address}`);
+        const parts = [...left, ...Array(omitted).fill("0"), ...right];
+        if (parts.length !== 8 || parts.some(part => !/^[0-9a-f]{1,4}$/.test(part))) {
+            throw new TypeError(`Invalid IPv6 address: ${address}`);
+        }
+        return parts.reduce((value, part) => (value << 16n) | BigInt(`0x${part}`), 0n);
+    }
+    function ipNumber(address, family) {
+        return family === "ipv6" ? ipv6Number(address) : ipv4Number(address);
+    }
+    function SocketAddress(options = {}) {
+        const address = options.address === undefined ? "127.0.0.1" : String(options.address);
+        const family = normalizedIpFamily(options.family, address);
+        ipNumber(address, family);
+        const port = options.port === undefined ? 0 : Number(options.port);
+        const flowlabel = options.flowlabel === undefined ? 0 : Number(options.flowlabel);
+        if (!Number.isInteger(port) || port < 0 || port > 65535) throw new RangeError("port must be between 0 and 65535");
+        if (!Number.isInteger(flowlabel) || flowlabel < 0 || flowlabel > 0xfffff) throw new RangeError("flowlabel is out of range");
+        this.address = address;
+        this.port = port;
+        this.family = family;
+        this.flowlabel = flowlabel;
+    }
+    SocketAddress.prototype.toJSON = function () {
+        return { address: this.address, port: this.port, family: this.family, flowlabel: this.flowlabel };
+    };
+    SocketAddress.parse = function (value) {
+        const source = String(value);
+        const match = source.startsWith("[")
+            ? source.match(/^\[([^\]]+)]:(\d+)$/)
+            : source.match(/^([^:]+):(\d+)$/);
+        if (!match) return undefined;
+        try { return new SocketAddress({ address: match[1], port: Number(match[2]) }); }
+        catch { return undefined; }
+    };
+    function BlockList() {
+        this._rules = [];
+    }
+    BlockList.prototype.addAddress = function (address, family) {
+        family = normalizedIpFamily(family, address);
+        const value = ipNumber(address, family);
+        this._rules.unshift({ kind: "Address", family, address: String(address), start: value, end: value });
+    };
+    BlockList.prototype.addRange = function (start, end, family) {
+        family = normalizedIpFamily(family, start);
+        const first = ipNumber(start, family);
+        const last = ipNumber(end, family);
+        if (first > last) throw new RangeError("start address must come before end address");
+        this._rules.unshift({ kind: "Range", family, address: `${start}-${end}`, start: first, end: last });
+    };
+    BlockList.prototype.addSubnet = function (network, prefix, family) {
+        family = normalizedIpFamily(family, network);
+        const bits = family === "ipv6" ? 128 : 32;
+        prefix = Number(prefix);
+        if (!Number.isInteger(prefix) || prefix < 0 || prefix > bits) throw new RangeError("prefix is out of range");
+        const fullMask = (1n << BigInt(bits)) - 1n;
+        const mask = prefix === 0 ? 0n : fullMask << BigInt(bits - prefix) & fullMask;
+        const first = ipNumber(network, family) & mask;
+        const last = first | fullMask ^ mask;
+        this._rules.unshift({ kind: "Subnet", family, address: `${network}/${prefix}`, start: first, end: last });
+    };
+    BlockList.prototype.check = function (address, family) {
+        family = normalizedIpFamily(family, address);
+        let value;
+        try { value = ipNumber(address, family); }
+        catch { return false; }
+        return this._rules.some(rule => rule.family === family && value >= rule.start && value <= rule.end);
+    };
+    Object.defineProperty(BlockList.prototype, "rules", {
+        enumerable: true,
+        get() {
+            return this._rules.map(rule => `${rule.kind}: ${rule.family === "ipv6" ? "IPv6" : "IPv4"} ${rule.address}`);
+        }
+    });
+
     const netSockets = new Map();
     function normalizeNetConnect(argumentsList) {
         const values = Array.from(argumentsList);
@@ -530,6 +631,8 @@
     NetServer.prototype.unref = function () { return this; };
     function createServer(options, listener) { return new NetServer(options, listener); }
     const netModule = {
+        BlockList,
+        SocketAddress,
         Server: NetServer,
         Socket: NetSocket,
         Stream: NetSocket,

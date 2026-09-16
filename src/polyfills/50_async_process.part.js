@@ -218,36 +218,37 @@
         };
     }
 
-    function createDiagnosticsChannel(name) {
-        const subscribers = new Set();
-        const stores = new Map();
-        return {
-            name: String(name),
-            get hasSubscribers() { return subscribers.size > 0 || stores.size > 0; },
-            publish(message) {
-                for (const subscriber of [...subscribers]) subscriber(message, this.name);
-            },
-            subscribe(subscriber) {
-                if (typeof subscriber !== "function") throw new TypeError("subscriber must be a function");
-                subscribers.add(subscriber);
-            },
-            unsubscribe(subscriber) { return subscribers.delete(subscriber); },
-            bindStore(store, transform = message => message) {
-                if (!store || typeof store.run !== "function") throw new TypeError("store must be an AsyncLocalStorage instance");
-                if (typeof transform !== "function") throw new TypeError("transform must be a function");
-                stores.set(store, transform);
-            },
-            unbindStore(store) { return stores.delete(store); },
-            runStores(message, callback, thisArg, ...args) {
-                if (typeof callback !== "function") throw new TypeError("callback must be a function");
-                const entries = [...stores.entries()];
-                const run = index => index === entries.length
-                    ? callback.apply(thisArg, args)
-                    : entries[index][0].run(entries[index][1](message), () => run(index + 1));
-                return run(0);
-            }
-        };
+    class Channel {
+        constructor(name) {
+            this.name = String(name);
+            this._subscribers = new Set();
+            this._stores = new Map();
+        }
+        get hasSubscribers() { return this._subscribers.size > 0 || this._stores.size > 0; }
+        publish(message) {
+            for (const subscriber of [...this._subscribers]) subscriber(message, this.name);
+        }
+        subscribe(subscriber) {
+            if (typeof subscriber !== "function") throw new TypeError("subscriber must be a function");
+            this._subscribers.add(subscriber);
+        }
+        unsubscribe(subscriber) { return this._subscribers.delete(subscriber); }
+        bindStore(store, transform = message => message) {
+            if (!store || typeof store.run !== "function") throw new TypeError("store must be an AsyncLocalStorage instance");
+            if (typeof transform !== "function") throw new TypeError("transform must be a function");
+            this._stores.set(store, transform);
+        }
+        unbindStore(store) { return this._stores.delete(store); }
+        runStores(message, callback, thisArg, ...args) {
+            if (typeof callback !== "function") throw new TypeError("callback must be a function");
+            const entries = [...this._stores.entries()];
+            const run = index => index === entries.length
+                ? callback.apply(thisArg, args)
+                : entries[index][0].run(entries[index][1](message), () => run(index + 1));
+            return run(0);
+        }
     }
+    function createDiagnosticsChannel(name) { return new Channel(name); }
     const diagnosticsChannels = new Map();
     const tracingEvents = ["start", "end", "asyncStart", "asyncEnd", "error"];
 
@@ -396,6 +397,7 @@
     }
 
     const diagnosticsChannel = {
+        Channel,
         channel(name) {
             if (!diagnosticsChannels.has(name)) diagnosticsChannels.set(name, createDiagnosticsChannel(name));
             return diagnosticsChannels.get(name);
@@ -457,6 +459,40 @@
         if (actualKeys.length !== expectedKeys.length || actualKeys.some(key => !Object.prototype.hasOwnProperty.call(expected, key))) return false;
         return actualKeys.every(key => deepEquals(actual[key], expected[key], strict, seen));
     }
+    function partialDeepEquals(actual, expected, seen = new Map()) {
+        if (Object.is(actual, expected)) return true;
+        if (actual === null || expected === null || typeof actual !== "object" || typeof expected !== "object") return false;
+        if (seen.get(actual) === expected) return true;
+        seen.set(actual, expected);
+        if (Object.getPrototypeOf(actual) !== Object.getPrototypeOf(expected)) return false;
+        if (expected instanceof Date || expected instanceof RegExp || ArrayBuffer.isView(expected)) {
+            return deepEquals(actual, expected, true);
+        }
+        if (expected instanceof Map) {
+            if (!(actual instanceof Map)) return false;
+            return [...expected].every(([key, value]) => [...actual].some(([actualKey, actualValue]) => {
+                const candidate = new Map(seen);
+                return partialDeepEquals(actualKey, key, candidate) && partialDeepEquals(actualValue, value, candidate);
+            }));
+        }
+        if (expected instanceof Set) {
+            if (!(actual instanceof Set)) return false;
+            return [...expected].every(value => [...actual].some(actualValue => partialDeepEquals(actualValue, value, new Map(seen))));
+        }
+        if (Array.isArray(expected)) {
+            if (!Array.isArray(actual)) return false;
+            const used = new Set();
+            return expected.every(value => {
+                const index = actual.findIndex((actualValue, index) =>
+                    !used.has(index) && partialDeepEquals(actualValue, value, new Map(seen)));
+                if (index < 0) return false;
+                used.add(index);
+                return true;
+            });
+        }
+        return Reflect.ownKeys(expected).every(key =>
+            Object.prototype.hasOwnProperty.call(actual, key) && partialDeepEquals(actual[key], expected[key], seen));
+    }
     function matchesException(error, expected) {
         if (expected === undefined) return true;
         if (expected instanceof RegExp) return expected.test(String(error?.message || error));
@@ -483,6 +519,9 @@
     assert.notDeepEqual = (actual, expected, message) => { if (deepEquals(actual, expected, false)) throw assertionError(message, actual, expected, "notDeepEqual"); };
     assert.deepStrictEqual = (actual, expected, message) => { if (!deepEquals(actual, expected, true)) throw assertionError(message, actual, expected, "deepStrictEqual"); };
     assert.notDeepStrictEqual = (actual, expected, message) => { if (deepEquals(actual, expected, true)) throw assertionError(message, actual, expected, "notDeepStrictEqual"); };
+    assert.partialDeepStrictEqual = (actual, expected, message) => {
+        if (!partialDeepEquals(actual, expected)) throw assertionError(message, actual, expected, "partialDeepStrictEqual");
+    };
     assert.fail = message => { throw assertionError(message); };
     assert.throws = (block, expected, message) => {
         if (typeof block !== "function") throw new TypeError("block must be a function");
