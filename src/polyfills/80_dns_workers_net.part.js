@@ -1,5 +1,7 @@
     const dnsModule = (() => {
         let defaultResultOrder = "verbatim";
+        let defaultServers = [];
+        let promiseServers = [];
         const lookupConstants = {
             ADDRCONFIG: 1024,
             ALL: 256,
@@ -67,7 +69,51 @@
             if (!["verbatim", "ipv4first", "ipv6first"].includes(value)) throw new TypeError("invalid DNS result order");
             defaultResultOrder = value;
         }
+        function getServers() { return defaultServers.slice(); }
+        function setServers(servers) {
+            if (!Array.isArray(servers)) throw new TypeError("servers must be an Array");
+            defaultServers = servers.map(String);
+        }
+        function getPromiseServers() { return promiseServers.slice(); }
+        function setPromiseServers(servers) {
+            if (!Array.isArray(servers)) throw new TypeError("servers must be an Array");
+            promiseServers = servers.map(String);
+        }
+        function Resolver(_options = {}) {
+            this._servers = [];
+        }
+        Resolver.prototype.resolve = function (hostname, recordType, callback) {
+            return resolve(hostname, recordType, callback);
+        };
+        Resolver.prototype.resolve4 = function (hostname, callback) {
+            return resolve(hostname, "A", callback);
+        };
+        Resolver.prototype.resolve6 = function (hostname, callback) {
+            return resolve(hostname, "AAAA", callback);
+        };
+        Resolver.prototype.getServers = function () { return this._servers.slice(); };
+        Resolver.prototype.setServers = function (servers) {
+            if (!Array.isArray(servers)) throw new TypeError("servers must be an Array");
+            this._servers = servers.map(String);
+        };
+        Resolver.prototype.cancel = function () {};
+
+        function resolvePromise(hostname, recordType) {
+            return new Promise((resolvePromise, reject) => {
+                resolve(hostname, recordType, (error, addresses) => error ? reject(error) : resolvePromise(addresses));
+            });
+        }
+        function PromiseResolver(options) {
+            Resolver.call(this, options);
+        }
+        util.inherits(PromiseResolver, Resolver);
+        PromiseResolver.prototype.resolve = function (hostname, recordType) {
+            return resolvePromise(hostname, recordType || "A");
+        };
+        PromiseResolver.prototype.resolve4 = function (hostname) { return resolvePromise(hostname, "A"); };
+        PromiseResolver.prototype.resolve6 = function (hostname) { return resolvePromise(hostname, "AAAA"); };
         const promises = Object.assign({
+            Resolver: PromiseResolver,
             lookup(hostname, options) {
                 return new Promise((resolvePromise, reject) => lookup(hostname, options || {}, (error, address, family) => {
                     if (error) reject(error);
@@ -75,17 +121,24 @@
                 }));
             },
             resolve(hostname, recordType) {
-                return new Promise((resolvePromise, reject) => resolve(hostname, recordType || "A", (error, addresses) => error ? reject(error) : resolvePromise(addresses)));
+                return resolvePromise(hostname, recordType || "A");
             },
+            resolve4(hostname) { return resolvePromise(hostname, "A"); },
+            resolve6(hostname) { return resolvePromise(hostname, "AAAA"); },
+            getServers: getPromiseServers,
+            setServers: setPromiseServers,
             getDefaultResultOrder,
             setDefaultResultOrder
         }, errorConstants);
         return Object.assign({
+            Resolver,
             lookup,
             resolve,
             resolve4: (hostname, callback) => resolve(hostname, "A", callback),
             resolve6: (hostname, callback) => resolve(hostname, "AAAA", callback),
             promises,
+            getServers,
+            setServers,
             getDefaultResultOrder,
             setDefaultResultOrder
         }, constants);

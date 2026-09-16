@@ -337,12 +337,72 @@
         finished(streams[streams.length - 1], callback);
         return streams[streams.length - 1];
     }
+    function compose(...streams) {
+        if (streams.length === 0) throw new TypeError("The streams argument must be specified");
+        if (streams.length === 1) return streams[0];
+
+        const input = streams[0];
+        const output = streams[streams.length - 1];
+        const composed = new Duplex({
+            read() {
+                if (typeof output.resume === "function") output.resume();
+            },
+            write(chunk, encoding, callback) {
+                input.write(chunk, encoding, callback);
+            },
+            final(callback) {
+                input.end(callback);
+            }
+        });
+
+        output.on("data", chunk => {
+            if (!composed.push(chunk) && typeof output.pause === "function") output.pause();
+        });
+        output.once("end", () => composed.push(null));
+        for (const stream of streams) {
+            stream.once("error", error => composed.destroy(error));
+        }
+        for (let index = 0; index + 1 < streams.length; index++) {
+            streams[index].pipe(streams[index + 1]);
+        }
+        return composed;
+    }
     function addAbortSignal(signal, stream) {
         if (!stream || typeof stream.destroy !== "function") throw new TypeError("stream must be a Stream");
         const disposable = addAbortListener(signal, () => stream.destroy(abortApiError(signal.reason)));
         stream.once("close", () => disposable[disposeSymbol]());
         if (signal.aborted) stream.destroy(abortApiError(signal.reason));
         return stream;
+    }
+    function destroy(stream, error) {
+        if (!stream || typeof stream.destroy !== "function") {
+            throw new TypeError("stream must be a Stream");
+        }
+        stream.destroy(error === undefined ? abortApiError() : error);
+    }
+    function duplexPair() {
+        let first;
+        let second;
+        const createEndpoint = getPeer => new Duplex({
+            read() {},
+            write(chunk, encoding, callback) {
+                const peer = getPeer();
+                if (!peer || peer.destroyed || !peer.readable) {
+                    callback(new Error("The paired stream is not readable"));
+                    return;
+                }
+                peer.push(typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk);
+                callback();
+            },
+            final(callback) {
+                const peer = getPeer();
+                if (peer && !peer.destroyed && peer.readable) peer.push(null);
+                callback();
+            }
+        });
+        first = createEndpoint(() => second);
+        second = createEndpoint(() => first);
+        return [first, second];
     }
     function getDefaultHighWaterMark(objectMode) {
         return objectMode ? defaultObjectHighWaterMark : defaultByteHighWaterMark;
@@ -383,7 +443,10 @@
         PassThrough,
         finished,
         pipeline,
+        compose,
         addAbortSignal,
+        destroy,
+        duplexPair,
         getDefaultHighWaterMark,
         setDefaultHighWaterMark,
         isDestroyed,
@@ -391,6 +454,7 @@
         isErrored,
         isReadable,
         isWritable,
+        _isArrayBufferView: value => ArrayBuffer.isView(value),
         _isUint8Array: value => value instanceof Uint8Array,
         _uint8ArrayToBuffer: value => Buffer.from(value)
     });
@@ -825,4 +889,3 @@
             final(callback) { writer.close().then(() => callback(), callback); }
         });
     };
-

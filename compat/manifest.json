@@ -175,6 +175,22 @@
       "timeoutMs": 5000,
       "source": "canaryo",
       "expected": "pass"
+    },
+    {
+      "id": "stream-duplex-and-destroy",
+      "module": "stream",
+      "fixture": "compat/cases/stream-duplex-and-destroy.js",
+      "timeoutMs": 5000,
+      "source": "canaryo",
+      "expected": "pass"
+    },
+    {
+      "id": "dns-resolver-promises",
+      "module": "dns",
+      "fixture": "compat/cases/dns-resolver-promises.js",
+      "timeoutMs": 5000,
+      "source": "canaryo",
+      "expected": "pass"
     }
   ]
 }

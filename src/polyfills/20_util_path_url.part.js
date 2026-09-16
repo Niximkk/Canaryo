@@ -345,6 +345,86 @@
 
     function createPathApi(separator, delimiter, windows) {
         const toSlashes = value => windows ? String(value).replace(/\\/g, "/") : String(value);
+        function matchesGlob(pathname, pattern) {
+            const source = toSlashes(pathname);
+            const glob = toSlashes(pattern);
+            let expression = "^";
+            let segmentStart = true;
+            for (let index = 0; index < glob.length;) {
+                const character = glob[index];
+                const next = glob[index + 1];
+                if ("?+*@".includes(character) && next === "(") {
+                    const end = glob.indexOf(")", index + 2);
+                    if (end !== -1) {
+                        const alternatives = glob.slice(index + 2, end).split("|")
+                            .map(value => value.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&"));
+                        if (segmentStart) expression += "(?!\\.)";
+                        const quantifier = character === "?" ? "?" : character === "+" ? "+" : "*";
+                        expression += `(?:${alternatives.join("|")})${quantifier}`;
+                        index = end + 1;
+                        segmentStart = false;
+                        continue;
+                    }
+                }
+                if (character === "*") {
+                    if (segmentStart) expression += "(?!\\.)";
+                    if (next === "*") {
+                        index += 2;
+                        if (glob[index] === "/") {
+                            expression += "(?:(?!\\.)[^/]+/)*";
+                            index++;
+                            segmentStart = true;
+                        } else {
+                            expression += ".*";
+                            segmentStart = false;
+                        }
+                    } else {
+                        expression += "[^/]*";
+                        index++;
+                        segmentStart = false;
+                    }
+                    continue;
+                }
+                if (character === "?") {
+                    if (segmentStart) expression += "(?!\\.)";
+                    expression += "[^/]";
+                    index++;
+                    segmentStart = false;
+                    continue;
+                }
+                if (character === "[") {
+                    const end = glob.indexOf("]", index + 1);
+                    if (end !== -1) {
+                        if (segmentStart) expression += "(?!\\.)";
+                        const contents = glob.slice(index + 1, end);
+                        expression += `[${contents.startsWith("!") ? `^${contents.slice(1)}` : contents}]`;
+                        index = end + 1;
+                        segmentStart = false;
+                        continue;
+                    }
+                }
+                if (character === "{") {
+                    const end = glob.indexOf("}", index + 1);
+                    if (end !== -1) {
+                        const alternatives = glob.slice(index + 1, end).split(",")
+                            .map(value => value.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&"));
+                        expression += `(?:${alternatives.join("|")})`;
+                        index = end + 1;
+                        segmentStart = false;
+                        continue;
+                    }
+                }
+                if (character === "/") {
+                    expression += "/";
+                    segmentStart = true;
+                } else {
+                    expression += character.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+                    segmentStart = false;
+                }
+                index++;
+            }
+            return new RegExp(`${expression}$`, windows ? "i" : "").test(source);
+        }
         function rootOf(value) {
             const source = toSlashes(value);
             if (windows) {
@@ -405,6 +485,12 @@
             if (windows && root.absolute && result.toLowerCase() === root.root.toLowerCase()) return `${result}${separator}`;
             return separator === "/" ? result : result.replace(/\//g, separator);
         }
+        function toNamespacedPath(value) {
+            const source = String(value);
+            if (!windows || !isAbsolute(source) || source.startsWith("\\\\?\\") || source.startsWith("\\\\.\\")) return source;
+            if (source.startsWith("\\\\")) return `\\\\?\\UNC\\${source.slice(2)}`;
+            return `\\\\?\\${source}`;
+        }
         const api = {
             sep: separator,
             delimiter,
@@ -439,7 +525,9 @@
                 const base = value.base || `${value.name || ""}${value.ext || ""}`;
                 return value.dir ? `${value.dir}${value.dir.endsWith(separator) ? "" : separator}${base}` : `${value.root || ""}${base}`;
             },
-            toNamespacedPath(value) { return String(value); }
+            toNamespacedPath,
+            _makeLong: toNamespacedPath,
+            matchesGlob
         };
         return api;
     }
