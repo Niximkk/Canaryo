@@ -231,6 +231,14 @@
       "timeoutMs": 5000,
       "source": "canaryo",
       "expected": "pass"
+    },
+    {
+      "id": "async-and-util-runtime-metadata",
+      "module": "util",
+      "fixture": "compat/cases/async-and-util-runtime-metadata.js",
+      "timeoutMs": 5000,
+      "source": "canaryo",
+      "expected": "pass"
     }
   ]
 }

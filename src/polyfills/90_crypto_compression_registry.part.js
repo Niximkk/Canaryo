@@ -436,7 +436,8 @@
             createHook,
             executionAsyncId,
             triggerAsyncId,
-            executionAsyncResource
+            executionAsyncResource,
+            asyncWrapProviders
         },
         buffer: {
             Buffer,

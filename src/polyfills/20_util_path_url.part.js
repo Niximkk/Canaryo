@@ -303,7 +303,84 @@
         }
         return Object.fromEntries(Object.entries(result).sort(([left], [right]) => left.localeCompare(right)));
     }
+    const systemErrors = new Map((__canaryoOsInfo.platform === "win32" ? [
+        [-4095, ["EOF", "end of file"]], [-4094, ["UNKNOWN", "unknown error"]],
+        [-4093, ["E2BIG", "argument list too long"]], [-4092, ["EACCES", "permission denied"]],
+        [-4091, ["EADDRINUSE", "address already in use"]], [-4090, ["EADDRNOTAVAIL", "address not available"]],
+        [-4083, ["EBADF", "bad file descriptor"]], [-4082, ["EBUSY", "resource busy or locked"]],
+        [-4078, ["ECONNREFUSED", "connection refused"]], [-4077, ["ECONNRESET", "connection reset by peer"]],
+        [-4075, ["EEXIST", "file already exists"]], [-4058, ["ENOENT", "no such file or directory"]],
+        [-4055, ["ENOSPC", "no space left on device"]], [-4048, ["EPERM", "operation not permitted"]],
+        [-4047, ["EPIPE", "broken pipe"]], [-4039, ["ETIMEDOUT", "connection timed out"]]
+    ] : [
+        [-2, ["ENOENT", "no such file or directory"]], [-13, ["EACCES", "permission denied"]],
+        [-17, ["EEXIST", "file exists"]], [-28, ["ENOSPC", "no space left on device"]],
+        [-32, ["EPIPE", "broken pipe"]], [-98, ["EADDRINUSE", "address already in use"]],
+        [-104, ["ECONNRESET", "connection reset by peer"]], [-110, ["ETIMEDOUT", "connection timed out"]],
+        [-111, ["ECONNREFUSED", "connection refused"]]
+    ]));
+    function getSystemErrorEntry(errorNumber) {
+        const number = Number(errorNumber);
+        if (!Number.isInteger(number) || number >= 0) throw new RangeError("err must be a negative integer");
+        return systemErrors.get(number);
+    }
+    function getSystemErrorName(errorNumber) {
+        return getSystemErrorEntry(errorNumber)?.[0] || `Unknown system error ${errorNumber}`;
+    }
+    function getSystemErrorMessage(errorNumber) {
+        return getSystemErrorEntry(errorNumber)?.[1] || `Unknown system error ${errorNumber}`;
+    }
+    function errnoException(errorNumber, syscall, original) {
+        const code = getSystemErrorName(errorNumber);
+        const error = new Error(`${syscall} ${code}${original === undefined ? "" : ` ${original}`}`);
+        error.errno = Number(errorNumber);
+        error.code = code;
+        error.syscall = String(syscall);
+        return error;
+    }
+    function exceptionWithHostPort(errorNumber, syscall, address, port, additional) {
+        const error = errnoException(errorNumber, syscall, `${address}:${port}${additional ? ` - Local (${additional})` : ""}`);
+        error.address = address;
+        error.port = port;
+        return error;
+    }
+    function aborted(signal, resource) {
+        if (!(signal instanceof AbortSignal)) return Promise.reject(new TypeError("signal must be an AbortSignal"));
+        if ((typeof resource !== "object" && typeof resource !== "function") || resource === null) {
+            return Promise.reject(new TypeError("resource must be an object"));
+        }
+        if (signal.aborted) return Promise.resolve();
+        return new Promise(resolve => signal.addEventListener("abort", resolve, { once: true }));
+    }
+    const ansiStyles = {
+        reset: [0, 0], bold: [1, 22], dim: [2, 22], italic: [3, 23], underline: [4, 24],
+        inverse: [7, 27], hidden: [8, 28], strikethrough: [9, 29],
+        black: [30, 39], red: [31, 39], green: [32, 39], yellow: [33, 39], blue: [34, 39],
+        magenta: [35, 39], cyan: [36, 39], white: [37, 39], gray: [90, 39], grey: [90, 39],
+        bgBlack: [40, 49], bgRed: [41, 49], bgGreen: [42, 49], bgYellow: [43, 49],
+        bgBlue: [44, 49], bgMagenta: [45, 49], bgCyan: [46, 49], bgWhite: [47, 49]
+    };
+    function styleText(format, text, options = {}) {
+        const formats = Array.isArray(format) ? format : [format];
+        if (options.validateStream !== false && !process.stdout?.isTTY) return String(text);
+        let opening = "";
+        let closing = "";
+        for (const name of formats) {
+            const codes = ansiStyles[name];
+            if (!codes) throw new TypeError(`Unknown style '${name}'`);
+            opening += `\x1b[${codes[0]}m`;
+            closing = `\x1b[${codes[1]}m${closing}`;
+        }
+        return `${opening}${text}${closing}`;
+    }
+    function transferableAbortController() { return new AbortController(); }
+    function transferableAbortSignal(signal) {
+        if (!(signal instanceof AbortSignal)) throw new TypeError("signal must be an AbortSignal");
+        return signal;
+    }
     const util = {
+        _errnoException: errnoException,
+        _exceptionWithHostPort: exceptionWithHostPort,
         _extend(target, source) { return Object.assign(target, source); },
         inherits(constructor, parent) {
             constructor.super_ = parent;
@@ -318,6 +395,13 @@
         callbackify,
         parseArgs,
         parseEnv,
+        aborted,
+        getSystemErrorMap: () => new Map(systemErrors),
+        getSystemErrorMessage,
+        getSystemErrorName,
+        styleText,
+        transferableAbortController,
+        transferableAbortSignal,
         MIMEType,
         MIMEParams,
         isArray: Array.isArray,

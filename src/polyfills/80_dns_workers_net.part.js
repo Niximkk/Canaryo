@@ -683,6 +683,8 @@
     NetServer.prototype.ref = function () { return this; };
     NetServer.prototype.unref = function () { return this; };
     function createServer(options, listener) { return new NetServer(options, listener); }
+    let defaultAutoSelectFamily = true;
+    let defaultAutoSelectFamilyAttemptTimeout = 250;
     const netModule = {
         BlockList,
         SocketAddress,
@@ -694,6 +696,17 @@
         isIP: value => __canaryoIsIp(String(value)),
         isIPv4: value => __canaryoIsIp(String(value)) === 4,
         isIPv6: value => __canaryoIsIp(String(value)) === 6,
+        getDefaultAutoSelectFamily: () => defaultAutoSelectFamily,
+        setDefaultAutoSelectFamily(value) {
+            if (typeof value !== "boolean") throw new TypeError("value must be a boolean");
+            defaultAutoSelectFamily = value;
+        },
+        getDefaultAutoSelectFamilyAttemptTimeout: () => defaultAutoSelectFamilyAttemptTimeout,
+        setDefaultAutoSelectFamilyAttemptTimeout(value) {
+            const timeout = Number(value);
+            if (!Number.isInteger(timeout) || timeout < 10) throw new RangeError("value must be an integer greater than or equal to 10");
+            defaultAutoSelectFamilyAttemptTimeout = timeout;
+        },
         createServer
     };
 

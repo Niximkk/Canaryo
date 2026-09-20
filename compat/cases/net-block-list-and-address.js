@@ -9,6 +9,17 @@ list.addAddress("2001:db8::1", "ipv6");
 const address = new net.SocketAddress({ address: "127.0.0.1", port: 8080 });
 const parsed = net.SocketAddress.parse("[2001:db8::1]:443");
 
+const originalAutoSelectFamily = net.getDefaultAutoSelectFamily();
+const originalAttemptTimeout = net.getDefaultAutoSelectFamilyAttemptTimeout();
+net.setDefaultAutoSelectFamily(false);
+net.setDefaultAutoSelectFamilyAttemptTimeout(25);
+const autoSelection = [
+    net.getDefaultAutoSelectFamily(),
+    net.getDefaultAutoSelectFamilyAttemptTimeout()
+];
+net.setDefaultAutoSelectFamily(originalAutoSelectFamily);
+net.setDefaultAutoSelectFamilyAttemptTimeout(originalAttemptTimeout);
+
 console.log(JSON.stringify({
     rules: list.rules,
     checks: [
@@ -21,5 +32,6 @@ console.log(JSON.stringify({
         list.check("2001:db8::2", "ipv6")
     ],
     address: address.toJSON(),
-    parsed: parsed && parsed.toJSON()
+    parsed: parsed && parsed.toJSON(),
+    autoSelection
 }));

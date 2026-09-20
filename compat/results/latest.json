@@ -26,7 +26,7 @@
       "module": "path",
       "node": {
         "exitCode": 0,
-        "stderr": "(node:22600) ExperimentalWarning: glob is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)",
+        "stderr": "(node:37020) ExperimentalWarning: glob is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)",
         "stdout": "{\"posix\":{\"normalize\":\"/srv/data/file.json\",\"relative\":\"../data/file.json\",\"parsed\":{\"root\":\"/\",\"dir\":\"/srv/data\",\"base\":\"file.json\",\"ext\":\".json\",\"name\":\"file\"}},\"win32\":{\"normalize\":\"C:\\\\srv\\\\data\\\\file.json\",\"relative\":\"..\\\\data\\\\file.json\",\"parsed\":{\"root\":\"C:\\\\\",\"dir\":\"C:\\\\srv\\\\data\",\"base\":\"file.json\",\"ext\":\".json\",\"name\":\"file\"},\"namespacedDrive\":\"\\\\\\\\?\\\\C:\\\\srv\\\\data\",\"namespacedUnc\":\"\\\\\\\\?\\\\UNC\\\\server\\\\share\\\\data\"},\"makeLongAliases\":[true,true,true],\"globMatches\":[true,false,true,true,true,false,true]}",
         "timedOut": false
       },
@@ -138,7 +138,7 @@
       "module": "util",
       "node": {
         "exitCode": 0,
-        "stderr": "(node:22676) [DEP0044] DeprecationWarning: The `util.isArray` API is deprecated. Please use `Array.isArray()` instead.\n(Use `node --trace-deprecation ...` to show where the warning was created)\n(node:22676) [DEP0045] DeprecationWarning: The `util.isBoolean` API is deprecated.  Please use `typeof arg === \"boolean\"` instead.\n(node:22676) [DEP0050] DeprecationWarning: The `util.isNull` API is deprecated. Please use `arg === null` instead.\n(node:22676) [DEP0051] DeprecationWarning: The `util.isNullOrUndefined` API is deprecated. Please use `arg === null || arg === undefined` instead.\n(node:22676) [DEP0052] DeprecationWarning: The `util.isNumber` API is deprecated. Please use `typeof arg === \"number\"` instead.\n(node:22676) [DEP0056] DeprecationWarning: The `util.isString` API is deprecated.  Please use `typeof arg === \"string\"` instead.\n(node:22676) [DEP0057] DeprecationWarning: The `util.isSymbol` API is deprecated.  Please use `arg === \"symbol\"` instead.\n(node:22676) [DEP0058] DeprecationWarning: The `util.isUndefined` API is deprecated. Please use `arg === undefined` instead.\n(node:22676) [DEP0055] DeprecationWarning: The `util.isRegExp` API is deprecated. Please use `arg instanceof RegExp` instead.\n(node:22676) [DEP0053] DeprecationWarning: The `util.isObject` API is deprecated. Please use `arg !== null && typeof arg === \"object\"` instead.\n(node:22676) [DEP0047] DeprecationWarning: The `util.isDate` API is deprecated.  Please use `arg instanceof Date` instead.\n(node:22676) [DEP0048] DeprecationWarning: The `util.isError` API is deprecated. Please use `ObjectPrototypeToString(e) === \"[object Error]\" || e instanceof Error` instead.\n(node:22676) [DEP0049] DeprecationWarning: The `util.isFunction` API is deprecated.  Please use `typeof arg === \"function\"` instead.\n(node:22676) [DEP0054] DeprecationWarning: The `util.isPrimitive` API is deprecated. Please use `arg === null || (typeof arg !== \"object\" && typeof arg !== \"function\")` instead.\n(node:22676) [DEP0046] DeprecationWarning: The `util.isBuffer` API is deprecated. Please use `Buffer.isBuffer()` instead.\n(node:22676) [DEP0060] DeprecationWarning: The `util._extend` API is deprecated. Please use Object.assign() instead.",
+        "stderr": "(node:27320) [DEP0044] DeprecationWarning: The `util.isArray` API is deprecated. Please use `Array.isArray()` instead.\n(Use `node --trace-deprecation ...` to show where the warning was created)\n(node:27320) [DEP0045] DeprecationWarning: The `util.isBoolean` API is deprecated.  Please use `typeof arg === \"boolean\"` instead.\n(node:27320) [DEP0050] DeprecationWarning: The `util.isNull` API is deprecated. Please use `arg === null` instead.\n(node:27320) [DEP0051] DeprecationWarning: The `util.isNullOrUndefined` API is deprecated. Please use `arg === null || arg === undefined` instead.\n(node:27320) [DEP0052] DeprecationWarning: The `util.isNumber` API is deprecated. Please use `typeof arg === \"number\"` instead.\n(node:27320) [DEP0056] DeprecationWarning: The `util.isString` API is deprecated.  Please use `typeof arg === \"string\"` instead.\n(node:27320) [DEP0057] DeprecationWarning: The `util.isSymbol` API is deprecated.  Please use `arg === \"symbol\"` instead.\n(node:27320) [DEP0058] DeprecationWarning: The `util.isUndefined` API is deprecated. Please use `arg === undefined` instead.\n(node:27320) [DEP0055] DeprecationWarning: The `util.isRegExp` API is deprecated. Please use `arg instanceof RegExp` instead.\n(node:27320) [DEP0053] DeprecationWarning: The `util.isObject` API is deprecated. Please use `arg !== null && typeof arg === \"object\"` instead.\n(node:27320) [DEP0047] DeprecationWarning: The `util.isDate` API is deprecated.  Please use `arg instanceof Date` instead.\n(node:27320) [DEP0048] DeprecationWarning: The `util.isError` API is deprecated. Please use `ObjectPrototypeToString(e) === \"[object Error]\" || e instanceof Error` instead.\n(node:27320) [DEP0049] DeprecationWarning: The `util.isFunction` API is deprecated.  Please use `typeof arg === \"function\"` instead.\n(node:27320) [DEP0054] DeprecationWarning: The `util.isPrimitive` API is deprecated. Please use `arg === null || (typeof arg !== \"object\" && typeof arg !== \"function\")` instead.\n(node:27320) [DEP0046] DeprecationWarning: The `util.isBuffer` API is deprecated. Please use `Buffer.isBuffer()` instead.\n(node:27320) [DEP0060] DeprecationWarning: The `util._extend` API is deprecated. Please use Object.assign() instead.",
         "stdout": "{\"predicates\":[[\"isArray\",[false,false,false,false,false,false,false,true,false,false,false,false]],[\"isBoolean\",[false,false,true,false,false,false,false,false,false,false,false,false]],[\"isNull\",[false,true,false,false,false,false,false,false,false,false,false,false]],[\"isNullOrUndefined\",[true,true,false,false,false,false,false,false,false,false,false,false]],[\"isNumber\",[false,false,false,true,false,false,false,false,false,false,false,false]],[\"isString\",[false,false,false,false,true,false,false,false,false,false,false,false]],[\"isSymbol\",[false,false,false,false,false,true,false,false,false,false,false,false]],[\"isUndefined\",[true,false,false,false,false,false,false,false,false,false,false,false]],[\"isRegExp\",[false,false,false,false,false,false,false,false,false,true,false,false]],[\"isObject\",[false,false,false,false,false,false,false,true,true,true,true,true]],[\"isDate\",[false,false,false,false,false,false,false,false,true,false,false,false]],[\"isError\",[false,false,false,false,false,false,false,false,false,false,true,false]],[\"isFunction\",[false,false,false,false,false,false,true,false,false,false,false,false]],[\"isPrimitive\",[true,true,true,true,true,true,false,false,false,false,false,false]],[\"isBuffer\",[false,false,false,false,false,false,false,false,false,false,false,true]]],\"deep\":[true,false],\"usv\":\"�A�\",\"extended\":{\"first\":1,\"replaced\":true,\"second\":2},\"environment\":{\"A\":\"one\",\"B\":\"two words\",\"C\":\"three\",\"D\":\"hello # comment\"},\"environmentEdges\":{\"DOUBLE\":\"line one\\nline two\",\"EMPTY\":\"\",\"HASH\":\"\",\"SINGLE\":\"one # two\",\"SPACED\":\"trimmed\"}}",
         "timedOut": false
       },
@@ -401,14 +401,14 @@
       "bun": {
         "exitCode": 0,
         "stderr": "",
-        "stdout": "{\"rules\":[\"Address: IPv6 2001:db8::1\",\"Subnet: IPv4 192.168.0.0/24\",\"Range: IPv4 10.0.0.10-10.0.0.20\",\"Address: IPv4 10.0.0.1\"],\"checks\":[true,true,false,true,false,true,false],\"address\":{\"address\":\"127.0.0.1\",\"family\":\"ipv4\",\"port\":8080,\"flowlabel\":0},\"parsed\":{\"address\":\"2001:db8::1\",\"family\":\"ipv6\",\"port\":443,\"flowlabel\":0}}",
+        "stdout": "{\"rules\":[\"Address: IPv6 2001:db8::1\",\"Subnet: IPv4 192.168.0.0/24\",\"Range: IPv4 10.0.0.10-10.0.0.20\",\"Address: IPv4 10.0.0.1\"],\"checks\":[true,true,false,true,false,true,false],\"address\":{\"address\":\"127.0.0.1\",\"family\":\"ipv4\",\"port\":8080,\"flowlabel\":0},\"parsed\":{\"address\":\"2001:db8::1\",\"family\":\"ipv6\",\"port\":443,\"flowlabel\":0},\"autoSelection\":[false,25]}",
         "timedOut": false
       },
       "bunMatchesNode": false,
       "canaryo": {
         "exitCode": 0,
         "stderr": "",
-        "stdout": "{\"rules\":[\"Address: IPv6 2001:db8::1\",\"Subnet: IPv4 192.168.0.0/24\",\"Range: IPv4 10.0.0.10-10.0.0.20\",\"Address: IPv4 10.0.0.1\"],\"checks\":[true,true,false,true,false,true,false],\"address\":{\"address\":\"127.0.0.1\",\"port\":8080,\"family\":\"ipv4\",\"flowlabel\":0},\"parsed\":{\"address\":\"2001:db8::1\",\"port\":443,\"family\":\"ipv6\",\"flowlabel\":0}}",
+        "stdout": "{\"rules\":[\"Address: IPv6 2001:db8::1\",\"Subnet: IPv4 192.168.0.0/24\",\"Range: IPv4 10.0.0.10-10.0.0.20\",\"Address: IPv4 10.0.0.1\"],\"checks\":[true,true,false,true,false,true,false],\"address\":{\"address\":\"127.0.0.1\",\"port\":8080,\"family\":\"ipv4\",\"flowlabel\":0},\"parsed\":{\"address\":\"2001:db8::1\",\"port\":443,\"family\":\"ipv6\",\"flowlabel\":0},\"autoSelection\":[false,25]}",
         "timedOut": false
       },
       "canaryoMatchesNode": true,
@@ -419,7 +419,7 @@
       "node": {
         "exitCode": 0,
         "stderr": "",
-        "stdout": "{\"rules\":[\"Address: IPv6 2001:db8::1\",\"Subnet: IPv4 192.168.0.0/24\",\"Range: IPv4 10.0.0.10-10.0.0.20\",\"Address: IPv4 10.0.0.1\"],\"checks\":[true,true,false,true,false,true,false],\"address\":{\"address\":\"127.0.0.1\",\"port\":8080,\"family\":\"ipv4\",\"flowlabel\":0},\"parsed\":{\"address\":\"2001:db8::1\",\"port\":443,\"family\":\"ipv6\",\"flowlabel\":0}}",
+        "stdout": "{\"rules\":[\"Address: IPv6 2001:db8::1\",\"Subnet: IPv4 192.168.0.0/24\",\"Range: IPv4 10.0.0.10-10.0.0.20\",\"Address: IPv4 10.0.0.1\"],\"checks\":[true,true,false,true,false,true,false],\"address\":{\"address\":\"127.0.0.1\",\"port\":8080,\"family\":\"ipv4\",\"flowlabel\":0},\"parsed\":{\"address\":\"2001:db8::1\",\"port\":443,\"family\":\"ipv6\",\"flowlabel\":0},\"autoSelection\":[false,25]}",
         "timedOut": false
       },
       "source": "canaryo",
@@ -474,7 +474,7 @@
       "module": "assert",
       "node": {
         "exitCode": 0,
-        "stderr": "(node:31848) ExperimentalWarning: assert.partialDeepStrictEqual is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)",
+        "stderr": "(node:29808) ExperimentalWarning: assert.partialDeepStrictEqual is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)",
         "stdout": "[true,true,true,true,true,false,false]",
         "timedOut": false
       },
@@ -540,7 +540,7 @@
     {
       "bun": {
         "exitCode": 0,
-        "stderr": "(node:31428) [DEP0173] DeprecationWarning: assert.CallTracker is deprecated.\n(Use `bun --trace-warnings ...` to show where the warning was created)",
+        "stderr": "(node:34736) [DEP0173] DeprecationWarning: assert.CallTracker is deprecated.\n(Use `bun --trace-warnings ...` to show where the warning was created)",
         "stdout": "{\"result\":7,\"calls\":[{\"thisArg\":{\"base\":3},\"arguments\":[4]}],\"report\":[{\"message\":\"Expected the add function to be executed 2 time(s) but was executed 1 time(s).\",\"actual\":1,\"expected\":2,\"operator\":\"add\"}],\"verification\":{\"name\":\"AssertionError\",\"code\":\"ERR_ASSERTION\",\"message\":\"Expected the add function to be executed 2 time(s) but was executed 1 time(s).\"},\"finalReport\":[]}",
         "timedOut": false
       },
@@ -558,7 +558,7 @@
       "module": "assert",
       "node": {
         "exitCode": 0,
-        "stderr": "(node:18468) [DEP0173] DeprecationWarning: assert.CallTracker is deprecated.\n(Use `node --trace-deprecation ...` to show where the warning was created)",
+        "stderr": "(node:24320) [DEP0173] DeprecationWarning: assert.CallTracker is deprecated.\n(Use `node --trace-deprecation ...` to show where the warning was created)",
         "stdout": "{\"result\":7,\"calls\":[{\"thisArg\":{\"base\":3},\"arguments\":[4]}],\"report\":[{\"message\":\"Expected the add function to be executed 2 time(s) but was executed 1 time(s).\",\"actual\":1,\"expected\":2,\"operator\":\"add\"}],\"verification\":{\"name\":\"AssertionError\",\"code\":\"ERR_ASSERTION\",\"message\":\"Expected the add function to be executed 2 time(s) but was executed 1 time(s).\"},\"finalReport\":[]}",
         "timedOut": false
       },
@@ -624,7 +624,7 @@
     {
       "bun": {
         "exitCode": 0,
-        "stderr": "(node:27804) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.\n(Use `bun --trace-warnings ...` to show where the warning was created)",
+        "stderr": "(node:14596) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.\n(Use `bun --trace-warnings ...` to show where the warning was created)",
         "stdout": "{\"parsedInstance\":true,\"parsed\":{\"protocol\":\"https:\",\"slashes\":true,\"auth\":\"user:pass\",\"host\":\"example.com:8080\",\"port\":\"8080\",\"hostname\":\"example.com\",\"hash\":\"#h\",\"search\":\"?x=1\",\"query\":{\"x\":\"1\"},\"pathname\":\"/a\",\"path\":\"/a?x=1\",\"href\":\"https://user:pass@example.com:8080/a?x=1#h\"},\"resolvedInstance\":true,\"resolved\":{\"protocol\":\"https:\",\"slashes\":true,\"auth\":null,\"host\":\"example.com\",\"port\":null,\"hostname\":\"example.com\",\"hash\":null,\"search\":\"?q=1\",\"query\":\"q=1\",\"pathname\":\"/z\",\"path\":\"/z?q=1\",\"href\":\"https://example.com/z?q=1\"},\"empty\":{\"protocol\":null,\"slashes\":null,\"auth\":null,\"host\":null,\"port\":null,\"hostname\":null,\"hash\":null,\"search\":null,\"query\":null,\"pathname\":null,\"path\":null,\"href\":null},\"methods\":[\"function\",\"function\",\"function\",\"function\"]}",
         "timedOut": false
       },
@@ -670,8 +670,36 @@
       "module": "timers",
       "node": {
         "exitCode": 0,
-        "stderr": "(node:4448) [DEP0095] DeprecationWarning: timers.enroll() is deprecated. Please use setTimeout instead.\n(Use `node --trace-deprecation ...` to show where the warning was created)\n(node:4448) [DEP0126] DeprecationWarning: timers.active() is deprecated. Please use timeout.refresh() instead.\n(node:4448) [DEP0096] DeprecationWarning: timers.unenroll() is deprecated. Please use clearTimeout instead.",
+        "stderr": "(node:37516) [DEP0095] DeprecationWarning: timers.enroll() is deprecated. Please use setTimeout instead.\n(Use `node --trace-deprecation ...` to show where the warning was created)\n(node:37516) [DEP0126] DeprecationWarning: timers.active() is deprecated. Please use timeout.refresh() instead.\n(node:37516) [DEP0096] DeprecationWarning: timers.unenroll() is deprecated. Please use clearTimeout instead.",
         "stdout": "{\"functions\":[\"function\",\"function\",\"function\",\"function\"],\"enrolled\":{\"idleTimeout\":5,\"linked\":true},\"fired\":1,\"idleTimeoutAfterUnenroll\":5}",
+        "timedOut": false
+      },
+      "source": "canaryo",
+      "status": "pass"
+    },
+    {
+      "bun": {
+        "exitCode": 1,
+        "stderr": "2 | const util = require(\"node:util\");\n3 | \n4 | const errorNumber = process.platform === \"win32\" ? -4058 : -2;\n5 | const systemError = util._errnoException(errorNumber, \"open\", \"fixture.txt\");\n6 | const hostErrorNumber = process.platform === \"win32\" ? -4078 : -111;\n7 | const hostError = util._exceptionWithHostPort(hostErrorNumber, \"connect\", \"localhost\", 8080);\n                           ^\nTypeError: util._exceptionWithHostPort is not a function. (In 'util._exceptionWithHostPort(hostErrorNumber, \"connect\", \"localhost\", 8080)', 'util._exceptionWithHostPort' is undefined)\n      at <anonymous> (<ROOT>\\compat\\cases\\async-and-util-runtime-metadata.js:7:24)\n\nBun v1.4.2 (Windows x64)",
+        "stdout": "",
+        "timedOut": false
+      },
+      "bunMatchesNode": false,
+      "canaryo": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"providers\":{\"nullPrototype\":true,\"values\":[0,26,40,62]},\"systemError\":{\"name\":\"ENOENT\",\"message\":\"no such file or directory\",\"map\":[\"ENOENT\",\"no such file or directory\"],\"exception\":{\"message\":\"open ENOENT fixture.txt\",\"code\":\"ENOENT\",\"errno\":-4058,\"syscall\":\"open\"},\"hostException\":{\"message\":\"connect ECONNREFUSED localhost:8080\",\"code\":\"ECONNREFUSED\",\"errno\":-4078,\"syscall\":\"connect\",\"address\":\"localhost\",\"port\":8080}},\"styles\":[\"\\u001b[31mx\\u001b[39m\",\"\\u001b[1m\\u001b[34mx\\u001b[39m\\u001b[22m\"],\"abort\":{\"controller\":true,\"sameSignal\":true,\"aborted\":true,\"reason\":\"done\"}}",
+        "timedOut": false
+      },
+      "canaryoMatchesNode": true,
+      "expected": "pass",
+      "fixture": "compat/cases/async-and-util-runtime-metadata.js",
+      "id": "async-and-util-runtime-metadata",
+      "module": "util",
+      "node": {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": "{\"providers\":{\"nullPrototype\":true,\"values\":[0,26,40,62]},\"systemError\":{\"name\":\"ENOENT\",\"message\":\"no such file or directory\",\"map\":[\"ENOENT\",\"no such file or directory\"],\"exception\":{\"message\":\"open ENOENT fixture.txt\",\"code\":\"ENOENT\",\"errno\":-4058,\"syscall\":\"open\"},\"hostException\":{\"message\":\"connect ECONNREFUSED localhost:8080\",\"code\":\"ECONNREFUSED\",\"errno\":-4078,\"syscall\":\"connect\",\"address\":\"localhost\",\"port\":8080}},\"styles\":[\"\\u001b[31mx\\u001b[39m\",\"\\u001b[1m\\u001b[34mx\\u001b[39m\\u001b[22m\"],\"abort\":{\"controller\":true,\"sameSignal\":true,\"aborted\":true,\"reason\":\"done\"}}",
         "timedOut": false
       },
       "source": "canaryo",
@@ -682,13 +710,13 @@
   "schemaVersion": 1,
   "summary": {
     "behavior": {
-      "passed": 24,
-      "total": 24,
+      "passed": 25,
+      "total": 25,
       "unexpectedFailures": 0
     },
     "surface": {
-      "matched": 606,
-      "percent": 65.8695652173913,
+      "matched": 620,
+      "percent": 67.3913043478261,
       "total": 920
     }
   },
@@ -708,13 +736,11 @@
       "bunLoaded": true,
       "canaryoLoaded": true,
       "extra": [],
-      "matched": 6,
-      "missing": [
-        "asyncWrapProviders"
-      ],
+      "matched": 7,
+      "missing": [],
       "module": "async_hooks",
       "nodeLoaded": true,
-      "percent": 85.71428571428571,
+      "percent": 100.0,
       "total": 7
     },
     {
@@ -1030,19 +1056,15 @@
       "bunLoaded": true,
       "canaryoLoaded": true,
       "extra": [],
-      "matched": 11,
+      "matched": 15,
       "missing": [
         "_createServerHandle",
         "_normalizeArgs",
-        "_setSimultaneousAccepts",
-        "getDefaultAutoSelectFamily",
-        "getDefaultAutoSelectFamilyAttemptTimeout",
-        "setDefaultAutoSelectFamily",
-        "setDefaultAutoSelectFamilyAttemptTimeout"
+        "_setSimultaneousAccepts"
       ],
       "module": "net",
       "nodeLoaded": true,
-      "percent": 61.111111111111114,
+      "percent": 83.33333333333333,
       "total": 18
     },
     {
@@ -1254,26 +1276,17 @@
       "bunLoaded": true,
       "canaryoLoaded": true,
       "extra": [],
-      "matched": 34,
+      "matched": 43,
       "missing": [
-        "_errnoException",
-        "_exceptionWithHostPort",
-        "aborted",
         "debug",
         "diff",
         "getCallSite",
         "getCallSites",
-        "getSystemErrorMap",
-        "getSystemErrorMessage",
-        "getSystemErrorName",
-        "log",
-        "styleText",
-        "transferableAbortController",
-        "transferableAbortSignal"
+        "log"
       ],
       "module": "util",
       "nodeLoaded": true,
-      "percent": 70.83333333333333,
+      "percent": 89.58333333333333,
       "total": 48
     },
     {
