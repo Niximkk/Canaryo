@@ -13,6 +13,49 @@ Results collected on September 13, 2026 with Canaryo 0.1.0. The final POC compar
 - Seven startup samples per result
 - 500 ms warm-up before each load sample
 
+## Express profile baseline
+
+This focused result was collected on September 20, 2026 after adding the
+documented Express profile. The profile route runs global middleware, a
+route-level middleware and a JSON response handler. It imports Express 5.2.1,
+compression 1.8.2, cors 2.8.5, cookie-parser 1.4.7 and multer 2.0.2. These tables
+use three two-second load samples and five startup samples; they are kept
+separate from the longer fixture results below.
+
+### Startup
+
+| Runtime | Median | Minimum | Maximum |
+|---|---:|---:|---:|
+| Node.js | 242.41 ms | 238.17 ms | 249.56 ms |
+| Bun | **147.16 ms** | **146.65 ms** | **155.81 ms** |
+| Canaryo | 231.99 ms | 228.54 ms | 244.54 ms |
+
+### Persistent connections
+
+| Concurrency | Runtime | Requests/s | p50 | p95 | p99 | Errors | RSS |
+|---:|---|---:|---:|---:|---:|---:|---:|
+| 1 | Node.js | 6,019 | 0.15 ms | 0.23 ms | 0.32 ms | 0 | 86.0 MiB |
+| 1 | Bun | **10,771** | **0.09 ms** | **0.12 ms** | **0.16 ms** | 0 | 59.6 MiB |
+| 1 | Canaryo | 4,184 | 0.22 ms | 0.29 ms | 0.34 ms | 0 | **15.7 MiB** |
+| 16 | Node.js | 6,524 | 2.20 ms | 3.73 ms | 10.76 ms | 0 | 97.2 MiB |
+| 16 | Bun | **20,037** | **0.75 ms** | **1.00 ms** | **1.91 ms** | 0 | 59.6 MiB |
+| 16 | Canaryo | 5,074 | 2.85 ms | 5.98 ms | 6.59 ms | 0 | **16.3 MiB** |
+
+At concurrency 16, Canaryo uses 83.2% less resident memory than Node.js and
+72.7% less than Bun. Its request rate is 22.2% below Node.js and 74.7% below
+Bun. The native HTTP fixture is much faster than the Express profile under the
+same runtime, so the remaining throughput cost is dominated by framework and
+middleware JavaScript interpreted by QuickJS-NG. Express-specific optimization
+must reduce that repeated JavaScript work while preserving the profile's
+differential behavior.
+
+Reproduce this focused measurement with:
+
+```sh
+cargo build --release
+cargo bench --bench runtime -- --case "express profile" --bun --keep-alive --duration 2 --runs 3 --startup-runs 5
+```
+
 ## Startup
 
 Startup is measured from process creation until the first complete valid HTTP response. Lower is better.

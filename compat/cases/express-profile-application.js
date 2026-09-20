@@ -64,6 +64,13 @@ const server = app.listen(port, "127.0.0.1", async () => {
         const responseHelpers = await request("/response-helpers");
         const sendStatus = await request("/send-status");
         const jsonp = await request("/jsonp?callback=handle");
+        const file = await request("/send-file");
+        const range = await request("/send-file", { headers: { range: "bytes=0-4" } });
+        const download = await request("/download");
+        const cache = await request("/cache");
+        const conditional = await request("/cache", {
+            headers: { "if-none-match": '"canaryo-profile"' }
+        });
         const asyncResponse = await request("/async");
         const asyncFailure = await request("/async-failure");
         const corsResponse = await request("/cors", {
@@ -105,6 +112,25 @@ const server = app.listen(port, "127.0.0.1", async () => {
             },
             sendStatus: { status: sendStatus.status, body: sendStatus.body },
             jsonp: { contentType: jsonp.headers["content-type"], body: jsonp.body },
+            file: { status: file.status, contentType: file.headers["content-type"], body: file.body },
+            range: {
+                status: range.status,
+                contentRange: range.headers["content-range"],
+                acceptRanges: range.headers["accept-ranges"],
+                body: range.body
+            },
+            download: {
+                status: download.status,
+                disposition: download.headers["content-disposition"],
+                body: download.body
+            },
+            cache: {
+                status: cache.status,
+                etag: cache.headers.etag,
+                lastModified: cache.headers["last-modified"],
+                body: cache.body
+            },
+            conditional: { status: conditional.status, body: conditional.body },
             asyncResponse: JSON.parse(asyncResponse.body),
             asyncFailure: { status: asyncFailure.status, body: JSON.parse(asyncFailure.body) },
             cors: {

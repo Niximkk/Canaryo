@@ -117,5 +117,6 @@ workloads where native HTTP work, startup time or memory use is material.
 - [x] High-frequency `req` and `res` helper matrix completed.
 - [x] Selected middleware versions tested and documented.
 - [x] Express-profile diagnostics implemented in `canaryo check`.
+- [x] Express-profile benchmark recorded against Node.js and Bun.
 - [ ] Windows and Ubuntu CI green for the complete profile.
-- [ ] Final profile benchmark and release candidate published.
+- [ ] Release candidate published.

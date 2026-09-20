@@ -2,15 +2,29 @@ const express = require("express");
 const cookieParser = require("cookie-parser");
 const cors = require("cors");
 const multer = require("multer");
+const path = require("node:path");
 
 const app = express();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 1024 * 1024 } });
+const profileFile = path.join(__dirname, "../express-static/public/hello.txt");
 
 app.use((request, response, next) => {
     response.locals.steps = ["global"];
     response.set("x-canaryo-profile", "express-5.2.1");
     next();
 });
+
+app.get("/",
+    (_request, response, next) => {
+        response.locals.steps.push("benchmark");
+        next();
+    },
+    (_request, response) => response.json({
+        profile: "express-5.2.1",
+        steps: response.locals.steps
+    })
+);
+app.post("/echo", express.json(), (request, response) => response.json({ body: request.body }));
 
 app.get("/users/:id", (request, response) => {
     response.status(200).json({
@@ -76,6 +90,14 @@ app.get("/response-helpers", (_request, response) => {
 });
 app.get("/send-status", (_request, response) => response.sendStatus(418));
 app.get("/jsonp", (_request, response) => response.jsonp({ ok: true }));
+app.get("/send-file", (_request, response) => response.sendFile(profileFile));
+app.get("/download", (_request, response) => response.download(profileFile, "canaryo.txt"));
+app.get("/cache", (_request, response) => {
+    response
+        .set("etag", '"canaryo-profile"')
+        .set("last-modified", "Wed, 01 Jan 2025 00:00:00 GMT")
+        .send("cache");
+});
 
 const corsMiddleware = cors({ origin: "https://example.com", credentials: true });
 app.options("/cors", corsMiddleware);

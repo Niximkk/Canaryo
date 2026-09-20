@@ -14,6 +14,10 @@
 - Add stream piping lifecycle and Buffer slice aliases required by multipart
   middleware.
 - Report exact Express-profile package matches separately in `canaryo check`.
+- Cover `sendFile`, downloads, ranges, cache validators and conditional
+  responses in the differential Express profile.
+- Add a representative Express middleware benchmark alongside the minimal
+  Express fixture.
 
 ## 0.1.0
 
