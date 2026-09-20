@@ -188,7 +188,7 @@ A module is marked supported when its selected upstream suite reaches the docume
 - [x] Add the Node/Canaryo API-surface probe.
 - [x] Generate the first JSON and Markdown baseline.
 - [x] Add mandatory differential Express and Fastify application cases.
-- Convert the remaining compression, static-file, logging, Web stream, and Fetch framework scenarios into differential cases.
+- [x] Convert compression, static-file, logging, Web stream, timer, and Fetch framework scenarios into differential cases.
 - [x] Pin the Node.js 22.15.1 compatibility baseline.
 - Pin Bun and the adapted upstream test revisions.
 
