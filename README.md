@@ -220,9 +220,7 @@ cargo bench --bench runtime -- --startup-only --startup-runs 15
 
 ## Project status
 
-The one-week Express profile, acceptance gates and permanent exclusions are documented in [COMPATIBILITY_STRATEGY.md](COMPATIBILITY_STRATEGY.md).
-
-The repository remains an educational experiment and portfolio project. Development targets the documented Express profile only; additional frameworks, native addons, isolated workers and production hardening remain outside the scope.
+The repository remains an educational experiment and portfolio project. Development targets the documented Express 5.2.1 profile only. Additional frameworks, native addons, isolated workers, IPC, HTTP/2, WebSockets and production hardening remain outside the scope.
 
 See [CHANGELOG.md](CHANGELOG.md) for the final POC release notes.
 
