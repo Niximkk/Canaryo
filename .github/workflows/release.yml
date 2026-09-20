@@ -10,7 +10,11 @@ permissions:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -42,6 +46,7 @@ jobs:
             gh release create "$GITHUB_REF_NAME" \
               --repo "$GITHUB_REPOSITORY" \
               --verify-tag \
+              --draft \
               --generate-notes \
               --title "Canaryo $GITHUB_REF_NAME"
           fi
@@ -103,3 +108,12 @@ jobs:
         run: |
           $package = "canaryo-$env:GITHUB_REF_NAME-${{ matrix.platform }}"
           gh release upload $env:GITHUB_REF_NAME "$package.zip" "$package.zip.sha256" --clobber
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish completed release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest
