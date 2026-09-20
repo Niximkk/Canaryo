@@ -1,8 +1,0 @@
-{
-  "name": "canaryo-fastify-basic-fixture",
-  "private": true,
-  "version": "1.0.0",
-  "dependencies": {
-    "fastify": "5.12.3"
-  }
-}

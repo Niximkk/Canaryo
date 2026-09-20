@@ -26,13 +26,9 @@ jobs:
           # behavior, as happened with util.parseEnv between 22.15 and 22.23.
           node-version: 22.15.1
           cache: npm
-          cache-dependency-path: |
-            fixtures/express-basic/package-lock.json
-            fixtures/fastify-basic/package-lock.json
+          cache-dependency-path: fixtures/express-basic/package-lock.json
       - run: npm ci
         working-directory: fixtures/express-basic
-      - run: npm ci
-        working-directory: fixtures/fastify-basic
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test

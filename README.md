@@ -5,7 +5,7 @@
 <h1 align="center">Canaryo</h1>
 
 <p align="center">
-  <strong>A lightweight JavaScript runtime for existing Node.js HTTP applications.</strong>
+  <strong>A Rust and QuickJS proof of concept for existing Express applications.</strong>
 </p>
 
 <p align="center">
@@ -18,9 +18,9 @@
   <img alt="Status experimental" src="https://img.shields.io/badge/status-experimental-f0b429">
 </p>
 
-Canaryo embeds QuickJS-NG in a Rust executable and recreates the Node.js APIs needed by HTTP applications. Its goal is to run existing projects without source changes while reducing startup time and memory usage.
+Canaryo embeds QuickJS-NG in a Rust executable and recreates the Node.js APIs needed by a focused set of HTTP applications. It demonstrates that an existing Express application can run without source changes while using a small native runtime.
 
-Canaryo 0.1.0 is an experimental runtime. Basic `node:http`, Express 5.2.1, and Fastify 5.12.3 applications work natively; broader Node.js compatibility is under active development.
+Canaryo 0.1.0 is a finished experimental proof of concept targeting basic `node:http` and Express 5.2.1 applications. It is not a production runtime or an ongoing attempt to implement every Node.js API.
 
 ## Why Canaryo?
 
@@ -46,23 +46,17 @@ canaryo check server.js
 canaryo server.js
 ```
 
-A minimal server needs no Canaryo-specific code:
+A minimal Express server needs no Canaryo-specific code:
 
 ```js
-const http = require("node:http");
+const express = require("express");
+const app = express();
 
-http.createServer((_request, response) => {
-    response.end("Hello from Canaryo!");
-}).listen(3000);
-```
+app.get("/", (_request, response) => {
+    response.json({ hello: "Canaryo" });
+});
 
-The supported Fastify subset also uses the framework's regular API:
-
-```js
-const fastify = require("fastify")();
-
-fastify.get("/", async () => ({ hello: "world" }));
-fastify.listen({ port: 3000, host: "127.0.0.1" });
+app.listen(3000);
 ```
 
 ## CLI
@@ -89,7 +83,6 @@ Lower is better.
 |---|---:|---:|---:|
 | `node:http` | 50.90 ms | 51.30 ms | **25.24 ms** |
 | Express 5.2.1 | 218.48 ms | **171.33 ms** | 198.14 ms |
-| Fastify 5.12.3 | 372.25 ms | **195.19 ms** | 213.90 ms |
 
 ### Throughput at concurrency 16
 
@@ -99,7 +92,6 @@ Higher is better. "New connection" opens a TCP connection for every request; "ke
 |---|---:|---:|---:|---:|---:|---:|
 | `node:http` | 6,461 | 7,183 | **7,365** | 20,220 | **25,732** | 19,006 |
 | Express 5.2.1 | 3,250 | **6,253** | 3,630 | 6,019 | **16,860** | 5,313 |
-| Fastify 5.12.3 | 5,905 | **6,625** | 5,269 | 17,587 | **22,364** | 8,925 |
 
 ### 16 KiB JSON throughput at concurrency 16
 
@@ -109,7 +101,6 @@ This test sends `POST /echo` over persistent connections and includes parsing an
 |---|---:|---:|---:|---:|---:|---:|
 | `node:http` | 10,343 req/s | **10,643 req/s** | 7,999 req/s | 41.3 MiB | 43.6 MiB | **9.2 MiB** |
 | Express 5.2.1 | 3,038 req/s | **6,493 req/s** | 1,797 req/s | 84.3 MiB | 62.3 MiB | **13.0 MiB** |
-| Fastify 5.12.3 | 4,919 req/s | **8,187 req/s** | 1,019 req/s | 97.5 MiB | 72.4 MiB | **17.5 MiB** |
 
 ### Resident memory at concurrency 16
 
@@ -119,9 +110,8 @@ Lower is better. RSS is sampled from the runtime process during the selected thr
 |---|---:|---:|---:|---:|---:|---:|
 | `node:http` | 47.6 MiB | **9.8 MiB** | **79.4%** | 47.3 MiB | **9.8 MiB** | **79.3%** |
 | Express 5.2.1 | 59.1 MiB | **12.9 MiB** | **78.2%** | 54.7 MiB | **12.6 MiB** | **77.0%** |
-| Fastify 5.12.3 | 63.6 MiB | **16.3 MiB** | **74.4%** | 58.5 MiB | **17.3 MiB** | **70.4%** |
 
-Canaryo starts native HTTP 50.8% faster than Bun and uses 70.4% to 79.4% less resident memory across the concurrency-16 GET workloads. It also leads Bun's native HTTP result by 2.5% when each request opens a connection. Bun leads the persistent and framework-heavy workloads because JavaScriptCore's optimizing JIT accelerates repeated application code; Fastify and large JSON request paths remain Canaryo's main performance target.
+Canaryo starts native HTTP 50.8% faster than Bun and uses 77.0% to 79.4% less resident memory across the concurrency-16 GET workloads shown here. It also leads Bun's native HTTP result by 2.5% when each request opens a connection. Bun leads the persistent and Express-heavy workloads because JavaScriptCore's optimizing JIT accelerates repeated application code.
 
 These synthetic loopback results cover the current compatibility surface on one machine. See [BENCHMARKS.md](BENCHMARKS.md) for latency percentiles, concurrency 1 results, methodology, limitations, and reproduction commands.
 
@@ -151,7 +141,6 @@ flowchart LR
 | CommonJS | Supported | Relative modules, JSON, package `main` and `exports`, conditional and wildcard exports, scoped packages, cache, upward `node_modules` lookup, common `node:module` helpers, legacy `sys` and `_stream_*` aliases, and direct built-in subpaths such as `assert/strict`, `path/posix`, `path/win32`, and `util/types`. |
 | `node:http` | Partial | Non-blocking servers, exported server/message class hierarchies, persistent HTTP/1.1 connections, pipelining, incrementally delivered request bodies with socket backpressure, chunk extensions and trailers, binary payloads, `HEAD`, response lifecycle, validated headers, header appending and bulk setting, connection admission limits, graceful close, idle/forced connection closing, configurable request limits, plus outbound `request` and `get`. Outbound uploads and responses stream through bounded queues and support pause/resume, timeouts, explicit aborts, and `AbortSignal`. `Agent` provides isolated pools, keep-alive, socket limits, `maxFreeSockets`, `agent: false`, `getName`, and pool destruction. Responses with redirects are delivered as 3xx, matching Node. Advanced socket creation and live pool introspection remain incomplete. |
 | Express | Partial | Express 5.2.1 startup, basic routing, JSON request parsing, and JSON responses. |
-| Fastify | Partial | Fastify 5.12.3 startup, parameterized routes, query strings, request/response hooks, JSON request parsing, async and timed handlers, JSON responses, and built-in Pino request logging. Plugin compatibility varies with the Node.js APIs each plugin uses. |
 | Async context and timers | Partial | Promise jobs, `AsyncLocalStorage`, `AsyncResource`, resource lifecycle hooks and IDs, `process.nextTick`, `queueMicrotask`, callback timers, and `node:timers/promises` timeout, immediate, interval, and scheduler APIs. Async-local stores propagate through timers, ticks, Promise callbacks, and resource bindings. Referenced timers keep standalone scripts alive, while `unref()` permits exit. Precise Node scheduling phases and hooks for every internal resource remain incomplete. |
 | Process and console | Partial | Importable `node:process`, `node:console`, and `node:tty`; arguments, environment and env-file loading, cwd and directory changes, executable path, PID, platform/architecture/version metadata, exit codes and explicit termination, process events, warnings, uptime, `hrtime`, resource-shape methods, built-in module lookup, host TTY detection, evented standard streams, color capability helpers, console assertions, counters, groups and timers, and custom `Console` streams. Signals, IPC, privilege APIs, interactive stdin reads, terminal sizing, advanced console formatting, and exact resource accounting remain incomplete. |
 | Events | Partial | Global `Event`, `EventTarget`, `AbortController`, and `AbortSignal`; listener ordering, one-time and prepended listeners, removal, introspection, global and per-emitter listener limits, monitored and unhandled errors, `captureRejections`, `EventEmitterAsyncResource`, `addAbortListener`, cancelable Promise-based `events.once`, and cancelable async iteration through `events.on`. Listener leak warnings remain incomplete. |
@@ -190,7 +179,6 @@ Run the complete validation suite:
 
 ```sh
 npm ci --prefix fixtures/express-basic
-npm ci --prefix fixtures/fastify-basic
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test
@@ -216,7 +204,7 @@ cargo bench --bench runtime -- --duration 3 --runs 3 --startup-runs 7
 cargo bench --bench runtime -- --keep-alive --duration 3 --runs 3 --startup-runs 7
 ```
 
-Add `--case fastify`, `--case express`, or `--case node:http` to isolate one application while investigating performance.
+Add `--case express` or `--case node:http` to isolate one application while investigating performance.
 
 Use `--startup-only` while working specifically on initialization:
 
@@ -224,15 +212,11 @@ Use `--startup-only` while working specifically on initialization:
 cargo bench --bench runtime -- --startup-only --startup-runs 15
 ```
 
-## Roadmap
+## Project status
 
-The measurable execution plan is documented in [COMPATIBILITY_STRATEGY.md](COMPATIBILITY_STRATEGY.md).
+The final POC scope is documented in [COMPATIBILITY_STRATEGY.md](COMPATIBILITY_STRATEGY.md).
 
-- Additional asynchronous I/O sources.
-- Wider Buffer, stream, filesystem, crypto, and networking support.
-- Complete ESM/CommonJS interop and the remaining Node package-resolution rules.
-- A larger Express, Fastify, and plugin compatibility suite.
-- Advanced TLS options, isolated workers, diagnostics, and production observability.
+The repository is intended as an educational experiment and portfolio project. Its generic Node.js compatibility work remains available for exploration, but missing APIs, additional frameworks, native addons, isolated workers, and production hardening are outside the finished scope.
 
 ## License
 

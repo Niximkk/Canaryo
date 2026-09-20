@@ -514,8 +514,10 @@ fn module_loaded(surface: &Value, module: &str) -> bool {
 }
 
 fn captures_match(reference: &Capture, actual: &Capture) -> bool {
-    reference.exit_code == actual.exit_code
-        && reference.timed_out == actual.timed_out
+    reference.exit_code == 0
+        && actual.exit_code == 0
+        && !reference.timed_out
+        && !actual.timed_out
         && outputs_match(&reference.stdout, &actual.stdout)
 }
 
@@ -717,5 +719,31 @@ mod tests {
         ));
         assert!(!outputs_match(r#"{"value":1}"#, r#"{"value":2}"#));
         assert!(!outputs_match("first", "second"));
+    }
+
+    #[test]
+    fn matching_failures_do_not_count_as_compatibility_passes() {
+        let failed = Capture {
+            exit_code: 1,
+            timed_out: false,
+            stdout: "same failure".into(),
+            stderr: String::new(),
+        };
+        let successful = Capture {
+            exit_code: 0,
+            timed_out: false,
+            stdout: "same output".into(),
+            stderr: String::new(),
+        };
+        let timed_out = Capture {
+            exit_code: 0,
+            timed_out: true,
+            stdout: "same output".into(),
+            stderr: String::new(),
+        };
+
+        assert!(!captures_match(&failed, &failed));
+        assert!(captures_match(&successful, &successful));
+        assert!(!captures_match(&timed_out, &successful));
     }
 }
