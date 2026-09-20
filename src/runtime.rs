@@ -614,6 +614,123 @@ globalThis.__canaryoPollHttpRequests = function() {
 globalThis.__canaryoPendingHttpRequests = () => pendingClientRequests.size;
 let maxIdleHttpParsers = 1000;
 
+function optimizeExpressRouter(listener) {
+    const router = listener?.router;
+    if (!router || !Array.isArray(router.stack) || router.__canaryoOptimized) return listener;
+
+    const originalHandle = router.handle;
+    if (typeof originalHandle !== "function") return listener;
+    const stack = router.stack;
+    const stackLength = stack.length;
+    const normalizePath = value => {
+        let path = String(value || "/");
+        if (!router.strict && path.length > 1) path = path.replace(/\/+$/, "");
+        return router.caseSensitive ? path : path.toLowerCase();
+    };
+    const plans = new Map();
+    const candidates = new Map();
+
+    for (const layer of stack) {
+        const route = layer.route;
+        if (!route || typeof route.path !== "string" || /[:*?()[\]]/.test(route.path)) continue;
+        for (const method of Object.keys(route.methods || {})) {
+            if (method === "_all") continue;
+            const normalizedMethod = method.toUpperCase();
+            const key = `${normalizedMethod}\0${normalizePath(route.path)}`;
+            candidates.set(key, { method: normalizedMethod, path: route.path });
+            if (normalizedMethod === "GET" && !route.methods.head) {
+                candidates.set(`HEAD\0${normalizePath(route.path)}`, {
+                    method: "HEAD",
+                    path: route.path
+                });
+            }
+        }
+    }
+
+    for (const [key, candidate] of candidates) {
+        const steps = [];
+        let safe = true;
+        let matchedRoute = false;
+
+        for (const layer of stack) {
+            if (layer.route) {
+                if (normalizePath(layer.route.path) !== normalizePath(candidate.path)
+                    || !layer.route._handlesMethod(candidate.method)) continue;
+                const method = candidate.method === "HEAD" && !layer.route.methods.head
+                    ? "get"
+                    : candidate.method.toLowerCase();
+                const handlers = layer.route.stack.filter(item => !item.method || item.method === method);
+                const terminal = handlers[handlers.length - 1]?.handle;
+                if (typeof terminal !== "function" || terminal.length >= 3) {
+                    safe = false;
+                    break;
+                }
+                matchedRoute = true;
+                steps.push({ route: layer.route });
+                continue;
+            }
+
+            if (layer.slash) {
+                steps.push({ layer });
+                continue;
+            }
+
+            let matches = false;
+            try { matches = layer.match(candidate.path); }
+            finally {
+                layer.params = undefined;
+                layer.path = undefined;
+            }
+            if (matches) {
+                safe = false;
+                break;
+            }
+        }
+
+        if (safe && matchedRoute) plans.set(key, steps);
+    }
+
+    if (plans.size === 0) return listener;
+    Object.defineProperty(router, "__canaryoOptimized", { value: true });
+    router.handle = function canaryoExpressHandle(request, response, done) {
+        if (router.stack.length !== stackLength) {
+            return originalHandle.call(router, request, response, done);
+        }
+        const queryIndex = request.url.indexOf("?");
+        const pathname = normalizePath(queryIndex < 0 ? request.url : request.url.slice(0, queryIndex));
+        const plan = plans.get(`${request.method}\0${pathname}`);
+        if (!plan) return originalHandle.call(router, request, response, done);
+
+        let index = 0;
+        request.next = next;
+        request.baseUrl = request.baseUrl || "";
+        request.originalUrl = request.originalUrl || request.url;
+        next();
+
+        function next(error) {
+            if (error === "router") return setImmediate(done, null);
+            if (error === "route") error = null;
+
+            while (index < plan.length) {
+                const step = plan[index++];
+                if (step.route) {
+                    if (error) continue;
+                    request.params = {};
+                    return step.route.dispatch(request, response, next);
+                }
+                if (error) {
+                    if (step.layer.handle.length !== 4) continue;
+                    return step.layer.handleError(error, request, response, next);
+                }
+                if (step.layer.handle.length === 4) continue;
+                return step.layer.handleRequest(request, response, next);
+            }
+            return done(error);
+        }
+    };
+    return listener;
+}
+
 const httpModule = Object.freeze({
     IncomingMessage,
     OutgoingMessage,
@@ -667,12 +784,13 @@ const httpModule = Object.freeze({
         return request;
     },
     createServer(optionsOrListener, listener, tlsOptions) {
-        const requestListener = typeof optionsOrListener === "function"
+        const rawRequestListener = typeof optionsOrListener === "function"
             ? optionsOrListener
             : listener;
-        if (typeof requestListener !== "function") {
+        if (typeof rawRequestListener !== "function") {
             throw new TypeError("createServer requer uma função");
         }
+        const requestListener = optimizeExpressRouter(rawRequestListener);
 
         const server = {
             listening: false,

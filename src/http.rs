@@ -362,7 +362,9 @@ fn listen_with_config<'js>(
         if timer_result < -1 {
             restore_timer_context.call::<_, ()>(())?;
         }
-        progress_connections(poll.registry(), &mut connections)?;
+        if connections.values().any(Connection::needs_progress) {
+            progress_connections(poll.registry(), &mut connections)?;
+        }
         let control = server_control.call::<_, u8>(())?;
         if apply_connection_action(control, &mut connections)? {
             progress_connections(poll.registry(), &mut connections)?;
@@ -564,6 +566,15 @@ fn accept_connections<'js>(
 }
 
 impl Connection<'_> {
+    fn needs_progress(&self) -> bool {
+        self.read_paused
+            || !self.pending_responses.is_empty()
+            || !self.outgoing.is_empty()
+            || self.stream.wants_write()
+            || self.close_after_write
+            || self.read_closed
+    }
+
     fn request_paused(&self) -> Result<bool> {
         self.incoming_request
             .as_ref()
@@ -1303,16 +1314,18 @@ fn append_response(
     keep_alive: bool,
     suppress_body: bool,
 ) {
-    let _ = write!(
-        buffer,
-        "HTTP/1.1 {} {}\r\n",
-        response.status,
+    buffer.extend_from_slice(b"HTTP/1.1 ");
+    append_decimal(buffer, usize::from(response.status));
+    buffer.push(b' ');
+    buffer.extend_from_slice(
         if response.status_message.is_empty() {
             reason_phrase(response.status)
         } else {
             &response.status_message
         }
+        .as_bytes(),
     );
+    buffer.extend_from_slice(b"\r\n");
     let has_content_type = response
         .headers
         .iter()
@@ -1321,7 +1334,10 @@ fn append_response(
     for (name, value) in &response.headers {
         if !name.eq_ignore_ascii_case("content-length") && !name.eq_ignore_ascii_case("connection")
         {
-            let _ = write!(buffer, "{name}: {value}\r\n");
+            buffer.extend_from_slice(name.as_bytes());
+            buffer.extend_from_slice(b": ");
+            buffer.extend_from_slice(value.as_bytes());
+            buffer.extend_from_slice(b"\r\n");
         }
     }
 
@@ -1333,7 +1349,9 @@ fn append_response(
     } else {
         response.body.len()
     };
-    let _ = write!(buffer, "Content-Length: {content_length}\r\n");
+    buffer.extend_from_slice(b"Content-Length: ");
+    append_decimal(buffer, content_length);
+    buffer.extend_from_slice(b"\r\n");
     buffer.extend_from_slice(if keep_alive {
         b"Connection: keep-alive\r\n\r\n"
     } else {
@@ -1342,6 +1360,22 @@ fn append_response(
     if !suppress_body && response.status != 204 && response.status != 304 {
         buffer.extend_from_slice(&response.body);
     }
+}
+
+fn append_decimal(buffer: &mut Vec<u8>, mut value: usize) {
+    if value == 0 {
+        buffer.push(b'0');
+        return;
+    }
+
+    let mut digits = [0_u8; 20];
+    let mut index = digits.len();
+    while value > 0 {
+        index -= 1;
+        digits[index] = b'0' + (value % 10) as u8;
+        value /= 10;
+    }
+    buffer.extend_from_slice(&digits[index..]);
 }
 
 fn reason_phrase(status: u16) -> &'static str {

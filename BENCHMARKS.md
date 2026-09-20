@@ -65,6 +65,32 @@ cargo build --release
 cargo bench --bench runtime -- --case "express profile" --bun --keep-alive --duration 2 --runs 3 --startup-runs 5
 ```
 
+### Unreleased static-route fast path
+
+A September 20 development build precomputed safe static Express route plans
+and skipped idle native HTTP connection work. Five three-second samples produced
+the following result. Dynamic routes, mounted routers and route stacks changed
+after startup continue through Express's original dispatcher.
+
+| Concurrency | Runtime | Requests/s | p50 | p95 | p99 | Errors | RSS |
+|---:|---|---:|---:|---:|---:|---:|---:|
+| 1 | Node.js | 5,716 | 0.16 ms | 0.24 ms | 0.31 ms | 0 | 87.6 MiB |
+| 1 | Bun | **13,796** | **0.07 ms** | **0.11 ms** | **0.14 ms** | 0 | 61.5 MiB |
+| 1 | Canaryo | 4,464 | 0.20 ms | 0.30 ms | 0.37 ms | 0 | **16.2 MiB** |
+| 16 | Node.js | 5,771 | 2.67 ms | 3.88 ms | **5.27 ms** | 0 | 89.5 MiB |
+| 16 | Bun | **16,662** | **0.87 ms** | **1.43 ms** | **2.03 ms** | 0 | 60.0 MiB |
+| 16 | Canaryo | 5,323 | 2.84 ms | 3.86 ms | 7.27 ms | 0 | **16.6 MiB** |
+
+Compared with the Canaryo baseline above, throughput increased by 6.7% at
+concurrency 1 and 4.9% at concurrency 16. In this run Canaryo reached 92.2% of
+Node.js throughput at concurrency 16 while using 81.5% less resident memory.
+The result still leaves a large gap to Bun because the selected middleware and
+route handlers continue to execute in QuickJS-NG.
+
+```sh
+cargo bench --bench runtime -- --case "express profile" --bun --keep-alive --duration 3 --runs 5 --startup-runs 5
+```
+
 ## Startup
 
 Startup is measured from process creation until the first complete valid HTTP response. Lower is better.

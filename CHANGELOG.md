@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Precompute safe static Express route plans while preserving the original
+  router as the fallback for dynamic, mounted, or mutated route stacks.
+- Skip idle HTTP connection progression and serialize response metadata
+  directly into the output buffer.
+
 ## 0.2.0 - 2026-09-20
 
 - Refocus development on a one-week Express 5.2.1 compatibility profile.
