@@ -1,7 +1,7 @@
 {
   "baseline": {
     "bun": "1.4.2",
-    "canaryo": "0.2.0-rc.1",
+    "canaryo": "0.2.0",
     "node": "v22.15.1"
   },
   "cases": [

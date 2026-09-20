@@ -15,8 +15,8 @@ Version `v0.1.0` remains the finished initial POC. The next development cycle is
 limited to one week and turns that POC into a documented Express compatibility
 profile.
 
-Release candidate `v0.2.0-rc.1` freezes that profile for final Windows and Ubuntu
-validation.
+Release `v0.2.0` completes the profile after the `v0.2.0-rc.1` packages passed
+the Windows and Ubuntu release workflow.
 
 ## Fixed baseline
 
@@ -123,5 +123,5 @@ workloads where native HTTP work, startup time or memory use is material.
 - [x] Express-profile benchmark recorded against Node.js and Bun.
 - [x] Express request path profiled and release build optimized without changing
       application semantics.
-- [ ] Windows and Ubuntu CI green for the complete profile.
-- [ ] Release candidate published.
+- [x] Windows and Ubuntu CI green for the complete profile.
+- [x] Release candidate published and packaged successfully.

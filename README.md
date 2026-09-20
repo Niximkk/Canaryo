@@ -20,7 +20,7 @@
 
 Canaryo embeds QuickJS-NG in a Rust executable and recreates the Node.js APIs needed by a focused set of HTTP applications. It demonstrates that an existing Express application can run without source changes while using a small native runtime.
 
-Canaryo 0.2.0-rc.1 freezes the one-week Express 5.2.1 compatibility profile built from the initial 0.1.0 proof of concept. It is not a production runtime or an attempt to implement every Node.js API.
+Canaryo 0.2.0 is the completed one-week Express 5.2.1 compatibility profile built from the initial 0.1.0 proof of concept. It is not a production runtime or an attempt to implement every Node.js API.
 
 ## Why Canaryo?
 

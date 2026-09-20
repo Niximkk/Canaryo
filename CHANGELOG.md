@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0-rc.1 - 2026-09-20
+## 0.2.0 - 2026-09-20
 
 - Refocus development on a one-week Express 5.2.1 compatibility profile.
 - Add differential and black-box coverage for route parameters, queries,
