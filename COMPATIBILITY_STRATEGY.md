@@ -52,7 +52,7 @@ The existing generic implementations for streams, Buffer, filesystem, crypto, Fe
 - [x] Windows and Ubuntu CI pass.
 - [x] Reproducible Node.js/Bun/Canaryo benchmark harness.
 - [x] Align the README and benchmark report with the Express-only scope.
-- [ ] Produce release binaries and tag the final POC version.
+- [x] Prepare automated Windows/Linux release archives and final 0.1.0 notes.
 
 ## Finalization policy
 
