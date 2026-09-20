@@ -8,17 +8,16 @@ const hostError = util._exceptionWithHostPort(hostErrorNumber, "connect", "local
 
 const controller = util.transferableAbortController();
 const sameSignal = util.transferableAbortSignal(controller.signal) === controller.signal;
+const providerNames = ["NONE", "PROMISE", "TCPWRAP", "VERIFYREQUEST"];
+const providerValues = providerNames.map(name => asyncHooks.asyncWrapProviders[name]);
 
 util.aborted(controller.signal, {}).then(() => {
     console.log(JSON.stringify({
         providers: {
             nullPrototype: Object.getPrototypeOf(asyncHooks.asyncWrapProviders) === null,
-            values: [
-                asyncHooks.asyncWrapProviders.NONE,
-                asyncHooks.asyncWrapProviders.PROMISE,
-                asyncHooks.asyncWrapProviders.TCPWRAP,
-                asyncHooks.asyncWrapProviders.VERIFYREQUEST
-            ]
+            namesPresent: providerNames.every(name => Object.hasOwn(asyncHooks.asyncWrapProviders, name)),
+            integerValues: providerValues.every(Number.isInteger),
+            uniqueValues: new Set(providerValues).size === providerValues.length
         },
         systemError: {
             name: util.getSystemErrorName(errorNumber),

@@ -189,6 +189,16 @@ fn generate_results(root: &Path, pattern: Option<&str>) -> Result<(), String> {
             _ => "expected-failure",
         };
         println!("  {status:>16}  {}", case.id);
+        if status == "fail" {
+            println!("    Node.js: {}", node_capture.stdout);
+            println!("    Canaryo: {}", canaryo_capture.stdout);
+            if node_capture.exit_code != canaryo_capture.exit_code {
+                println!(
+                    "    exit codes: Node.js={}, Canaryo={}",
+                    node_capture.exit_code, canaryo_capture.exit_code
+                );
+            }
+        }
 
         case_rows.push(json!({
             "id": case.id,
@@ -481,7 +491,20 @@ fn module_loaded(surface: &Value, module: &str) -> bool {
 fn captures_match(reference: &Capture, actual: &Capture) -> bool {
     reference.exit_code == actual.exit_code
         && reference.timed_out == actual.timed_out
-        && reference.stdout == actual.stdout
+        && outputs_match(&reference.stdout, &actual.stdout)
+}
+
+fn outputs_match(reference: &str, actual: &str) -> bool {
+    if reference == actual {
+        return true;
+    }
+    match (
+        serde_json::from_str::<Value>(reference),
+        serde_json::from_str::<Value>(actual),
+    ) {
+        (Ok(reference), Ok(actual)) => reference == actual,
+        _ => false,
+    }
 }
 
 fn case_matches(case: &CompatCase, pattern: Option<&str>) -> bool {
@@ -659,5 +682,15 @@ mod tests {
         assert!(case_matches(&case, Some("platform")));
         assert!(case_matches(&case, Some("path")));
         assert!(!case_matches(&case, Some("stream")));
+    }
+
+    #[test]
+    fn json_outputs_match_without_depending_on_object_key_order() {
+        assert!(outputs_match(
+            r#"{"first":1,"second":{"left":2,"right":3}}"#,
+            r#"{"second":{"right":3,"left":2},"first":1}"#,
+        ));
+        assert!(!outputs_match(r#"{"value":1}"#, r#"{"value":2}"#));
+        assert!(!outputs_match("first", "second"));
     }
 }

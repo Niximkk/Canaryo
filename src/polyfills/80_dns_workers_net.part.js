@@ -2,10 +2,13 @@
         let defaultResultOrder = "verbatim";
         let defaultServers = [];
         let promiseServers = [];
+        const posixLookupConstants = __canaryoOsInfo.platform === "win32"
+            ? { ADDRCONFIG: 1024, ALL: 256, V4MAPPED: 2048 }
+            : { ADDRCONFIG: 32, ALL: 16, V4MAPPED: 8 };
         const lookupConstants = {
-            ADDRCONFIG: 1024,
-            ALL: 256,
-            V4MAPPED: 2048
+            ADDRCONFIG: posixLookupConstants.ADDRCONFIG,
+            ALL: posixLookupConstants.ALL,
+            V4MAPPED: posixLookupConstants.V4MAPPED
         };
         const errorConstants = {
             NODATA: "ENODATA",

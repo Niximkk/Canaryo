@@ -70,7 +70,7 @@ The export score measures discoverable names, not complete semantics. Behavioral
 | `dns-public-constants` | `dns` | Pass | Pass | canaryo |
 | `zlib-legacy-constants` | `zlib` | Pass | Pass | canaryo |
 | `http-exported-class-hierarchy` | `http` | Pass | Differs | canaryo |
-| `net-block-list-and-address` | `net` | Pass | Differs | canaryo |
+| `net-block-list-and-address` | `net` | Pass | Pass | canaryo |
 | `diagnostics-channel-class` | `diagnostics_channel` | Pass | Pass | canaryo |
 | `assert-partial-deep-strict` | `assert` | Pass | Pass | canaryo |
 | `stream-duplex-and-destroy` | `stream` | Pass | Pass | canaryo |
