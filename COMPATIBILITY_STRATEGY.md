@@ -15,6 +15,9 @@ Version `v0.1.0` remains the finished initial POC. The next development cycle is
 limited to one week and turns that POC into a documented Express compatibility
 profile.
 
+Release candidate `v0.2.0-rc.1` freezes that profile for final Windows and Ubuntu
+validation.
+
 ## Fixed baseline
 
 - Node.js 22.15.1 is the behavioral reference.
@@ -118,5 +121,7 @@ workloads where native HTTP work, startup time or memory use is material.
 - [x] Selected middleware versions tested and documented.
 - [x] Express-profile diagnostics implemented in `canaryo check`.
 - [x] Express-profile benchmark recorded against Node.js and Bun.
+- [x] Express request path profiled and release build optimized without changing
+      application semantics.
 - [ ] Windows and Ubuntu CI green for the complete profile.
 - [ ] Release candidate published.

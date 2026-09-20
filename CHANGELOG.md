@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0-rc.1 - 2026-09-20
 
 - Refocus development on a one-week Express 5.2.1 compatibility profile.
 - Add differential and black-box coverage for route parameters, queries,
@@ -18,6 +18,10 @@
   responses in the differential Express profile.
 - Add a representative Express middleware benchmark alongside the minimal
   Express fixture.
+- Optimize release builds with thin LTO, one code generation unit and stripped
+  symbols.
+- Publish pre-release tags as GitHub pre-releases and reject tags that do not
+  match the Cargo package version.
 
 ## 0.1.0
 

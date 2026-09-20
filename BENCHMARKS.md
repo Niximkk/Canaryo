@@ -49,6 +49,15 @@ middleware JavaScript interpreted by QuickJS-NG. Express-specific optimization
 must reduce that repeated JavaScript work while preserving the profile's
 differential behavior.
 
+Temporary phase instrumentation on the profile route measured approximately
+178 microseconds per request inside the Express handler under QuickJS-NG. The
+measured request/response object bridge, response extraction and HTTP
+serialization together used about 20 microseconds. This confirms that further
+HTTP parser micro-optimizations cannot close the framework throughput gap; a
+large improvement would require reducing interpreted Express work or changing
+the JavaScript engine. The instrumentation was removed after measurement so it
+does not affect the published results.
+
 Reproduce this focused measurement with:
 
 ```sh
