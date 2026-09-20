@@ -595,6 +595,7 @@ globalThis.__canaryoPollHttpRequests = function() {
     return pendingClientRequests.size + pendingNetSockets;
 };
 globalThis.__canaryoPendingHttpRequests = () => pendingClientRequests.size;
+let maxIdleHttpParsers = 1000;
 
 const httpModule = Object.freeze({
     IncomingMessage,
@@ -609,6 +610,19 @@ const httpModule = Object.freeze({
     maxHeaderSize: 16 * 1024,
     validateHeaderName,
     validateHeaderValue,
+    setMaxIdleHTTPParsers(value) {
+        if (typeof value !== "number") {
+            const error = new TypeError("max must be a number");
+            error.code = "ERR_INVALID_ARG_TYPE";
+            throw error;
+        }
+        if (!Number.isInteger(value) || value < 1) {
+            const error = new RangeError("max must be an integer greater than or equal to 1");
+            error.code = "ERR_OUT_OF_RANGE";
+            throw error;
+        }
+        maxIdleHttpParsers = value;
+    },
     request(input, options, callback) { return clientRequest("http:", globalAgent, input, options, callback); },
     get(input, options, callback) {
         const request = clientRequest("http:", globalAgent, input, options, callback);

@@ -26,7 +26,7 @@
       "module": "path",
       "node": {
         "exitCode": 0,
-        "stderr": "(node:12704) ExperimentalWarning: glob is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)",
+        "stderr": "(node:32348) ExperimentalWarning: glob is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)",
         "stdout": "{\"posix\":{\"normalize\":\"/srv/data/file.json\",\"relative\":\"../data/file.json\",\"parsed\":{\"root\":\"/\",\"dir\":\"/srv/data\",\"base\":\"file.json\",\"ext\":\".json\",\"name\":\"file\"}},\"win32\":{\"normalize\":\"C:\\\\srv\\\\data\\\\file.json\",\"relative\":\"..\\\\data\\\\file.json\",\"parsed\":{\"root\":\"C:\\\\\",\"dir\":\"C:\\\\srv\\\\data\",\"base\":\"file.json\",\"ext\":\".json\",\"name\":\"file\"},\"namespacedDrive\":\"\\\\\\\\?\\\\C:\\\\srv\\\\data\",\"namespacedUnc\":\"\\\\\\\\?\\\\UNC\\\\server\\\\share\\\\data\"},\"makeLongAliases\":[true,true,true],\"globMatches\":[true,false,true,true,true,false,true]}",
         "timedOut": false
       },
@@ -138,7 +138,7 @@
       "module": "util",
       "node": {
         "exitCode": 0,
-        "stderr": "(node:24176) [DEP0044] DeprecationWarning: The `util.isArray` API is deprecated. Please use `Array.isArray()` instead.\n(Use `node --trace-deprecation ...` to show where the warning was created)\n(node:24176) [DEP0045] DeprecationWarning: The `util.isBoolean` API is deprecated.  Please use `typeof arg === \"boolean\"` instead.\n(node:24176) [DEP0050] DeprecationWarning: The `util.isNull` API is deprecated. Please use `arg === null` instead.\n(node:24176) [DEP0051] DeprecationWarning: The `util.isNullOrUndefined` API is deprecated. Please use `arg === null || arg === undefined` instead.\n(node:24176) [DEP0052] DeprecationWarning: The `util.isNumber` API is deprecated. Please use `typeof arg === \"number\"` instead.\n(node:24176) [DEP0056] DeprecationWarning: The `util.isString` API is deprecated.  Please use `typeof arg === \"string\"` instead.\n(node:24176) [DEP0057] DeprecationWarning: The `util.isSymbol` API is deprecated.  Please use `arg === \"symbol\"` instead.\n(node:24176) [DEP0058] DeprecationWarning: The `util.isUndefined` API is deprecated. Please use `arg === undefined` instead.\n(node:24176) [DEP0055] DeprecationWarning: The `util.isRegExp` API is deprecated. Please use `arg instanceof RegExp` instead.\n(node:24176) [DEP0053] DeprecationWarning: The `util.isObject` API is deprecated. Please use `arg !== null && typeof arg === \"object\"` instead.\n(node:24176) [DEP0047] DeprecationWarning: The `util.isDate` API is deprecated.  Please use `arg instanceof Date` instead.\n(node:24176) [DEP0048] DeprecationWarning: The `util.isError` API is deprecated. Please use `ObjectPrototypeToString(e) === \"[object Error]\" || e instanceof Error` instead.\n(node:24176) [DEP0049] DeprecationWarning: The `util.isFunction` API is deprecated.  Please use `typeof arg === \"function\"` instead.\n(node:24176) [DEP0054] DeprecationWarning: The `util.isPrimitive` API is deprecated. Please use `arg === null || (typeof arg !== \"object\" && typeof arg !== \"function\")` instead.\n(node:24176) [DEP0046] DeprecationWarning: The `util.isBuffer` API is deprecated. Please use `Buffer.isBuffer()` instead.\n(node:24176) [DEP0060] DeprecationWarning: The `util._extend` API is deprecated. Please use Object.assign() instead.",
+        "stderr": "(node:27912) [DEP0044] DeprecationWarning: The `util.isArray` API is deprecated. Please use `Array.isArray()` instead.\n(Use `node --trace-deprecation ...` to show where the warning was created)\n(node:27912) [DEP0045] DeprecationWarning: The `util.isBoolean` API is deprecated.  Please use `typeof arg === \"boolean\"` instead.\n(node:27912) [DEP0050] DeprecationWarning: The `util.isNull` API is deprecated. Please use `arg === null` instead.\n(node:27912) [DEP0051] DeprecationWarning: The `util.isNullOrUndefined` API is deprecated. Please use `arg === null || arg === undefined` instead.\n(node:27912) [DEP0052] DeprecationWarning: The `util.isNumber` API is deprecated. Please use `typeof arg === \"number\"` instead.\n(node:27912) [DEP0056] DeprecationWarning: The `util.isString` API is deprecated.  Please use `typeof arg === \"string\"` instead.\n(node:27912) [DEP0057] DeprecationWarning: The `util.isSymbol` API is deprecated.  Please use `arg === \"symbol\"` instead.\n(node:27912) [DEP0058] DeprecationWarning: The `util.isUndefined` API is deprecated. Please use `arg === undefined` instead.\n(node:27912) [DEP0055] DeprecationWarning: The `util.isRegExp` API is deprecated. Please use `arg instanceof RegExp` instead.\n(node:27912) [DEP0053] DeprecationWarning: The `util.isObject` API is deprecated. Please use `arg !== null && typeof arg === \"object\"` instead.\n(node:27912) [DEP0047] DeprecationWarning: The `util.isDate` API is deprecated.  Please use `arg instanceof Date` instead.\n(node:27912) [DEP0048] DeprecationWarning: The `util.isError` API is deprecated. Please use `ObjectPrototypeToString(e) === \"[object Error]\" || e instanceof Error` instead.\n(node:27912) [DEP0049] DeprecationWarning: The `util.isFunction` API is deprecated.  Please use `typeof arg === \"function\"` instead.\n(node:27912) [DEP0054] DeprecationWarning: The `util.isPrimitive` API is deprecated. Please use `arg === null || (typeof arg !== \"object\" && typeof arg !== \"function\")` instead.\n(node:27912) [DEP0046] DeprecationWarning: The `util.isBuffer` API is deprecated. Please use `Buffer.isBuffer()` instead.\n(node:27912) [DEP0060] DeprecationWarning: The `util._extend` API is deprecated. Please use Object.assign() instead.",
         "stdout": "{\"predicates\":[[\"isArray\",[false,false,false,false,false,false,false,true,false,false,false,false]],[\"isBoolean\",[false,false,true,false,false,false,false,false,false,false,false,false]],[\"isNull\",[false,true,false,false,false,false,false,false,false,false,false,false]],[\"isNullOrUndefined\",[true,true,false,false,false,false,false,false,false,false,false,false]],[\"isNumber\",[false,false,false,true,false,false,false,false,false,false,false,false]],[\"isString\",[false,false,false,false,true,false,false,false,false,false,false,false]],[\"isSymbol\",[false,false,false,false,false,true,false,false,false,false,false,false]],[\"isUndefined\",[true,false,false,false,false,false,false,false,false,false,false,false]],[\"isRegExp\",[false,false,false,false,false,false,false,false,false,true,false,false]],[\"isObject\",[false,false,false,false,false,false,false,true,true,true,true,true]],[\"isDate\",[false,false,false,false,false,false,false,false,true,false,false,false]],[\"isError\",[false,false,false,false,false,false,false,false,false,false,true,false]],[\"isFunction\",[false,false,false,false,false,false,true,false,false,false,false,false]],[\"isPrimitive\",[true,true,true,true,true,true,false,false,false,false,false,false]],[\"isBuffer\",[false,false,false,false,false,false,false,false,false,false,false,true]]],\"deep\":[true,false],\"usv\":\"�A�\",\"extended\":{\"first\":1,\"replaced\":true,\"second\":2},\"environment\":{\"A\":\"one\",\"B\":\"two words\",\"C\":\"three\",\"D\":\"hello # comment\"},\"environmentEdges\":{\"DOUBLE\":\"line one\\nline two\",\"EMPTY\":\"\",\"HASH\":\"\",\"SINGLE\":\"one # two\",\"SPACED\":\"trimmed\"}}",
         "timedOut": false
       },
@@ -345,14 +345,14 @@
       "bun": {
         "exitCode": 0,
         "stderr": "",
-        "stdout": "{\"values\":{\"Z_NO_FLUSH\":0,\"Z_SYNC_FLUSH\":2,\"Z_FULL_FLUSH\":3,\"Z_FINISH\":4,\"Z_DEFAULT_COMPRESSION\":-1,\"Z_BEST_SPEED\":1,\"Z_BEST_COMPRESSION\":9,\"Z_DEFAULT_STRATEGY\":0},\"matchConstantsObject\":false}",
+        "stdout": "{\"crc32\":[907060870,907060870],\"codes\":[0,-3,\"Z_OK\",\"Z_DATA_ERROR\"],\"values\":{\"Z_NO_FLUSH\":0,\"Z_SYNC_FLUSH\":2,\"Z_FULL_FLUSH\":3,\"Z_FINISH\":4,\"Z_DEFAULT_COMPRESSION\":-1,\"Z_BEST_SPEED\":1,\"Z_BEST_COMPRESSION\":9,\"Z_DEFAULT_STRATEGY\":0},\"matchConstantsObject\":false}",
         "timedOut": false
       },
       "bunMatchesNode": true,
       "canaryo": {
         "exitCode": 0,
         "stderr": "",
-        "stdout": "{\"values\":{\"Z_NO_FLUSH\":0,\"Z_SYNC_FLUSH\":2,\"Z_FULL_FLUSH\":3,\"Z_FINISH\":4,\"Z_DEFAULT_COMPRESSION\":-1,\"Z_BEST_SPEED\":1,\"Z_BEST_COMPRESSION\":9,\"Z_DEFAULT_STRATEGY\":0},\"matchConstantsObject\":false}",
+        "stdout": "{\"crc32\":[907060870,907060870],\"codes\":[0,-3,\"Z_OK\",\"Z_DATA_ERROR\"],\"values\":{\"Z_NO_FLUSH\":0,\"Z_SYNC_FLUSH\":2,\"Z_FULL_FLUSH\":3,\"Z_FINISH\":4,\"Z_DEFAULT_COMPRESSION\":-1,\"Z_BEST_SPEED\":1,\"Z_BEST_COMPRESSION\":9,\"Z_DEFAULT_STRATEGY\":0},\"matchConstantsObject\":false}",
         "timedOut": false
       },
       "canaryoMatchesNode": true,
@@ -363,7 +363,7 @@
       "node": {
         "exitCode": 0,
         "stderr": "",
-        "stdout": "{\"values\":{\"Z_NO_FLUSH\":0,\"Z_SYNC_FLUSH\":2,\"Z_FULL_FLUSH\":3,\"Z_FINISH\":4,\"Z_DEFAULT_COMPRESSION\":-1,\"Z_BEST_SPEED\":1,\"Z_BEST_COMPRESSION\":9,\"Z_DEFAULT_STRATEGY\":0},\"matchConstantsObject\":false}",
+        "stdout": "{\"crc32\":[907060870,907060870],\"codes\":[0,-3,\"Z_OK\",\"Z_DATA_ERROR\"],\"values\":{\"Z_NO_FLUSH\":0,\"Z_SYNC_FLUSH\":2,\"Z_FULL_FLUSH\":3,\"Z_FINISH\":4,\"Z_DEFAULT_COMPRESSION\":-1,\"Z_BEST_SPEED\":1,\"Z_BEST_COMPRESSION\":9,\"Z_DEFAULT_STRATEGY\":0},\"matchConstantsObject\":false}",
         "timedOut": false
       },
       "source": "canaryo",
@@ -373,14 +373,14 @@
       "bun": {
         "exitCode": 0,
         "stderr": "",
-        "stdout": "{\"httpServer\":true,\"httpsServer\":true,\"httpsIsHttpServer\":true,\"responseIsOutgoing\":true,\"requestIsOutgoing\":true}",
+        "stdout": "{\"httpServer\":true,\"httpsServer\":true,\"httpsIsHttpServer\":true,\"responseIsOutgoing\":true,\"requestIsOutgoing\":true,\"parserLimit\":{\"returnedUndefined\":true,\"error\":{\"name\":\"RangeError\",\"code\":\"ERR_OUT_OF_RANGE\"}}}",
         "timedOut": false
       },
       "bunMatchesNode": false,
       "canaryo": {
         "exitCode": 0,
         "stderr": "",
-        "stdout": "{\"httpServer\":true,\"httpsServer\":true,\"httpsIsHttpServer\":false,\"responseIsOutgoing\":true,\"requestIsOutgoing\":true}",
+        "stdout": "{\"httpServer\":true,\"httpsServer\":true,\"httpsIsHttpServer\":false,\"responseIsOutgoing\":true,\"requestIsOutgoing\":true,\"parserLimit\":{\"returnedUndefined\":true,\"error\":{\"name\":\"RangeError\",\"code\":\"ERR_OUT_OF_RANGE\"}}}",
         "timedOut": false
       },
       "canaryoMatchesNode": true,
@@ -391,7 +391,7 @@
       "node": {
         "exitCode": 0,
         "stderr": "",
-        "stdout": "{\"httpServer\":true,\"httpsServer\":true,\"httpsIsHttpServer\":false,\"responseIsOutgoing\":true,\"requestIsOutgoing\":true}",
+        "stdout": "{\"httpServer\":true,\"httpsServer\":true,\"httpsIsHttpServer\":false,\"responseIsOutgoing\":true,\"requestIsOutgoing\":true,\"parserLimit\":{\"returnedUndefined\":true,\"error\":{\"name\":\"RangeError\",\"code\":\"ERR_OUT_OF_RANGE\"}}}",
         "timedOut": false
       },
       "source": "canaryo",
@@ -474,7 +474,7 @@
       "module": "assert",
       "node": {
         "exitCode": 0,
-        "stderr": "(node:13956) ExperimentalWarning: assert.partialDeepStrictEqual is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)",
+        "stderr": "(node:29220) ExperimentalWarning: assert.partialDeepStrictEqual is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)",
         "stdout": "[true,true,true,true,true,false,false]",
         "timedOut": false
       },
@@ -540,7 +540,7 @@
     {
       "bun": {
         "exitCode": 0,
-        "stderr": "(node:18884) [DEP0173] DeprecationWarning: assert.CallTracker is deprecated.\n(Use `bun --trace-warnings ...` to show where the warning was created)",
+        "stderr": "(node:33496) [DEP0173] DeprecationWarning: assert.CallTracker is deprecated.\n(Use `bun --trace-warnings ...` to show where the warning was created)",
         "stdout": "{\"result\":7,\"calls\":[{\"thisArg\":{\"base\":3},\"arguments\":[4]}],\"report\":[{\"message\":\"Expected the add function to be executed 2 time(s) but was executed 1 time(s).\",\"actual\":1,\"expected\":2,\"operator\":\"add\"}],\"verification\":{\"name\":\"AssertionError\",\"code\":\"ERR_ASSERTION\",\"message\":\"Expected the add function to be executed 2 time(s) but was executed 1 time(s).\"},\"finalReport\":[]}",
         "timedOut": false
       },
@@ -558,7 +558,7 @@
       "module": "assert",
       "node": {
         "exitCode": 0,
-        "stderr": "(node:16368) [DEP0173] DeprecationWarning: assert.CallTracker is deprecated.\n(Use `node --trace-deprecation ...` to show where the warning was created)",
+        "stderr": "(node:35140) [DEP0173] DeprecationWarning: assert.CallTracker is deprecated.\n(Use `node --trace-deprecation ...` to show where the warning was created)",
         "stdout": "{\"result\":7,\"calls\":[{\"thisArg\":{\"base\":3},\"arguments\":[4]}],\"report\":[{\"message\":\"Expected the add function to be executed 2 time(s) but was executed 1 time(s).\",\"actual\":1,\"expected\":2,\"operator\":\"add\"}],\"verification\":{\"name\":\"AssertionError\",\"code\":\"ERR_ASSERTION\",\"message\":\"Expected the add function to be executed 2 time(s) but was executed 1 time(s).\"},\"finalReport\":[]}",
         "timedOut": false
       },
@@ -624,7 +624,7 @@
     {
       "bun": {
         "exitCode": 0,
-        "stderr": "(node:9700) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.\n(Use `bun --trace-warnings ...` to show where the warning was created)",
+        "stderr": "(node:29496) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.\n(Use `bun --trace-warnings ...` to show where the warning was created)",
         "stdout": "{\"parsedInstance\":true,\"parsed\":{\"protocol\":\"https:\",\"slashes\":true,\"auth\":\"user:pass\",\"host\":\"example.com:8080\",\"port\":\"8080\",\"hostname\":\"example.com\",\"hash\":\"#h\",\"search\":\"?x=1\",\"query\":{\"x\":\"1\"},\"pathname\":\"/a\",\"path\":\"/a?x=1\",\"href\":\"https://user:pass@example.com:8080/a?x=1#h\"},\"resolvedInstance\":true,\"resolved\":{\"protocol\":\"https:\",\"slashes\":true,\"auth\":null,\"host\":\"example.com\",\"port\":null,\"hostname\":\"example.com\",\"hash\":null,\"search\":\"?q=1\",\"query\":\"q=1\",\"pathname\":\"/z\",\"path\":\"/z?q=1\",\"href\":\"https://example.com/z?q=1\"},\"empty\":{\"protocol\":null,\"slashes\":null,\"auth\":null,\"host\":null,\"port\":null,\"hostname\":null,\"hash\":null,\"search\":null,\"query\":null,\"pathname\":null,\"path\":null,\"href\":null},\"methods\":[\"function\",\"function\",\"function\",\"function\"]}",
         "timedOut": false
       },
@@ -670,7 +670,7 @@
       "module": "timers",
       "node": {
         "exitCode": 0,
-        "stderr": "(node:16480) [DEP0095] DeprecationWarning: timers.enroll() is deprecated. Please use setTimeout instead.\n(Use `node --trace-deprecation ...` to show where the warning was created)\n(node:16480) [DEP0126] DeprecationWarning: timers.active() is deprecated. Please use timeout.refresh() instead.\n(node:16480) [DEP0096] DeprecationWarning: timers.unenroll() is deprecated. Please use clearTimeout instead.",
+        "stderr": "(node:32064) [DEP0095] DeprecationWarning: timers.enroll() is deprecated. Please use setTimeout instead.\n(Use `node --trace-deprecation ...` to show where the warning was created)\n(node:32064) [DEP0126] DeprecationWarning: timers.active() is deprecated. Please use timeout.refresh() instead.\n(node:32064) [DEP0096] DeprecationWarning: timers.unenroll() is deprecated. Please use clearTimeout instead.",
         "stdout": "{\"functions\":[\"function\",\"function\",\"function\",\"function\"],\"enrolled\":{\"idleTimeout\":5,\"linked\":true},\"fired\":1,\"idleTimeoutAfterUnenroll\":5}",
         "timedOut": false
       },
@@ -726,7 +726,7 @@
       "module": "fs",
       "node": {
         "exitCode": 0,
-        "stderr": "(node:17644) ExperimentalWarning: globSync is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n(node:17644) ExperimentalWarning: glob is an experimental feature and might change at any time",
+        "stderr": "(node:1664) ExperimentalWarning: globSync is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n(node:1664) ExperimentalWarning: glob is an experimental feature and might change at any time",
         "stdout": "{\"direct\":{\"containsSelf\":true,\"onlyDirect\":true,\"sorted\":true},\"recursive\":[\"async-and-util-runtime-metadata.js\",\"filesystem-error-metadata.js\"],\"excludedTracker\":false,\"callbackMatchesSync\":true,\"promiseMatchesSync\":true}",
         "timedOut": false
       },
@@ -743,8 +743,8 @@
       "unexpectedFailures": 0
     },
     "surface": {
-      "matched": 623,
-      "percent": 67.71739130434783,
+      "matched": 626,
+      "percent": 68.04347826086956,
       "total": 920
     }
   },
@@ -1001,17 +1001,16 @@
       "bunLoaded": true,
       "canaryoLoaded": true,
       "extra": [],
-      "matched": 15,
+      "matched": 16,
       "missing": [
         "CloseEvent",
         "MessageEvent",
         "WebSocket",
-        "_connectionListener",
-        "setMaxIdleHTTPParsers"
+        "_connectionListener"
       ],
       "module": "http",
       "nodeLoaded": true,
-      "percent": 75.0,
+      "percent": 80.0,
       "total": 20
     },
     {
@@ -1025,6 +1024,7 @@
         "STATUS_CODES",
         "ServerResponse",
         "maxHeaderSize",
+        "setMaxIdleHTTPParsers",
         "validateHeaderName",
         "validateHeaderValue"
       ],
@@ -1331,7 +1331,7 @@
       "bunLoaded": true,
       "canaryoLoaded": true,
       "extra": [],
-      "matched": 45,
+      "matched": 47,
       "missing": [
         "DEFLATE",
         "DEFLATERAW",
@@ -1434,8 +1434,6 @@
         "Z_VERSION_ERROR",
         "ZstdCompress",
         "ZstdDecompress",
-        "codes",
-        "crc32",
         "createZstdCompress",
         "createZstdDecompress",
         "zstdCompress",
@@ -1445,7 +1443,7 @@
       ],
       "module": "zlib",
       "nodeLoaded": true,
-      "percent": 29.22077922077922,
+      "percent": 30.51948051948052,
       "total": 154
     }
   ]

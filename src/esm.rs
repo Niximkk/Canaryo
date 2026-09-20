@@ -267,6 +267,7 @@ fn builtin_source(name: &str) -> Option<String> {
             "maxHeaderSize",
             "validateHeaderName",
             "validateHeaderValue",
+            "setMaxIdleHTTPParsers",
         ],
         "https" => &[
             "createServer",
@@ -719,6 +720,8 @@ fn builtin_source(name: &str) -> Option<String> {
             "isSet",
         ],
         "zlib" => &[
+            "codes",
+            "crc32",
             "gzip",
             "gzipSync",
             "gunzip",

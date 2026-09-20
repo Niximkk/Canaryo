@@ -319,7 +319,28 @@
     const Unzip = zlibConstructor("unzip");
     const BrotliCompress = zlibConstructor("brotliCompress");
     const BrotliDecompress = zlibConstructor("brotliDecompress");
+    const zlibCodes = {
+        0: "Z_OK", 1: "Z_STREAM_END", 2: "Z_NEED_DICT",
+        "-1": "Z_ERRNO", "-2": "Z_STREAM_ERROR", "-3": "Z_DATA_ERROR",
+        "-4": "Z_MEM_ERROR", "-5": "Z_BUF_ERROR", "-6": "Z_VERSION_ERROR",
+        Z_OK: 0, Z_STREAM_END: 1, Z_NEED_DICT: 2, Z_ERRNO: -1,
+        Z_STREAM_ERROR: -2, Z_DATA_ERROR: -3, Z_MEM_ERROR: -4,
+        Z_BUF_ERROR: -5, Z_VERSION_ERROR: -6
+    };
+    function crc32(data, value = 0) {
+        const bytes = typeof data === "string" ? Buffer.from(data) : Buffer.from(data);
+        let checksum = (Number(value) >>> 0) ^ 0xffffffff;
+        for (const byte of bytes) {
+            checksum ^= byte;
+            for (let bit = 0; bit < 8; bit++) {
+                checksum = (checksum >>> 1) ^ (checksum & 1 ? 0xedb88320 : 0);
+            }
+        }
+        return (checksum ^ 0xffffffff) >>> 0;
+    }
     const zlibModule = {
+        codes: zlibCodes,
+        crc32,
         gzipSync: input => zlibSync("gzip", input),
         gunzipSync: input => zlibSync("gunzip", input),
         deflateSync: input => zlibSync("deflate", input),
@@ -357,6 +378,15 @@
         BrotliCompress,
         BrotliDecompress,
         constants: {
+            Z_OK: 0,
+            Z_STREAM_END: 1,
+            Z_NEED_DICT: 2,
+            Z_ERRNO: -1,
+            Z_STREAM_ERROR: -2,
+            Z_DATA_ERROR: -3,
+            Z_MEM_ERROR: -4,
+            Z_BUF_ERROR: -5,
+            Z_VERSION_ERROR: -6,
             Z_NO_FLUSH: 0,
             Z_SYNC_FLUSH: 2,
             Z_FULL_FLUSH: 3,
