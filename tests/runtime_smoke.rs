@@ -88,6 +88,15 @@ fn request_fixture(fixture: &str) -> String {
     response
 }
 
+fn request_at(address: std::net::SocketAddr, request: &[u8]) -> String {
+    let mut stream = TcpStream::connect(address).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    stream.write_all(request).unwrap();
+    read_response(&mut stream)
+}
+
 fn run_fixture_to_completion(fixture: &str) -> (String, Duration) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let started = Instant::now();
@@ -1256,6 +1265,102 @@ fn parses_a_chunked_express_json_request_body() {
     assert!(
         response.ends_with(r#"{"body":{"message":"hello"}}"#),
         "unexpected response: {response}"
+    );
+}
+
+#[test]
+#[ignore = "requires npm ci in fixtures/express-basic"]
+fn supports_express_route_params_queries_headers_and_routers() {
+    let (_server, mut stream) = start_fixture("fixtures/express-basic/profile-server.js");
+    let address = stream.peer_addr().unwrap();
+    stream
+        .write_all(
+            b"GET /users/42?active=yes HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Trace: profile\r\nConnection: close\r\n\r\n",
+        )
+        .unwrap();
+    let route = read_response(&mut stream);
+    let nested = request_at(
+        address,
+        b"GET /api/items/widget HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+    );
+
+    assert!(route.starts_with("HTTP/1.1 200 OK"), "{route}");
+    assert!(
+        route.ends_with(r#"{"id":"42","active":"yes","trace":"profile"}"#),
+        "{route}"
+    );
+    assert!(
+        nested.ends_with(r#"{"baseUrl":"/api","slug":"widget"}"#),
+        "{nested}"
+    );
+}
+
+#[test]
+#[ignore = "requires npm ci in fixtures/express-basic"]
+fn supports_express_builtin_body_parsers() {
+    let (_server, mut stream) = start_fixture("fixtures/express-basic/profile-server.js");
+    let address = stream.peer_addr().unwrap();
+    stream
+        .write_all(
+            b"POST /urlencoded HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 20\r\nConnection: close\r\n\r\nname=canaryo&count=2",
+        )
+        .unwrap();
+    let urlencoded = read_response(&mut stream);
+    let text = request_at(
+        address,
+        b"POST /text HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: text/plain\r\nContent-Length: 13\r\nConnection: close\r\n\r\nhello express",
+    );
+    let raw = request_at(
+        address,
+        b"POST /raw HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/octet-stream\r\nContent-Length: 4\r\nConnection: close\r\n\r\n\x00\x01\xfe\xff",
+    );
+
+    assert!(
+        urlencoded.ends_with(r#"{"name":"canaryo","count":"2"}"#),
+        "{urlencoded}"
+    );
+    assert!(text.ends_with("hello express"), "{text}");
+    assert!(raw.ends_with(r#"{"hex":"0001feff","length":4}"#), "{raw}");
+}
+
+#[test]
+#[ignore = "requires npm ci in fixtures/express-basic"]
+fn supports_express_middleware_response_helpers_and_errors() {
+    let (_server, mut stream) = start_fixture("fixtures/express-basic/profile-server.js");
+    let address = stream.peer_addr().unwrap();
+    stream
+        .write_all(b"GET /pipeline HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let pipeline = read_response(&mut stream);
+    let cookie = request_at(
+        address,
+        b"GET /cookie HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+    );
+    let redirect = request_at(
+        address,
+        b"GET /redirect HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+    );
+    let failure = request_at(
+        address,
+        b"GET /failure HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+    );
+
+    assert!(
+        pipeline.ends_with(r#"{"steps":["global","route-1","route-2"]}"#),
+        "{pipeline}"
+    );
+    assert!(
+        cookie
+            .to_ascii_lowercase()
+            .contains("set-cookie: token=a%20b; path=/; httponly; samesite=lax"),
+        "{cookie}"
+    );
+    assert!(redirect.starts_with("HTTP/1.1 302 Found"), "{redirect}");
+    assert!(redirect.to_ascii_lowercase().contains("location: /target"));
+    assert!(failure.starts_with("HTTP/1.1 500 Internal Server Error"));
+    assert!(
+        failure.ends_with(r#"{"error":"profile failure"}"#),
+        "{failure}"
     );
 }
 

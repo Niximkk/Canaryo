@@ -555,6 +555,13 @@
             promises: timersPromises
         },
         "timers/promises": timersPromises,
+        tls: {
+            Server: (globalThis.__canaryoHttpsModule && globalThis.__canaryoHttpsModule.Server)
+                || class TLSServer {},
+            connect() {
+                throw new Error("tls.connect is not implemented by Canaryo");
+            }
+        },
         tty: { isatty: terminalStatus, ReadStream: TTYReadStream, WriteStream: TTYWriteStream },
         url: {
             URL,

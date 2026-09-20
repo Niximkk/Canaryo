@@ -47,6 +47,7 @@ const NODE_BUILTINS: &[&str] = &[
     "sys",
     "timers",
     "timers/promises",
+    "tls",
     "tty",
     "url",
     "util",
@@ -228,6 +229,11 @@ fn scan_source(source: &str, path: &Path) -> Vec<Finding> {
             patterns: &["node:https", "require('https')", "require(\"https\")"],
             compatibility: Compatibility::Limited,
             message: "usa https; clientes e servidores TLS básicos estão disponíveis, mas opções avançadas ainda não",
+        },
+        Rule {
+            patterns: &["node:tls", "require('tls')", "require(\"tls\")"],
+            compatibility: Compatibility::Limited,
+            message: "usa tls; a classe Server está disponível para interoperabilidade com Express, mas conexões TLS diretas ainda não",
         },
         Rule {
             patterns: &["node:fs", "require('fs')", "require(\"fs\")"],
@@ -461,6 +467,19 @@ mod tests {
 
         assert_eq!(report.compatibility, Compatibility::Limited);
         assert!(report.findings[0].message.contains("missing-package"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn recognizes_the_express_tls_interoperability_surface() {
+        let root = fixture();
+        fs::write(root.join("main.js"), "require('tls')").unwrap();
+
+        let report = analyze_file(root.join("main.js").to_str().unwrap()).unwrap();
+
+        assert_eq!(report.analyzed_files, 1);
+        assert_eq!(report.compatibility, Compatibility::Limited);
+        assert!(report.findings[0].message.contains("classe Server"));
         fs::remove_dir_all(root).unwrap();
     }
 

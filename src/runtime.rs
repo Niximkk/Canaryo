@@ -23,6 +23,10 @@ use crate::{esm, http, modules};
 
 const BOOTSTRAP: &str = r#"
 globalThis.global = globalThis;
+Object.defineProperties(globalThis, {
+    __canaryoActiveServer: { value: null, writable: true, configurable: true },
+    __canaryoPendingServerStart: { value: null, writable: true, configurable: true }
+});
 (() => {
 function Console(stdout, stderr = stdout) {
     if (stdout && stdout.stdout) {
@@ -489,6 +493,8 @@ ClientRequest.prototype.setTimeout = function(timeout, callback) {
     this.__canaryoArmTimeout();
     return this;
 };
+ClientRequest.prototype.setNoDelay = function() { return this; };
+ClientRequest.prototype.setSocketKeepAlive = function() { return this; };
 
 function clientRequest(defaultProtocol, defaultAgent, input, options, callback) {
     if (typeof options === "function") { callback = options; options = undefined; }
@@ -564,7 +570,15 @@ globalThis.__canaryoPollHttpRequests = function() {
             response.headers = Object.create(null);
             response.rawHeaders = [];
             for (const [name, value] of event.headers) {
-                response.headers[name.toLowerCase()] = value;
+                const key = name.toLowerCase();
+                if (key === "set-cookie") {
+                    if (!response.headers[key]) response.headers[key] = [];
+                    response.headers[key].push(value);
+                } else if (response.headers[key] !== undefined) {
+                    response.headers[key] += `, ${value}`;
+                } else {
+                    response.headers[key] = value;
+                }
                 response.rawHeaders.push(name, value);
             }
             response.httpVersion = "1.1";
@@ -606,7 +620,27 @@ const httpModule = Object.freeze({
     Agent,
     globalAgent,
     METHODS: ["GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH"],
-    STATUS_CODES: { 200: "OK", 201: "Created", 202: "Accepted", 204: "No Content", 400: "Bad Request", 404: "Not Found", 413: "Payload Too Large", 500: "Internal Server Error", 504: "Gateway Timeout" },
+    STATUS_CODES: {
+        100: "Continue", 101: "Switching Protocols", 102: "Processing", 103: "Early Hints",
+        200: "OK", 201: "Created", 202: "Accepted", 203: "Non-Authoritative Information",
+        204: "No Content", 205: "Reset Content", 206: "Partial Content", 207: "Multi-Status",
+        208: "Already Reported", 226: "IM Used", 300: "Multiple Choices", 301: "Moved Permanently",
+        302: "Found", 303: "See Other", 304: "Not Modified", 305: "Use Proxy",
+        307: "Temporary Redirect", 308: "Permanent Redirect", 400: "Bad Request", 401: "Unauthorized",
+        402: "Payment Required", 403: "Forbidden", 404: "Not Found", 405: "Method Not Allowed",
+        406: "Not Acceptable", 407: "Proxy Authentication Required", 408: "Request Timeout",
+        409: "Conflict", 410: "Gone", 411: "Length Required", 412: "Precondition Failed",
+        413: "Payload Too Large", 414: "URI Too Long", 415: "Unsupported Media Type",
+        416: "Range Not Satisfiable", 417: "Expectation Failed", 418: "I'm a Teapot",
+        421: "Misdirected Request", 422: "Unprocessable Entity", 423: "Locked",
+        424: "Failed Dependency", 425: "Too Early", 426: "Upgrade Required",
+        428: "Precondition Required", 429: "Too Many Requests", 431: "Request Header Fields Too Large",
+        451: "Unavailable For Legal Reasons", 500: "Internal Server Error", 501: "Not Implemented",
+        502: "Bad Gateway", 503: "Service Unavailable", 504: "Gateway Timeout",
+        505: "HTTP Version Not Supported", 506: "Variant Also Negotiates", 507: "Insufficient Storage",
+        508: "Loop Detected", 509: "Bandwidth Limit Exceeded", 510: "Not Extended",
+        511: "Network Authentication Required"
+    },
     maxHeaderSize: 16 * 1024,
     validateHeaderName,
     validateHeaderValue,
@@ -752,7 +786,12 @@ function loadModule(filename) {
     moduleCache[filename] = module;
 
     try {
-        const source = __canaryoReadFile(filename);
+        let source = __canaryoReadFile(filename);
+        // Node removes a Unix shebang before compiling CommonJS modules. CLI
+        // packages such as Mocha rely on this even when launched on Windows.
+        if (source.charCodeAt(0) === 35 && source.charCodeAt(1) === 33) {
+            source = source.replace(/^#![^\r\n]*/, "");
+        }
         if (filename.endsWith(".json")) {
             module.exports = JSON.parse(source);
         } else {
@@ -2909,6 +2948,24 @@ mod tests {
         fs::remove_file(filename).unwrap();
         assert_eq!(exit_code, 7);
         assert_eq!(passive_exit_code, 9);
+    }
+
+    #[test]
+    fn executes_commonjs_entry_points_with_a_shebang() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let id = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let filename =
+            env::temp_dir().join(format!("canaryo-shebang-{}-{id}.js", std::process::id()));
+        fs::write(&filename, "#!/usr/bin/env node\nprocess.exitCode = 17;\n").unwrap();
+
+        let exit_code = execute(filename.to_string_lossy().as_ref(), &[]).unwrap();
+
+        fs::remove_file(filename).unwrap();
+        assert_eq!(exit_code, 17);
     }
 
     #[test]

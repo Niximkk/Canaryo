@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Refocus development on a one-week Express 5.2.1 compatibility profile.
+- Add differential and black-box coverage for route parameters, queries,
+  mounted routers, built-in body parsers, middleware ordering, cookies,
+  redirects and error handlers.
+- Match Node's HTTP reason phrases and `set-cookie` response header shape.
+- Support CommonJS CLI entry points with shebangs and the minimal `tls.Server`
+  surface required by Express test tooling.
+
 ## 0.1.0
 
 Canaryo 0.1.0 is the final proof-of-concept release.

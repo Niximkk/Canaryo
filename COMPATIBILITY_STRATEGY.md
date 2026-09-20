@@ -1,59 +1,107 @@
-# Canaryo POC Strategy
+# Canaryo Express Profile
 
-Canaryo is a finished proof of concept: a Rust executable embedding QuickJS-NG that can run a focused class of existing Express applications without source changes.
-
-The project demonstrates this transition:
+Canaryo has one product goal:
 
 ```text
 node server.js
 canaryo server.js
 ```
 
-It is a side project and does not promise continued maintenance or compatibility with future Node.js releases.
+The application must be an existing CommonJS Express 5.2.1 server and must not
+contain Canaryo-specific code. Canaryo is an Express runtime, not an attempt to
+reimplement every Node.js API or compete with Bun on unrelated workloads.
 
-## Fixed target
+Version `v0.1.0` remains the finished initial POC. The next development cycle is
+limited to one week and turns that POC into a documented Express compatibility
+profile.
 
-- Node.js 22.15.1 is the behavioral baseline.
+## Fixed baseline
+
+- Node.js 22.15.1 is the behavioral reference.
 - Express 5.2.1 is the only framework target.
-- CommonJS applications using the demonstrated API subset are in scope.
-- Windows 11 and Ubuntu CI protect the published snapshot.
+- Windows 11 and Ubuntu are the supported platforms.
+- CommonJS is the primary application format.
+- The application runs without source changes.
 
-Fastify is outside the POC. Supporting a second framework would expand the required surface into framework-specific logging, worker, Web Stream, Fetch, lifecycle, and plugin behavior without strengthening the original Express demonstration.
+The official Express 5.2.1 suite contains 1,238 passing tests on the fixed Node
+baseline. Canaryo uses those tests as a behavior catalog. Its black-box tests
+exercise real Canaryo servers because the upstream suite uses Supertest's
+same-process ephemeral servers, while Canaryo owns the HTTP loop outside the
+QuickJS context.
 
-## Demonstrated scope
+## One-week delivery profile
 
-The final POC must keep these paths working:
+The release-blocking profile covers:
 
-- native `node:http` HTTP/1.1 servers;
-- Express routing and JSON request/response handling;
-- Express static files and `compression` middleware;
-- CommonJS package resolution through `node_modules`;
-- the `canaryo check` compatibility report;
-- startup, throughput, latency, and memory benchmarks against Node.js and optionally Bun;
-- differential behavior tests against the fixed Node.js baseline.
+- application startup and shutdown;
+- routing methods, route parameters, query strings, mounted routers and
+  middleware ordering;
+- synchronous and asynchronous handlers and Express error middleware;
+- request headers and the common `req` helpers used by REST APIs;
+- status, headers, JSON, text, redirects, cookies, downloads and common `res`
+  helpers;
+- `express.json`, `express.urlencoded`, `express.text`, `express.raw` and
+  `express.static`;
+- HTTP/1.1 request bodies, chunking, keep-alive and backpressure;
+- CommonJS resolution through `node_modules`;
+- `compression`, followed by a small explicitly documented middleware set;
+- `canaryo check` diagnostics for APIs outside this profile;
+- startup, memory and representative Express throughput benchmarks.
 
-The existing generic implementations for streams, Buffer, filesystem, crypto, Fetch, TLS, and related Node APIs remain in the repository. They are supporting experiments rather than compatibility promises.
+Passing the profile means every tracked black-box scenario produces the same
+observable result under Node.js and Canaryo. It does not mean that arbitrary npm
+packages are supported.
 
-## Explicit non-goals
+## Schedule
+
+| Day | Delivery |
+|---:|---|
+| 1 | Freeze the profile, establish the 1,238-test Node baseline, and add black-box coverage for routers, body parsers, middleware, response helpers and errors. |
+| 2 | Cover the remaining high-frequency Express request and response helpers and fix discovered runtime gaps. |
+| 3 | Validate static files, downloads, ranges, cache validators, cookies and common error paths. |
+| 4 | Validate `compression`, `cors`, `cookie-parser` and one multipart upload path; document every supported package version. |
+| 5 | Make `canaryo check` report the Express profile and unsupported dependencies clearly; complete Windows and Ubuntu CI. |
+| 6 | Profile the Express request path and move only measured HTTP, parsing, compression or serialization bottlenecks into Rust. |
+| 7 | Run the full profile, benchmarks and release checks; publish the compatibility table and a release candidate. |
+
+Compatibility takes priority over optimization. Performance work starts only
+after the profile is green and must preserve the same behavior.
+
+## Explicit exclusions
 
 - complete Node.js API compatibility;
-- Fastify or a general framework/plugin compatibility matrix;
+- Fastify and other web frameworks;
 - Node-API or native `.node` addons;
-- isolated worker threads, child processes, IPC, HTTP/2, or WebSocket parity;
-- compatibility with every Node.js release;
-- production support, security maintenance, or long-term performance competition with Node.js and Bun.
+- arbitrary database drivers;
+- child processes, isolated workers, IPC, HTTP/2 and WebSockets;
+- the complete Express middleware ecosystem;
+- production support or compatibility with future Express and Node releases.
 
-## Completion checklist
+These exclusions are permanent for the one-week cycle. A dependency that needs
+one of them is reported as outside the Express profile instead of expanding the
+runtime.
+
+## Optimization boundary
+
+Rust owns connection handling, HTTP parsing and serialization, body transfer,
+static files, compression and other measured infrastructure paths. QuickJS-NG
+executes application handlers and custom middleware. Canaryo may cache module
+resolution and precompute route-related data, but it must not change application
+semantics or require a proprietary Express API.
+
+QuickJS-NG has no optimizing JIT, so arbitrary JavaScript-heavy handlers may
+remain slower than Bun. The performance claim is limited to measured Express
+workloads where native HTTP work, startup time or memory use is material.
+
+## Completion gates
 
 - [x] Native Rust/QuickJS execution without forwarding to Node.js.
-- [x] Basic `node:http` and Express applications run unchanged.
-- [x] Express JSON, static-file, and compression scenarios pass.
-- [x] Differential compatibility harness uses Node.js 22.15.1.
-- [x] Windows and Ubuntu CI pass.
-- [x] Reproducible Node.js/Bun/Canaryo benchmark harness.
-- [x] Align the README and benchmark report with the Express-only scope.
-- [x] Prepare automated Windows/Linux release archives and final 0.1.0 notes.
-
-## Finalization policy
-
-Only release-blocking defects in the demonstrated paths should receive further implementation work. Missing APIs outside this scope are documented limitations rather than backlog items. After the final release, the repository remains available as an educational experiment and portfolio project.
+- [x] Basic Express routing, JSON, static files and compression.
+- [x] Node.js 22.15.1 baseline for all 1,238 upstream Express tests.
+- [x] Black-box coverage for params, queries, mounted routers, built-in body
+      parsers, middleware order, cookies, redirects and error handlers.
+- [ ] High-frequency `req` and `res` helper matrix completed.
+- [ ] Selected middleware versions tested and documented.
+- [ ] Express-profile diagnostics implemented in `canaryo check`.
+- [ ] Windows and Ubuntu CI green for the complete profile.
+- [ ] Final profile benchmark and release candidate published.
