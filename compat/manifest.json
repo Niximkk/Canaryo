@@ -247,6 +247,22 @@
       "timeoutMs": 5000,
       "source": "canaryo",
       "expected": "pass"
+    },
+    {
+      "id": "express-http-application",
+      "module": "express",
+      "fixture": "compat/cases/express-http-application.js",
+      "timeoutMs": 15000,
+      "source": "canaryo",
+      "expected": "pass"
+    },
+    {
+      "id": "fastify-http-application",
+      "module": "fastify",
+      "fixture": "compat/cases/fastify-http-application.js",
+      "timeoutMs": 15000,
+      "source": "canaryo",
+      "expected": "pass"
     }
   ]
 }

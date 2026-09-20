@@ -187,8 +187,10 @@ A module is marked supported when its selected upstream suite reaches the docume
 - [x] Add `cargo xtask compat` and the manifest format.
 - [x] Add the Node/Canaryo API-surface probe.
 - [x] Generate the first JSON and Markdown baseline.
-- Convert current ignored framework tests into explicit compatibility cases.
-- Pin Node.js, Bun, and upstream revisions.
+- [x] Add mandatory differential Express and Fastify application cases.
+- Convert the remaining compression, static-file, logging, Web stream, and Fetch framework scenarios into differential cases.
+- [x] Pin the Node.js 22.15.1 compatibility baseline.
+- Pin Bun and the adapted upstream test revisions.
 
 ### Phase 2: split and standardize
 
@@ -198,13 +200,14 @@ A module is marked supported when its selected upstream suite reaches the docume
 
 ### Phase 3: high-impact Node tests
 
-- Import focused tests for path, querystring, string decoder, events, Buffer, timers, util, filesystem, streams, URL, and process.
-- Fix failures in dependency-unlocking order.
+- [x] Import focused tests for path, querystring, string decoder, events, Buffer, timers, util, filesystem, streams, URL, and process.
+- [x] Fix the current focused-suite failures in dependency-unlocking order.
 - Require a compatibility report update in every checkpoint.
 
 ### Phase 4: HTTP ecosystem
 
 - Expand Express and Fastify fixtures into the pinned plugin corpus.
+- [x] Add self-contained Express and Fastify HTTP applications to the required differential suite.
 - Add outbound clients, TLS configurations, streaming uploads, aborts, proxy behavior, and connection-pressure scenarios.
 - Run representative applications and reduce every failure.
 
@@ -222,7 +225,7 @@ The fastest next sequence is:
 3. ~~`xtask` runner with timeout and output normalization.~~
 4. ~~Initial differential cases for `path`, `querystring`, `string_decoder`, and `events`.~~
 5. ~~Split `polyfills.js` after the harness protects behavior.~~
-6. Import Buffer, filesystem, and stream clusters.
-7. Build and continuously expand the Express/Fastify plugin corpus.
+6. ~~Import Buffer, filesystem, and stream clusters.~~
+7. **In progress:** build and continuously expand the Express/Fastify plugin corpus.
 
 This order creates the measuring system before the large refactor and turns every later development session into a ranked queue of concrete failures.

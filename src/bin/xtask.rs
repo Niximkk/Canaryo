@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 use std::env;
 use std::fs;
 use std::io::Read;
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
@@ -165,11 +166,11 @@ fn generate_results(root: &Path, pattern: Option<&str>) -> Result<(), String> {
     for case in selected {
         let fixture = root.join(&case.fixture);
         let timeout = Duration::from_millis(case.timeout_ms);
-        let node_capture = execute(&node, &fixture, root, timeout, &[])?;
-        let canaryo_capture = execute(&canaryo, &fixture, root, timeout, &[])?;
+        let node_capture = execute_case(&node, &fixture, root, timeout)?;
+        let canaryo_capture = execute_case(&canaryo, &fixture, root, timeout)?;
         let bun_capture = bun
             .as_ref()
-            .map(|runtime| execute(runtime, &fixture, root, timeout, &[]))
+            .map(|runtime| execute_case(runtime, &fixture, root, timeout))
             .transpose()?;
         let canaryo_matches = captures_match(&node_capture, &canaryo_capture);
         let bun_matches = bun_capture
@@ -442,6 +443,30 @@ fn execute(
         stdout: normalize_output(&String::from_utf8_lossy(&stdout), root),
         stderr: normalize_output(&String::from_utf8_lossy(&stderr), root),
     })
+}
+
+fn execute_case(
+    runtime: &Runtime,
+    fixture: &Path,
+    root: &Path,
+    timeout: Duration,
+) -> Result<Capture, String> {
+    let listener = TcpListener::bind(("127.0.0.1", 0))
+        .map_err(|error| format!("cannot reserve a compatibility port: {error}"))?;
+    let port = listener
+        .local_addr()
+        .map_err(|error| format!("cannot read the compatibility port: {error}"))?
+        .port()
+        .to_string();
+    drop(listener);
+
+    execute(
+        runtime,
+        fixture,
+        root,
+        timeout,
+        &[("CANARYO_COMPAT_PORT", port.as_str())],
+    )
 }
 
 fn normalize_output(output: &str, root: &Path) -> String {
