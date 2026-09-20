@@ -239,6 +239,14 @@
       "timeoutMs": 5000,
       "source": "canaryo",
       "expected": "pass"
+    },
+    {
+      "id": "filesystem-glob",
+      "module": "fs",
+      "fixture": "compat/cases/filesystem-glob.js",
+      "timeoutMs": 5000,
+      "source": "canaryo",
+      "expected": "pass"
     }
   ]
 }

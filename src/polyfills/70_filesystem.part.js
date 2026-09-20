@@ -171,6 +171,42 @@
             entry.stats
         ));
     }
+    function globSync(pattern, options = {}) {
+        const patterns = (Array.isArray(pattern) ? pattern : [pattern]).map(String);
+        const cwd = normalizeFsPath(options.cwd || process.cwd());
+        const output = new Set();
+        const excluded = options.exclude === undefined
+            ? []
+            : (Array.isArray(options.exclude) ? options.exclude : [options.exclude]);
+        const isExcluded = (candidate, entry) => excluded.some(rule => typeof rule === "function"
+            ? rule(entry)
+            : path.matchesGlob(candidate, String(rule)));
+
+        for (const requestedPattern of patterns) {
+            const absolutePattern = path.isAbsolute(requestedPattern);
+            const separatorPattern = requestedPattern.replace(/\\/g, "/");
+            const specialIndex = separatorPattern.search(/[?*[{(]/);
+            if (specialIndex < 0) {
+                const exactPath = absolutePattern ? requestedPattern : path.join(cwd, requestedPattern);
+                if (existsSync(exactPath) && !isExcluded(requestedPattern)) output.add(requestedPattern);
+                continue;
+            }
+            const staticPrefix = separatorPattern.slice(0, specialIndex);
+            const slash = staticPrefix.lastIndexOf("/");
+            const baseFragment = slash < 0 ? "." : staticPrefix.slice(0, slash) || path.sep;
+            const basePath = absolutePattern ? baseFragment : path.resolve(cwd, baseFragment);
+            if (!existsSync(basePath)) continue;
+            for (const entry of collectDirectoryEntries(basePath, { recursive: true })) {
+                const absolutePath = path.join(basePath, entry.relativePath);
+                const candidate = absolutePattern ? absolutePath : path.relative(cwd, absolutePath);
+                const dirent = new Dirent(entry.name, entry.parentPath, entry.stats);
+                if (path.matchesGlob(candidate, requestedPattern) && !isExcluded(candidate, dirent)) {
+                    output.add(options.withFileTypes ? dirent : candidate);
+                }
+            }
+        }
+        return [...output].sort((left, right) => String(left).localeCompare(String(right)));
+    }
     function Dir(path, options = {}) {
         if (!(this instanceof Dir)) return new Dir(path, options);
         this.path = normalizeFsPath(path);
@@ -692,6 +728,9 @@
         access(filename) { return Promise.resolve().then(() => accessSync(filename)); },
         mkdir(filename, options) { return Promise.resolve().then(() => mkdirSync(filename, options)); },
         readdir(filename, options) { return Promise.resolve().then(() => readdirSync(filename, options)); },
+        async *glob(pattern, options) {
+            for (const match of globSync(pattern, options)) yield match;
+        },
         opendir(filename, options) { return Promise.resolve().then(() => opendirSync(filename, options)); },
         unlink(filename) { return Promise.resolve().then(() => unlinkSync(filename)); },
         rename(from, to) { return Promise.resolve().then(() => renameSync(from, to)); },
@@ -736,6 +775,7 @@
         accessSync,
         mkdirSync,
         readdirSync,
+        globSync,
         opendirSync,
         unlinkSync,
         renameSync,
@@ -836,6 +876,10 @@
         readdir(filename, options, callback) {
             if (typeof options === "function") { callback = options; options = undefined; }
             callbackOperation(callback, () => readdirSync(filename, options));
+        },
+        glob(pattern, options, callback) {
+            if (typeof options === "function") { callback = options; options = undefined; }
+            callbackOperation(callback, () => globSync(pattern, options));
         },
         opendir(filename, options, callback) {
             if (typeof options === "function") { callback = options; options = undefined; }
