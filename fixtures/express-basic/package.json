@@ -3,7 +3,10 @@
   "private": true,
   "version": "1.0.0",
   "dependencies": {
-    "compression": "^1.8.2",
-    "express": "5.2.1"
+    "compression": "1.8.2",
+    "cookie-parser": "1.4.7",
+    "cors": "2.8.5",
+    "express": "5.2.1",
+    "multer": "2.0.2"
   }
 }

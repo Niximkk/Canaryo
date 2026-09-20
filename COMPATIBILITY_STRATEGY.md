@@ -52,6 +52,20 @@ Passing the profile means every tracked black-box scenario produces the same
 observable result under Node.js and Canaryo. It does not mean that arbitrary npm
 packages are supported.
 
+### Verified package versions
+
+| Package | Version | Covered path |
+|---|---:|---|
+| Express | 5.2.1 | Application, routers, request/response helpers, body parsers, static files and errors |
+| compression | 1.8.2 | Gzip response middleware |
+| cors | 2.8.5 | Origin and credential response headers |
+| cookie-parser | 1.4.7 | Request cookie parsing |
+| multer | 2.0.2 | Memory-backed single-file multipart upload |
+
+`canaryo check` reports whether the installed direct dependencies match these
+versions. Other packages are outside the verified profile until a differential
+case is added for them.
+
 ## Schedule
 
 | Day | Delivery |
@@ -100,8 +114,8 @@ workloads where native HTTP work, startup time or memory use is material.
 - [x] Node.js 22.15.1 baseline for all 1,238 upstream Express tests.
 - [x] Black-box coverage for params, queries, mounted routers, built-in body
       parsers, middleware order, cookies, redirects and error handlers.
-- [ ] High-frequency `req` and `res` helper matrix completed.
-- [ ] Selected middleware versions tested and documented.
-- [ ] Express-profile diagnostics implemented in `canaryo check`.
+- [x] High-frequency `req` and `res` helper matrix completed.
+- [x] Selected middleware versions tested and documented.
+- [x] Express-profile diagnostics implemented in `canaryo check`.
 - [ ] Windows and Ubuntu CI green for the complete profile.
 - [ ] Final profile benchmark and release candidate published.

@@ -7,6 +7,13 @@ use std::{
 use crate::modules;
 
 const MAX_ANALYZED_FILES: usize = 10_000;
+const EXPRESS_PROFILE_PACKAGES: &[(&str, &str)] = &[
+    ("express", "5.2.1"),
+    ("compression", "1.8.2"),
+    ("cors", "2.8.5"),
+    ("cookie-parser", "1.4.7"),
+    ("multer", "2.0.2"),
+];
 const NODE_BUILTINS: &[&str] = &[
     "_stream_duplex",
     "_stream_passthrough",
@@ -93,10 +100,16 @@ struct Finding {
     message: String,
 }
 
+struct ExpressProfile {
+    compatibility: Compatibility,
+    details: Vec<String>,
+}
+
 pub struct Report {
     compatibility: Compatibility,
     findings: Vec<Finding>,
     analyzed_files: usize,
+    express_profile: Option<ExpressProfile>,
 }
 
 impl Report {
@@ -107,6 +120,12 @@ impl Report {
     pub fn print(&self, path: &str) {
         println!("Relatório Canaryo: {}", self.compatibility.label());
         println!("  {} arquivo(s) analisado(s)", self.analyzed_files);
+        if let Some(profile) = &self.express_profile {
+            println!("  Perfil Express: {}", profile.compatibility.label());
+            for detail in &profile.details {
+                println!("    - {detail}");
+            }
+        }
 
         if self.findings.is_empty() {
             println!(
@@ -145,15 +164,102 @@ fn display_path(path: &Path) -> String {
 
 pub fn analyze_file(path: &str) -> io::Result<Report> {
     let entry = Path::new(path).canonicalize()?;
+    let express_profile = detect_express_profile(&entry);
+    let compatibility = express_profile
+        .as_ref()
+        .map_or(Compatibility::Compatible, |profile| profile.compatibility);
     let mut report = Report {
-        compatibility: Compatibility::Compatible,
+        compatibility,
         findings: Vec::new(),
         analyzed_files: 0,
+        express_profile,
     };
     let mut visited = HashSet::new();
 
     visit(&entry, &mut report, &mut visited)?;
     Ok(report)
+}
+
+fn detect_express_profile(entry: &Path) -> Option<ExpressProfile> {
+    let mut directory = entry.parent();
+    while let Some(current) = directory {
+        let manifest_path = current.join("package.json");
+        if let Ok(source) = fs::read_to_string(&manifest_path)
+            && let Ok(manifest) = serde_json::from_str::<serde_json::Value>(&source)
+            && let Some(dependencies) = manifest
+                .get("dependencies")
+                .and_then(|value| value.as_object())
+            && dependencies.contains_key("express")
+        {
+            let mut compatibility = Compatibility::Compatible;
+            let mut details = Vec::new();
+
+            for (name, specification) in dependencies {
+                let expected = EXPRESS_PROFILE_PACKAGES
+                    .iter()
+                    .find_map(|(package, version)| (*package == name).then_some(*version));
+                let installed = installed_package_version(current, name).or_else(|| {
+                    specification
+                        .as_str()
+                        .filter(|version| {
+                            version.chars().next().is_some_and(|c| c.is_ascii_digit())
+                        })
+                        .map(str::to_string)
+                });
+
+                match (expected, installed) {
+                    (Some(expected), Some(installed)) if installed == expected => {
+                        details.push(format!("{name} {installed}: versão verificada"));
+                    }
+                    (Some(expected), Some(installed)) => {
+                        compatibility = Compatibility::Limited;
+                        details.push(format!(
+                            "{name} {installed}: fora do perfil verificado ({expected})"
+                        ));
+                    }
+                    (Some(expected), None) => {
+                        compatibility = Compatibility::Limited;
+                        details.push(format!(
+                            "{name}: versão instalada não encontrada; o perfil exige {expected}"
+                        ));
+                    }
+                    (None, Some(installed)) => {
+                        compatibility = Compatibility::Limited;
+                        details.push(format!(
+                            "{name} {installed}: dependência ainda não verificada no perfil"
+                        ));
+                    }
+                    (None, None) => {
+                        compatibility = Compatibility::Limited;
+                        details.push(format!(
+                            "{name}: dependência ainda não verificada no perfil"
+                        ));
+                    }
+                }
+            }
+
+            details.sort();
+            return Some(ExpressProfile {
+                compatibility,
+                details,
+            });
+        }
+        directory = current.parent();
+    }
+    None
+}
+
+fn installed_package_version(project_root: &Path, package: &str) -> Option<String> {
+    let manifest = project_root
+        .join("node_modules")
+        .join(package)
+        .join("package.json");
+    let source = fs::read_to_string(manifest).ok()?;
+    serde_json::from_str::<serde_json::Value>(&source)
+        .ok()?
+        .get("version")?
+        .as_str()
+        .map(str::to_string)
 }
 
 fn visit(path: &Path, report: &mut Report, visited: &mut HashSet<PathBuf>) -> io::Result<()> {
@@ -480,6 +586,58 @@ mod tests {
         assert_eq!(report.analyzed_files, 1);
         assert_eq!(report.compatibility, Compatibility::Limited);
         assert!(report.findings[0].message.contains("classe Server"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn recognizes_verified_express_profile_versions() {
+        let root = fixture();
+        fs::write(root.join("main.js"), "console.log('profile')").unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{"dependencies":{"express":"5.2.1","cors":"2.8.5"}}"#,
+        )
+        .unwrap();
+
+        let report = analyze_file(root.join("main.js").to_str().unwrap()).unwrap();
+        let profile = report.express_profile.unwrap();
+
+        assert_eq!(profile.compatibility, Compatibility::Compatible);
+        assert!(
+            profile
+                .details
+                .iter()
+                .any(|detail| detail.contains("express 5.2.1"))
+        );
+        assert!(
+            profile
+                .details
+                .iter()
+                .any(|detail| detail.contains("cors 2.8.5"))
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reports_dependencies_outside_the_express_profile() {
+        let root = fixture();
+        fs::write(root.join("main.js"), "console.log('profile')").unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{"dependencies":{"express":"5.2.1","unknown-middleware":"1.0.0"}}"#,
+        )
+        .unwrap();
+
+        let report = analyze_file(root.join("main.js").to_str().unwrap()).unwrap();
+        let profile = report.express_profile.unwrap();
+
+        assert_eq!(profile.compatibility, Compatibility::Limited);
+        assert!(
+            profile
+                .details
+                .iter()
+                .any(|detail| detail.contains("unknown-middleware 1.0.0"))
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

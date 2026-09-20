@@ -1003,9 +1003,24 @@ fn response_to_js<'js>(context: &Ctx<'js>, prototype: &Object<'js>) -> Result<Ob
 fn response_from_js(response: &Object<'_>) -> Result<Response> {
     let headers_object: Object = response.get("__canaryoHeaders")?;
     let mut headers = Vec::new();
-    for property in headers_object.props::<String, Coerced<String>>() {
+    for property in headers_object.props::<String, rquickjs::Value>() {
         let (name, value) = property?;
-        headers.push((name, value.0));
+        if let Some(values) = value.as_array() {
+            let values = values
+                .iter::<Coerced<String>>()
+                .collect::<Result<Vec<_>>>()?
+                .into_iter()
+                .map(|value| value.0)
+                .collect::<Vec<_>>();
+            if name.eq_ignore_ascii_case("set-cookie") {
+                headers.extend(values.into_iter().map(|value| (name.clone(), value)));
+            } else {
+                headers.push((name, values.join(", ")));
+            }
+        } else {
+            let value: Coerced<String> = headers_object.get(name.as_str())?;
+            headers.push((name, value.0));
+        }
     }
     let text_body: String = response.get("__canaryoTextBody")?;
     let body = if text_body.is_empty() {

@@ -9,6 +9,11 @@
 - Match Node's HTTP reason phrases and `set-cookie` response header shape.
 - Support CommonJS CLI entry points with shebangs and the minimal `tls.Server`
   surface required by Express test tooling.
+- Verify compression 1.8.2, cors 2.8.5, cookie-parser 1.4.7 and a
+  memory-backed Multer 2.0.2 upload against Node.js.
+- Add stream piping lifecycle and Buffer slice aliases required by multipart
+  middleware.
+- Report exact Express-profile package matches separately in `canaryo check`.
 
 ## 0.1.0
 

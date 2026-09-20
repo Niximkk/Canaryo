@@ -191,6 +191,14 @@
             return result;
         }
         toString(encoding = "utf8", start = 0, end = this.length) { return decodeBytes(this.subarray(start, end), encoding); }
+        asciiSlice(start = 0, end = this.length) { return this.toString("ascii", start, end); }
+        base64Slice(start = 0, end = this.length) { return this.toString("base64", start, end); }
+        base64urlSlice(start = 0, end = this.length) { return this.toString("base64url", start, end); }
+        hexSlice(start = 0, end = this.length) { return this.toString("hex", start, end); }
+        latin1Slice(start = 0, end = this.length) { return this.toString("latin1", start, end); }
+        ucs2Slice(start = 0, end = this.length) { return this.toString("utf16le", start, end); }
+        utf8Slice(start = 0, end = this.length) { return this.toString("utf8", start, end); }
+        utf16leSlice(start = 0, end = this.length) { return this.toString("utf16le", start, end); }
         equals(other) { return this.compare(other) === 0; }
         compare(other) {
             const right = Buffer.from(other);

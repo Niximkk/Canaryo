@@ -286,6 +286,7 @@ ServerResponse.prototype.end = function(chunk) {
 
 function ensureHttpEventPrototypes() {
     const EventEmitter = __canaryoBuiltins.events.EventEmitter;
+    const Stream = __canaryoBuiltins.stream;
     if (!(OutgoingMessage.prototype instanceof EventEmitter)) {
         Object.setPrototypeOf(OutgoingMessage.prototype, EventEmitter.prototype);
     }
@@ -299,6 +300,8 @@ function ensureHttpEventPrototypes() {
             Object.setPrototypeOf(constructor.prototype, EventEmitter.prototype);
         }
     }
+    if (!IncomingMessage.prototype.pipe) IncomingMessage.prototype.pipe = Stream.prototype.pipe;
+    if (!IncomingMessage.prototype.unpipe) IncomingMessage.prototype.unpipe = Stream.prototype.unpipe;
     if (!IncomingMessage.prototype[Symbol.asyncIterator]) {
         IncomingMessage.prototype.iterator = function() {
             const events = EventEmitter.on(this, "data", { close: ["end", "close"] });
@@ -3009,6 +3012,7 @@ mod tests {
                     Buffer.byteLength("can\u00e1rio \ud83d\udc24") === 13 &&
                     Buffer.byteLength("\ud800") === 3 &&
                     Buffer.from("hello").toString() === "hello" &&
+                    Buffer.from([0x41, 0xe9]).latin1Slice() === "Aé" &&
                     Buffer.from("ff00a5", "hex").toString("hex") === "ff00a5" &&
                     Buffer.from("Canaryo", "utf8").toString("base64") === "Q2FuYXJ5bw==" &&
                     Buffer.from("Q2FuYXJ5bw==", "base64").toString() === "Canaryo" &&

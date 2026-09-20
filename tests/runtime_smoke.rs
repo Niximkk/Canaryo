@@ -1163,7 +1163,7 @@ fn supports_response_header_introspection_and_custom_status_messages() {
     let response = read_response(&mut stream);
 
     assert!(response.starts_with("HTTP/1.1 201 Canaryo Created"));
-    assert!(response.contains("x-present: yes,again"));
+    assert!(response.contains("x-present: yes, again"));
     assert!(response.contains("x-map: ready"));
     assert!(!response.contains("x-removed"));
     assert!(response.ends_with("true"));

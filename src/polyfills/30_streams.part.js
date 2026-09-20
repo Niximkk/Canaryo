@@ -19,20 +19,38 @@
         const onEnd = () => {
             if (options.end !== false) destination.end();
         };
+        const onError = error => {
+            if (typeof destination.destroy === "function") destination.destroy(error);
+        };
+        const onClose = () => source.unpipe(destination);
         this.on("data", onData);
         this.on("end", onEnd);
+        this.on("error", onError);
         destination.on("drain", onDrain);
-        this.on("error", error => {
-            if (typeof destination.destroy === "function") destination.destroy(error);
-        });
-        destination.once("close", () => {
-            source.removeListener("data", onData);
-            source.removeListener("end", onEnd);
-            destination.removeListener("drain", onDrain);
-        });
+        destination.once("close", onClose);
+        if (!this._pipeBindings) this._pipeBindings = [];
+        this._pipeBindings.push({ destination, onData, onEnd, onError, onDrain, onClose });
         destination.emit("pipe", this);
         if (typeof this.resume === "function") this.resume();
         return destination;
+    };
+    Stream.prototype.unpipe = function (destination) {
+        const bindings = this._pipeBindings || [];
+        const retained = [];
+        for (const binding of bindings) {
+            if (destination && binding.destination !== destination) {
+                retained.push(binding);
+                continue;
+            }
+            this.removeListener("data", binding.onData);
+            this.removeListener("end", binding.onEnd);
+            this.removeListener("error", binding.onError);
+            binding.destination.removeListener("drain", binding.onDrain);
+            binding.destination.removeListener("close", binding.onClose);
+            binding.destination.emit("unpipe", this);
+        }
+        this._pipeBindings = retained;
+        return this;
     };
     Stream.prototype.destroy = function (error) {
         if (this.destroyed) return this;
@@ -207,6 +225,8 @@
         stream._ending = false;
         stream._finalizing = false;
         stream._corked = 0;
+        stream._writableAutoDestroy = options.autoDestroy !== false;
+        stream._writableEmitClose = options.emitClose !== false;
         if (typeof options.write === "function") stream._write = options.write;
         if (typeof options.final === "function") stream._final = options.final;
     }
@@ -230,6 +250,10 @@
             this.writable = false;
             this.writableFinished = true;
             this.emit("finish");
+            if (this._writableAutoDestroy && !("readable" in this) && !this.destroyed) {
+                this.destroyed = true;
+                if (this._writableEmitClose) this.emit("close");
+            }
         };
         if (this._final) this._final(finish); else finish();
     };
