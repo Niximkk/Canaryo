@@ -15,7 +15,7 @@
 <p align="center">
   <img alt="Rust 2024" src="https://img.shields.io/badge/Rust-2024-dea584?logo=rust">
   <img alt="License MIT" src="https://img.shields.io/badge/license-MIT-2ea44f">
-  <img alt="Status experimental" src="https://img.shields.io/badge/status-experimental-f0b429">
+  <img alt="Status proof of concept" src="https://img.shields.io/badge/status-proof_of_concept-f0b429">
 </p>
 
 Canaryo embeds QuickJS-NG in a Rust executable and recreates the Node.js APIs needed by a focused set of HTTP applications. It demonstrates that an existing Express application can run without source changes while using a small native runtime.
@@ -37,6 +37,8 @@ Install Canaryo from this checkout:
 ```sh
 cargo install --path .
 ```
+
+Tagged releases provide Windows x86-64 and Linux x86-64 archives with SHA-256 checksum files. The archives contain the executable, documentation, logo, and MIT license.
 
 Install your application's packages, inspect compatibility, and run it:
 
@@ -152,7 +154,7 @@ flowchart LR
 | TCP networking | Partial | Non-blocking `net.createServer`, asynchronous `connect`/`createConnection`, concurrent duplex `Socket` streams, incremental reads and writes, half-close, byte counters, addresses, timeouts, connection lifecycle events, graceful server close, IP block lists, and parsed socket addresses. IPC, dynamic socket options, connection admission limits, and socket-level backpressure remain incomplete. |
 | Operating system APIs | Partial | Host platform, architecture, type, endianness, home/temp directories, hostname, CPU parallelism, user shape, EOL, and uptime. Exact CPU, memory, release, network-interface, and OS constants data remain incomplete. |
 | Path APIs | Partial | Platform-correct default `node:path`, separate Win32/POSIX implementations, normalization, joining, resolution, relative paths, parsing, formatting, and basename/dirname/extension helpers. Namespace and uncommon drive-relative/UNC edge cases remain incomplete. |
-| Worker threads | Partial | Main-thread metadata, environment data, structured cloning, same-thread `MessageChannel`/`MessagePort`, and same-runtime `BroadcastChannel` are available for libraries such as Pino. Isolated `Worker` execution and cross-process broadcast remain unsupported. |
+| Worker threads | Partial | Main-thread metadata, environment data, structured cloning, same-thread `MessageChannel`/`MessagePort`, and same-runtime `BroadcastChannel` are available. Isolated `Worker` execution and cross-process broadcast remain unsupported. |
 | Utility APIs | Partial | Formatting, inspection, inheritance, deprecation/debug shims, modern and legacy type checks, deep strict comparison, USV string conversion, environment parsing, text encoding/decoding, ANSI stripping, `promisify`, `callbackify`, structured command-line argument parsing, and mutable MIME types and parameters. Advanced inspection and transferable helpers remain incomplete. |
 | Assertions | Partial | Loose, strict, deep, and partial deep equality; positive and negative exception/rejection checks; regular-expression matching; `ifError`; and assertion metadata. Call tracking and exact diagnostic diff formatting remain incomplete. |
 | Text and query codecs | Partial | Incremental `StringDecoder` preserves split UTF-8, UTF-16LE, and Base64 sequences and supports common single-byte encodings. `node:querystring` supports repeated keys, configurable separators, key limits, custom codecs, aliases, and Node-style primitive conversion. Rare malformed-input and legacy codec edge cases remain incomplete. |
@@ -217,6 +219,8 @@ cargo bench --bench runtime -- --startup-only --startup-runs 15
 The final POC scope is documented in [COMPATIBILITY_STRATEGY.md](COMPATIBILITY_STRATEGY.md).
 
 The repository is intended as an educational experiment and portfolio project. Its generic Node.js compatibility work remains available for exploration, but missing APIs, additional frameworks, native addons, isolated workers, and production hardening are outside the finished scope.
+
+See [CHANGELOG.md](CHANGELOG.md) for the final POC release notes.
 
 ## License
 

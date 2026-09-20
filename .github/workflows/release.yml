@@ -1,0 +1,105 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.15.1
+          cache: npm
+          cache-dependency-path: fixtures/express-basic/package-lock.json
+      - run: npm ci
+        working-directory: fixtures/express-basic
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+      - run: cargo xtask compat run
+      - run: cargo test --test runtime_smoke -- --ignored
+
+  create-release:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --generate-notes \
+              --title "Canaryo $GITHUB_REF_NAME"
+          fi
+
+  build:
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x86_64
+          - os: windows-latest
+            platform: windows-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build release binary
+        run: cargo build --release --locked --bin canaryo
+
+      - name: Package Linux binary
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          package="canaryo-${GITHUB_REF_NAME}-${{ matrix.platform }}"
+          mkdir "$package"
+          cp target/release/canaryo README.md BENCHMARKS.md CHANGELOG.md LICENSE "$package/"
+          cp -r assets "$package/"
+          tar -czf "$package.tar.gz" "$package"
+          sha256sum "$package.tar.gz" > "$package.tar.gz.sha256"
+
+      - name: Package Windows binary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $package = "canaryo-$env:GITHUB_REF_NAME-${{ matrix.platform }}"
+          New-Item -ItemType Directory -Path $package | Out-Null
+          Copy-Item target/release/canaryo.exe, README.md, BENCHMARKS.md, CHANGELOG.md, LICENSE -Destination $package
+          Copy-Item assets -Destination $package -Recurse
+          Compress-Archive -Path $package -DestinationPath "$package.zip"
+          $hash = (Get-FileHash "$package.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $package.zip" | Set-Content "$package.zip.sha256"
+
+      - name: Upload Linux release files
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          package="canaryo-${GITHUB_REF_NAME}-${{ matrix.platform }}"
+          gh release upload "$GITHUB_REF_NAME" "$package.tar.gz" "$package.tar.gz.sha256" --clobber
+
+      - name: Upload Windows release files
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $package = "canaryo-$env:GITHUB_REF_NAME-${{ matrix.platform }}"
+          gh release upload $env:GITHUB_REF_NAME "$package.zip" "$package.zip.sha256" --clobber
