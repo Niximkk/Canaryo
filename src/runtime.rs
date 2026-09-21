@@ -673,7 +673,10 @@ function optimizeExpressResponse(listener) {
         }
         this.setHeader("content-length", metadata.length);
         if (metadata.etag) this.setHeader("etag", metadata.etag);
-        if (this.req.fresh) this.statusCode = 304;
+        const requestHeaders = this.req.headers;
+        if ((requestHeaders["if-none-match"] !== undefined
+            || requestHeaders["if-modified-since"] !== undefined)
+            && this.req.fresh) this.statusCode = 304;
 
         let output = body;
         if (this.statusCode === 204 || this.statusCode === 304) {

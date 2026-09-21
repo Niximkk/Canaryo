@@ -8,6 +8,8 @@
   metadata through a bounded cache for repeated small response bodies.
 - Generate default Express weak ETags through one native operation and support
   selecting variable-response endpoints in the benchmark harness.
+- Skip Express freshness parsing when a request has no conditional cache
+  headers while preserving `If-None-Match` and `If-Modified-Since` behavior.
 - Skip idle HTTP connection progression and serialize response metadata
   directly into the output buffer.
 - Normalize process IDs in compatibility results so repeated runs produce

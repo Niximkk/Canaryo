@@ -30,6 +30,12 @@ function request(path, options = {}) {
 const server = app.listen(port, "127.0.0.1", async () => {
     try {
         const route = await request("/users/42?active=yes", { headers: { "x-trace": "profile" } });
+        const conditionalRoute = await request("/users/42?active=yes", {
+            headers: {
+                "x-trace": "profile",
+                "if-none-match": route.headers.etag
+            }
+        });
         const nested = await request("/api/items/widget");
         const urlencoded = await request("/urlencoded", {
             method: "POST",
@@ -102,6 +108,7 @@ const server = app.listen(port, "127.0.0.1", async () => {
                 etag: route.headers.etag,
                 body: JSON.parse(route.body)
             },
+            conditionalRoute: { status: conditionalRoute.status, body: conditionalRoute.body },
             nested: JSON.parse(nested.body),
             urlencoded: JSON.parse(urlencoded.body),
             text: { contentType: text.headers["content-type"], body: text.body },
