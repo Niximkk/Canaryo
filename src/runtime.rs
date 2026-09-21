@@ -13,6 +13,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use base64::Engine;
 use ring::rand::SecureRandom;
 use rquickjs::{
     Array, CatchResultExt, Context, Function, Module, Object, Promise, Runtime, TypedArray,
@@ -655,11 +656,16 @@ function optimizeExpressResponse(listener) {
 
         let metadata = cacheDefaultEtag ? jsonMetadata.get(body) : undefined;
         if (!metadata) {
-            const bytes = typeof etagFunction === "function" ? Buffer.from(body) : null;
-            metadata = {
-                length: bytes ? bytes.length : Buffer.byteLength(body, "utf8"),
-                etag: bytes ? etagFunction(bytes) : undefined
-            };
+            if (cacheDefaultEtag) {
+                const generated = __canaryoExpressWeakEtag(body);
+                metadata = { length: generated[0], etag: generated[1] };
+            } else {
+                const bytes = typeof etagFunction === "function" ? Buffer.from(body) : null;
+                metadata = {
+                    length: bytes ? bytes.length : Buffer.byteLength(body, "utf8"),
+                    etag: bytes ? etagFunction(bytes) : undefined
+                };
+            }
             if (cacheDefaultEtag && body.length <= 16384) {
                 if (jsonMetadata.size >= 128) jsonMetadata.delete(jsonMetadata.keys().next().value);
                 jsonMetadata.set(body, metadata);
@@ -1331,6 +1337,11 @@ fn install_host_globals<'js>(
     let hash = Function::new(context.clone(), crypto_digest).map_err(|error| error.to_string())?;
     globals
         .set("__canaryoHash", hash)
+        .map_err(|error| error.to_string())?;
+    let express_weak_etag =
+        Function::new(context.clone(), express_weak_etag).map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoExpressWeakEtag", express_weak_etag)
         .map_err(|error| error.to_string())?;
     let hmac = Function::new(context.clone(), crypto_hmac).map_err(|error| error.to_string())?;
     globals
@@ -2941,6 +2952,22 @@ fn crypto_digest<'js>(
     let contents = typed_array_bytes(&context, &contents)?;
     let digest = ring::digest::digest(algorithm, contents);
     TypedArray::new_copy(context, digest.as_ref())
+}
+
+fn express_weak_etag<'js>(
+    context: rquickjs::Ctx<'js>,
+    body: String,
+) -> rquickjs::Result<Array<'js>> {
+    let length = body.len();
+    let digest = ring::digest::digest(&ring::digest::SHA1_FOR_LEGACY_USE_ONLY, body.as_bytes());
+    let encoded = base64::engine::general_purpose::STANDARD.encode(digest.as_ref());
+    let output = Array::new(context)?;
+    output.set(0, length)?;
+    output.set(
+        1,
+        format!("W/\"{:x}-{}\"", length, encoded.trim_end_matches('=')),
+    )?;
+    Ok(output)
 }
 
 fn crypto_hmac<'js>(

@@ -24,6 +24,11 @@ app.get("/",
         steps: response.locals.steps
     })
 );
+let dynamicResponseId = 0;
+app.get("/dynamic", (_request, response) => response.json({
+    profile: "express-5.2.1",
+    id: ++dynamicResponseId
+}));
 app.post("/echo", express.json(), (request, response) => response.json({ body: request.body }));
 
 app.get("/users/:id", (request, response) => {

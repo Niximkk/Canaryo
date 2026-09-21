@@ -96,7 +96,12 @@ const server = app.listen(port, "127.0.0.1", async () => {
         const failure = await request("/failure");
 
         server.close(() => console.log(JSON.stringify({
-            route: { status: route.status, profile: route.headers["x-canaryo-profile"], body: JSON.parse(route.body) },
+            route: {
+                status: route.status,
+                profile: route.headers["x-canaryo-profile"],
+                etag: route.headers.etag,
+                body: JSON.parse(route.body)
+            },
             nested: JSON.parse(nested.body),
             urlencoded: JSON.parse(urlencoded.body),
             text: { contentType: text.headers["content-type"], body: text.body },

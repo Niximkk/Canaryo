@@ -10,7 +10,6 @@ use std::{
 };
 
 const CLOSE_REQUEST: &[u8] = b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
-const KEEP_ALIVE_REQUEST: &[u8] = b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
 
 #[derive(Clone, Copy)]
 enum Runtime {
@@ -36,6 +35,7 @@ struct Config {
     startup_only: bool,
     keep_alive: bool,
     body_size: Option<usize>,
+    path: Option<String>,
     case_filter: Option<String>,
     include_bun: bool,
 }
@@ -123,7 +123,12 @@ fn main() {
         }
     );
     if let Some(body_size) = config.body_size {
-        println!("- Request: POST /echo with a {body_size}-byte JSON body\n");
+        println!(
+            "- Request: POST {} with a {body_size}-byte JSON body\n",
+            config.path.as_deref().unwrap_or("/echo")
+        );
+    } else if let Some(path) = &config.path {
+        println!("- Request: GET {path}\n");
     }
 
     println!("## Startup\n");
@@ -212,6 +217,7 @@ fn parse_config() -> Config {
         startup_only: false,
         keep_alive: false,
         body_size: None,
+        path: None,
         case_filter: None,
         include_bun: false,
     };
@@ -247,6 +253,7 @@ fn parse_config() -> Config {
             "--startup-runs" => config.startup_runs = parse_number(value),
             "--case" => config.case_filter = Some(value.to_ascii_lowercase()),
             "--body-size" => config.body_size = Some(parse_number(value)),
+            "--path" => config.path = Some(value.clone()),
             option => panic!("unknown option: {option}"),
         }
         index += 2;
@@ -255,6 +262,12 @@ fn parse_config() -> Config {
     assert!(config.duration.as_secs() > 0, "duration must be positive");
     assert!(config.runs > 0, "runs must be positive");
     assert!(config.startup_runs > 0, "startup runs must be positive");
+    if let Some(path) = &config.path {
+        assert!(
+            path.starts_with('/') && !path.contains('\r') && !path.contains('\n'),
+            "path must be an absolute HTTP path"
+        );
+    }
     config
 }
 
@@ -377,6 +390,7 @@ fn measure_load(
         Duration::from_millis(500),
         config.keep_alive,
         config.body_size,
+        config.path.as_deref(),
     );
     let memory_mib = process_rss_mib(server.0.id());
     let load = run_load(
@@ -385,6 +399,7 @@ fn measure_load(
         config.duration,
         config.keep_alive,
         config.body_size,
+        config.path.as_deref(),
     );
 
     if let Some(status) = server.0.try_wait().unwrap() {
@@ -400,9 +415,10 @@ fn run_load(
     duration: Duration,
     keep_alive: bool,
     body_size: Option<usize>,
+    path: Option<&str>,
 ) -> LoadResult {
     let barrier = Arc::new(Barrier::new(concurrency + 1));
-    let request = Arc::new(load_request(keep_alive, body_size));
+    let request = Arc::new(load_request(keep_alive, body_size, path));
     let mut workers = Vec::with_capacity(concurrency);
 
     for _ in 0..concurrency {
@@ -533,19 +549,21 @@ fn persistent_request(client: &mut PersistentClient, request: &[u8]) -> Result<(
     }
 }
 
-fn load_request(keep_alive: bool, body_size: Option<usize>) -> Vec<u8> {
+fn load_request(keep_alive: bool, body_size: Option<usize>, path: Option<&str>) -> Vec<u8> {
     let Some(body_size) = body_size else {
-        return if keep_alive {
-            KEEP_ALIVE_REQUEST.to_vec()
-        } else {
-            CLOSE_REQUEST.to_vec()
-        };
+        let path = path.unwrap_or("/");
+        let connection = if keep_alive { "keep-alive" } else { "close" };
+        return format!(
+            "GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: {connection}\r\n\r\n"
+        )
+        .into_bytes();
     };
+    let path = path.unwrap_or("/echo");
     let body_size = body_size.max(11);
     let body = format!("{{\"data\":\"{}\"}}", "x".repeat(body_size - 11));
     let connection = if keep_alive { "keep-alive" } else { "close" };
     format!(
-        "POST /echo HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: {connection}\r\n\r\n{body}",
+        "POST {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: {connection}\r\n\r\n{body}",
         body.len()
     )
     .into_bytes()

@@ -95,6 +95,10 @@ see a smaller gain.
 cargo bench --bench runtime -- --case "express profile" --bun --keep-alive --duration 3 --runs 5 --startup-runs 5
 ```
 
+Use `--path /dynamic` with the Express profile to return a different JSON body
+on every request. This bypasses metadata cache hits and isolates the uncached
+JSON serialization and weak ETag path.
+
 ## Startup
 
 Startup is measured from process creation until the first complete valid HTTP response. Lower is better.
@@ -209,4 +213,6 @@ cargo bench --bench runtime -- --keep-alive --body-size 16384 --duration 3 --run
 cargo bench --bench runtime -- --bun --keep-alive --duration 3 --runs 3 --startup-runs 7
 ```
 
-Use `--case express` or `--case node:http` to isolate one application, `--body-size` to generate the JSON workload, and `--startup-only` while investigating initialization.
+Use `--case express` or `--case node:http` to isolate one application, `--path`
+to select a benchmark endpoint, `--body-size` to generate the JSON workload,
+and `--startup-only` while investigating initialization.

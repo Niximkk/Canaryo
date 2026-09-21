@@ -473,11 +473,33 @@ fn normalize_output(output: &str, root: &Path) -> String {
     let normalized = output.replace("\r\n", "\n");
     let root_native = root.to_string_lossy();
     let root_forward = root_native.replace('\\', "/");
-    normalized
+    let normalized = normalized
         .replace(root_native.as_ref(), "<ROOT>")
-        .replace(&root_forward, "<ROOT>")
+        .replace(&root_forward, "<ROOT>");
+    normalize_node_process_ids(&normalized)
         .trim_end()
         .to_owned()
+}
+
+fn normalize_node_process_ids(input: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut remaining = input;
+
+    while let Some(marker) = remaining.find("(node:") {
+        let digits_start = marker + "(node:".len();
+        let suffix = &remaining[digits_start..];
+        let digits = suffix.bytes().take_while(u8::is_ascii_digit).count();
+        if digits == 0 || suffix.as_bytes().get(digits) != Some(&b')') {
+            output.push_str(&remaining[..digits_start]);
+            remaining = suffix;
+            continue;
+        }
+        output.push_str(&remaining[..digits_start]);
+        output.push_str("<PID>)");
+        remaining = &suffix[digits + 1..];
+    }
+    output.push_str(remaining);
+    output
 }
 
 fn parse_json_capture(capture: &Capture, runtime: &str) -> Result<Value, String> {
@@ -688,10 +710,10 @@ mod tests {
     #[test]
     fn output_normalization_removes_platform_and_workspace_noise() {
         let root = Path::new(r"D:\Projects\Canaryo");
-        let output = "D:\\Projects\\Canaryo\\src\\case.js\r\nvalue\r\n";
+        let output = "D:\\Projects\\Canaryo\\src\\case.js\r\n(node:1234) warning\r\n";
         assert_eq!(
             normalize_output(output, root),
-            "<ROOT>\\src\\case.js\nvalue"
+            "<ROOT>\\src\\case.js\n(node:<PID>) warning"
         );
     }
 

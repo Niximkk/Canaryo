@@ -6,8 +6,12 @@
   original router for dynamic, mounted, or mutated route stacks.
 - Accelerate Express's default JSON response path and reuse length and weak ETag
   metadata through a bounded cache for repeated small response bodies.
+- Generate default Express weak ETags through one native operation and support
+  selecting variable-response endpoints in the benchmark harness.
 - Skip idle HTTP connection progression and serialize response metadata
   directly into the output buffer.
+- Normalize process IDs in compatibility results so repeated runs produce
+  stable reports.
 
 ## 0.2.0 - 2026-09-20
 
