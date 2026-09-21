@@ -614,6 +614,80 @@ globalThis.__canaryoPollHttpRequests = function() {
 globalThis.__canaryoPendingHttpRequests = () => pendingClientRequests.size;
 let maxIdleHttpParsers = 1000;
 
+function optimizeExpressResponse(listener) {
+    const responsePrototype = listener?.response;
+    const settings = listener?.settings;
+    if (!responsePrototype || !settings
+        || Object.prototype.hasOwnProperty.call(responsePrototype, "json")
+        || Object.prototype.hasOwnProperty.call(responsePrototype, "send")) return listener;
+
+    const originalJson = responsePrototype.json;
+    const originalSend = responsePrototype.send;
+    if (typeof originalJson !== "function" || originalJson.name !== "json"
+        || typeof originalSend !== "function" || originalSend.name !== "send") return listener;
+
+    const jsonEscape = settings["json escape"];
+    const jsonReplacer = settings["json replacer"];
+    const jsonSpaces = settings["json spaces"];
+    const etagSetting = settings.etag;
+    const etagFunction = settings["etag fn"];
+    if (jsonEscape || jsonReplacer !== undefined || jsonSpaces !== undefined) return listener;
+    const cacheDefaultEtag = etagSetting === "weak" && etagFunction?.name === "generateETag";
+    const jsonMetadata = new Map();
+
+    responsePrototype.json = function canaryoExpressJson(value) {
+        if (settings["json escape"] !== jsonEscape
+            || settings["json replacer"] !== jsonReplacer
+            || settings["json spaces"] !== jsonSpaces
+            || settings.etag !== etagSetting
+            || settings["etag fn"] !== etagFunction
+            || this.getHeader("content-type") !== undefined
+            || this.getHeader("etag") !== undefined) {
+            return originalJson.call(this, value);
+        }
+
+        const body = JSON.stringify(value);
+        this.setHeader("content-type", "application/json; charset=utf-8");
+        if (body === undefined) {
+            this.end();
+            return this;
+        }
+
+        let metadata = cacheDefaultEtag ? jsonMetadata.get(body) : undefined;
+        if (!metadata) {
+            const bytes = typeof etagFunction === "function" ? Buffer.from(body) : null;
+            metadata = {
+                length: bytes ? bytes.length : Buffer.byteLength(body, "utf8"),
+                etag: bytes ? etagFunction(bytes) : undefined
+            };
+            if (cacheDefaultEtag && body.length <= 16384) {
+                if (jsonMetadata.size >= 128) jsonMetadata.delete(jsonMetadata.keys().next().value);
+                jsonMetadata.set(body, metadata);
+            }
+        }
+        this.setHeader("content-length", metadata.length);
+        if (metadata.etag) this.setHeader("etag", metadata.etag);
+        if (this.req.fresh) this.statusCode = 304;
+
+        let output = body;
+        if (this.statusCode === 204 || this.statusCode === 304) {
+            this.removeHeader("content-type");
+            this.removeHeader("content-length");
+            this.removeHeader("transfer-encoding");
+            output = "";
+        } else if (this.statusCode === 205) {
+            this.setHeader("content-length", "0");
+            this.removeHeader("transfer-encoding");
+            output = "";
+        }
+
+        if (this.req.method === "HEAD") this.end();
+        else this.end(output);
+        return this;
+    };
+    return listener;
+}
+
 function optimizeExpressRouter(listener) {
     const router = listener?.router;
     if (!router || !Array.isArray(router.stack) || router.__canaryoOptimized) return listener;
@@ -666,7 +740,9 @@ function optimizeExpressRouter(listener) {
                     break;
                 }
                 matchedRoute = true;
-                steps.push({ route: layer.route });
+                for (const routeLayer of handlers) {
+                    steps.push({ layer: routeLayer, route: layer.route });
+                }
                 continue;
             }
 
@@ -702,6 +778,8 @@ function optimizeExpressRouter(listener) {
         if (!plan) return originalHandle.call(router, request, response, done);
 
         let index = 0;
+        let activeRoute = null;
+        let skippedRoute = null;
         request.next = next;
         request.baseUrl = request.baseUrl || "";
         request.originalUrl = request.originalUrl || request.url;
@@ -709,15 +787,20 @@ function optimizeExpressRouter(listener) {
 
         function next(error) {
             if (error === "router") return setImmediate(done, null);
-            if (error === "route") error = null;
+            if (error === "route") {
+                skippedRoute = activeRoute;
+                error = null;
+            }
 
             while (index < plan.length) {
                 const step = plan[index++];
-                if (step.route) {
-                    if (error) continue;
+                if (skippedRoute && step.route === skippedRoute) continue;
+                skippedRoute = null;
+                if (step.route && step.route !== activeRoute) {
                     request.params = {};
-                    return step.route.dispatch(request, response, next);
+                    request.route = step.route;
                 }
+                activeRoute = step.route || null;
                 if (error) {
                     if (step.layer.handle.length !== 4) continue;
                     return step.layer.handleError(error, request, response, next);
@@ -790,7 +873,7 @@ const httpModule = Object.freeze({
         if (typeof rawRequestListener !== "function") {
             throw new TypeError("createServer requer uma função");
         }
-        const requestListener = optimizeExpressRouter(rawRequestListener);
+        const requestListener = optimizeExpressRouter(optimizeExpressResponse(rawRequestListener));
 
         const server = {
             listening: false,

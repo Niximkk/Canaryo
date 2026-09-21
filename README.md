@@ -136,10 +136,11 @@ flowchart LR
 - `src/polyfills/` provides the JavaScript-facing compatibility layer, split into ordered subsystem fragments.
 - `src/analyzer.rs` powers the recursive `check` command.
 
-The development build precomputes dispatch plans for static Express routes when
-the route and middleware stack can be handled without changing Express
-semantics. Dynamic routes, mounted routers and stacks changed after startup use
-the original Express dispatcher automatically.
+The development build precomputes dispatch plans for static Express routes and
+accelerates default JSON responses when the application has not customized
+their behavior. A bounded cache reuses weak ETag metadata for repeated small
+JSON bodies. Dynamic routes, mounted routers, customized responses and stacks
+changed after startup use the original Express implementations automatically.
 
 ## Compatibility
 

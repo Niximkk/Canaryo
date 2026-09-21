@@ -2,8 +2,10 @@
 
 ## Unreleased
 
-- Precompute safe static Express route plans while preserving the original
-  router as the fallback for dynamic, mounted, or mutated route stacks.
+- Precompute and flatten safe static Express route plans while preserving the
+  original router for dynamic, mounted, or mutated route stacks.
+- Accelerate Express's default JSON response path and reuse length and weak ETag
+  metadata through a bounded cache for repeated small response bodies.
 - Skip idle HTTP connection progression and serialize response metadata
   directly into the output buffer.
 
