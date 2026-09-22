@@ -67,7 +67,7 @@ cargo bench --bench runtime -- --case "express profile" --bun --keep-alive --dur
 
 ### Unreleased Express fast paths
 
-A September 20 development build flattened safe static Express route plans,
+A September 22 development build flattened safe static Express route plans,
 accelerated the default JSON response path, cached metadata for a bounded set of
 repeated JSON bodies and skipped idle native HTTP connection work. Five
 three-second samples produced the following result. Dynamic routes, mounted
@@ -76,17 +76,17 @@ through Express's original implementations.
 
 | Concurrency | Runtime | Requests/s | p50 | p95 | p99 | Errors | RSS |
 |---:|---|---:|---:|---:|---:|---:|---:|
-| 1 | Node.js | 5,679 | 0.16 ms | 0.25 ms | 0.33 ms | 0 | 86.2 MiB |
-| 1 | Bun | **14,131** | **0.06 ms** | **0.11 ms** | **0.14 ms** | 0 | 62.7 MiB |
-| 1 | Canaryo | 7,491 | 0.12 ms | 0.18 ms | 0.22 ms | 0 | **15.7 MiB** |
-| 16 | Node.js | 5,855 | 2.62 ms | 3.69 ms | 5.25 ms | 0 | 93.3 MiB |
-| 16 | Bun | **16,937** | **0.84 ms** | **1.40 ms** | **2.00 ms** | 0 | 61.8 MiB |
-| 16 | Canaryo | 10,048 | 1.38 ms | 2.08 ms | 6.12 ms | 0 | **15.6 MiB** |
+| 1 | Node.js | 5,951 | 0.16 ms | 0.23 ms | 0.30 ms | 0 | 87.5 MiB |
+| 1 | Bun | **13,371** | **0.07 ms** | **0.11 ms** | **0.14 ms** | 0 | 61.2 MiB |
+| 1 | Canaryo | 7,519 | 0.12 ms | 0.18 ms | 0.22 ms | 0 | **16.6 MiB** |
+| 16 | Node.js | 5,932 | 2.55 ms | 3.72 ms | 5.49 ms | 0 | 93.1 MiB |
+| 16 | Bun | **16,067** | **0.89 ms** | **1.53 ms** | **2.09 ms** | 0 | 60.2 MiB |
+| 16 | Canaryo | 10,424 | 1.28 ms | 2.15 ms | 5.38 ms | 0 | **16.1 MiB** |
 
-Compared with the Canaryo baseline above, throughput increased by 79.0% at
-concurrency 1 and 98.0% at concurrency 16. In this run Canaryo delivered 71.6%
-more throughput than Node.js at concurrency 16 while using 83.3% less resident
-memory. It reached 59.3% of Bun's throughput while using 74.8% less memory.
+Compared with the Canaryo baseline above, throughput increased by 79.7% at
+concurrency 1 and 105.4% at concurrency 16. In this run Canaryo delivered 75.7%
+more throughput than Node.js at concurrency 16 while using 82.7% less resident
+memory. It reached 64.9% of Bun's throughput while using 73.3% less memory.
 This route returns the same JSON for every request, so its bounded ETag metadata
 cache receives an ideal workload; applications with unique response bodies will
 see a smaller gain.
@@ -95,9 +95,28 @@ see a smaller gain.
 cargo bench --bench runtime -- --case "express profile" --bun --keep-alive --duration 3 --runs 5 --startup-runs 5
 ```
 
-Use `--path /dynamic` with the Express profile to return a different JSON body
-on every request. This bypasses metadata cache hits and isolates the uncached
-JSON serialization and weak ETag path.
+### Variable JSON bodies
+
+`GET /dynamic` returns a different JSON body on every request. This bypasses
+metadata cache hits and measures the native weak ETag path for every response.
+
+| Concurrency | Runtime | Requests/s | p50 | p95 | p99 | Errors | RSS |
+|---:|---|---:|---:|---:|---:|---:|---:|
+| 1 | Node.js | 4,914 | 0.17 ms | 0.30 ms | 0.54 ms | 0 | 73.9 MiB |
+| 1 | Bun | **12,640** | **0.08 ms** | **0.12 ms** | **0.15 ms** | 0 | 56.9 MiB |
+| 1 | Canaryo | 7,181 | 0.12 ms | 0.19 ms | 0.24 ms | 0 | **16.7 MiB** |
+| 16 | Node.js | 5,730 | 2.65 ms | 4.08 ms | 7.40 ms | 0 | 92.5 MiB |
+| 16 | Bun | **17,085** | **0.82 ms** | **1.43 ms** | **2.04 ms** | 0 | 65.8 MiB |
+| 16 | Canaryo | 9,909 | 1.42 ms | 2.20 ms | 4.98 ms | 0 | **16.4 MiB** |
+
+Without metadata cache hits, Canaryo remains 72.9% ahead of Node.js at
+concurrency 16 and reaches 58.0% of Bun's throughput. It uses 82.3% less
+resident memory than Node.js and 75.1% less than Bun. The repeated-body cache
+adds about 5.2% throughput over this workload.
+
+```sh
+cargo bench --bench runtime -- --case "express profile" --path /dynamic --bun --keep-alive --duration 3 --runs 5 --startup-runs 5
+```
 
 ## Startup
 
