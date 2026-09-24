@@ -1,7 +1,25 @@
 use std::{
+    collections::HashMap,
+    ffi::OsString,
     fs, io,
     path::{Component, Path, PathBuf},
+    sync::{Arc, Mutex, OnceLock},
 };
+
+type PackageJson = Arc<serde_json::Value>;
+type PackageScope = Option<(PathBuf, PackageJson)>;
+type DirectoryEntries = Arc<HashMap<OsString, PathKind>>;
+
+static PACKAGE_JSON_CACHE: OnceLock<Mutex<HashMap<PathBuf, Option<PackageJson>>>> = OnceLock::new();
+static PACKAGE_SCOPE_CACHE: OnceLock<Mutex<HashMap<PathBuf, PackageScope>>> = OnceLock::new();
+static DIRECTORY_CACHE: OnceLock<Mutex<HashMap<PathBuf, DirectoryEntries>>> = OnceLock::new();
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PathKind {
+    File,
+    Directory,
+    Missing,
+}
 
 pub fn resolve(parent_file: &str, specifier: &str) -> io::Result<PathBuf> {
     resolve_with_conditions(parent_file, specifier, &["require", "node", "default"])
@@ -20,20 +38,13 @@ pub fn is_esm_path(path: &Path) -> bool {
     }
 
     for directory in path.parent().into_iter().flat_map(Path::ancestors) {
-        let package_file = directory.join("package.json");
-        if !package_file.is_file() {
-            continue;
+        if let Some(package) = read_package_json(&directory.join("package.json")) {
+            return package
+                .get("type")
+                .and_then(|value| value.as_str())
+                .map(str::to_owned)
+                .is_some_and(|kind| kind == "module");
         }
-        return fs::read_to_string(package_file)
-            .ok()
-            .and_then(|contents| serde_json::from_str::<serde_json::Value>(&contents).ok())
-            .and_then(|package| {
-                package
-                    .get("type")
-                    .and_then(|value| value.as_str())
-                    .map(str::to_owned)
-            })
-            .is_some_and(|kind| kind == "module");
     }
     false
 }
@@ -71,7 +82,7 @@ fn resolve_with_conditions(
     }
     for directory in parent.ancestors() {
         let package_directory = directory.join("node_modules").join(package);
-        if package_directory.is_dir() {
+        if path_kind(&package_directory) == PathKind::Directory {
             return resolve_package(&package_directory, subpath, conditions);
         }
     }
@@ -82,17 +93,57 @@ fn resolve_with_conditions(
     ))
 }
 
-fn find_package_scope(start: &Path) -> Option<(PathBuf, serde_json::Value)> {
-    for directory in start.ancestors() {
-        let package_file = directory.join("package.json");
-        if !package_file.is_file() {
-            continue;
-        }
-        let contents = fs::read_to_string(package_file).ok()?;
-        let package = serde_json::from_str(&contents).ok()?;
-        return Some((directory.to_path_buf(), package));
+fn find_package_scope(start: &Path) -> Option<(PathBuf, PackageJson)> {
+    let start = normalize(start);
+    let cache = PACKAGE_SCOPE_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(cached) = cache.lock().ok()?.get(&start).cloned() {
+        return cached;
     }
-    None
+
+    let mut visited = Vec::new();
+    let mut found = None;
+    for directory in start.ancestors() {
+        let directory = directory.to_path_buf();
+        if let Some(cached) = cache
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get(&directory).cloned())
+        {
+            found = cached;
+            break;
+        }
+        visited.push(directory.clone());
+        if let Some(package) = read_package_json(&directory.join("package.json")) {
+            found = Some((directory, package));
+            break;
+        }
+    }
+
+    if let Ok(mut cache) = cache.lock() {
+        for directory in visited {
+            cache.insert(directory, found.clone());
+        }
+    }
+    found
+}
+
+fn read_package_json(path: &Path) -> Option<PackageJson> {
+    let path = normalize(path);
+    let cache = PACKAGE_JSON_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(cache) = cache.lock()
+        && let Some(cached) = cache.get(&path)
+    {
+        return cached.clone();
+    }
+
+    let package = fs::read_to_string(&path)
+        .ok()
+        .and_then(|contents| serde_json::from_str(&contents).ok())
+        .map(Arc::new);
+    if let Ok(mut cache) = cache.lock() {
+        cache.insert(path, package.clone());
+    }
+    package
 }
 
 fn resolve_package_import(
@@ -184,9 +235,7 @@ fn resolve_package(
     conditions: &[&str],
 ) -> io::Result<PathBuf> {
     let package_file = package_directory.join("package.json");
-    if package_file.is_file()
-        && let Ok(contents) = fs::read_to_string(&package_file)
-        && let Ok(package) = serde_json::from_str::<serde_json::Value>(&contents)
+    if let Some(package) = read_package_json(&package_file)
         && let Some(exports) = package.get("exports")
     {
         let export_key = if subpath.is_empty() {
@@ -308,7 +357,7 @@ fn split_package_specifier(specifier: &str) -> (&str, &str) {
 }
 
 fn resolve_candidate(candidate: &Path) -> io::Result<PathBuf> {
-    if candidate.is_file() {
+    if path_kind(candidate) == PathKind::File {
         return Ok(normalize(candidate));
     }
 
@@ -316,16 +365,14 @@ fn resolve_candidate(candidate: &Path) -> io::Result<PathBuf> {
         let mut filename = candidate.as_os_str().to_os_string();
         filename.push(extension);
         let file = PathBuf::from(filename);
-        if file.is_file() {
+        if path_kind(&file) == PathKind::File {
             return Ok(normalize(&file));
         }
     }
 
-    if candidate.is_dir() {
+    if path_kind(candidate) == PathKind::Directory {
         let package_file = candidate.join("package.json");
-        if package_file.is_file()
-            && let Ok(contents) = fs::read_to_string(&package_file)
-            && let Ok(package) = serde_json::from_str::<serde_json::Value>(&contents)
+        if let Some(package) = read_package_json(&package_file)
             && let Some(main) = package.get("main").and_then(serde_json::Value::as_str)
         {
             let main_candidate = candidate.join(main);
@@ -338,7 +385,7 @@ fn resolve_candidate(candidate: &Path) -> io::Result<PathBuf> {
 
         for index in ["index.js", "index.json", "index.cjs", "index.mjs"] {
             let file = candidate.join(index);
-            if file.is_file() {
+            if path_kind(&file) == PathKind::File {
                 return Ok(normalize(&file));
             }
         }
@@ -348,6 +395,57 @@ fn resolve_candidate(candidate: &Path) -> io::Result<PathBuf> {
         io::ErrorKind::NotFound,
         format!("{} não existe", candidate.display()),
     ))
+}
+
+fn path_kind(path: &Path) -> PathKind {
+    let path = normalize(path);
+    let Some(parent) = path.parent() else {
+        return metadata_kind(&path);
+    };
+    let Some(name) = path.file_name() else {
+        return metadata_kind(&path);
+    };
+    let parent = parent.to_path_buf();
+    let cache = DIRECTORY_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(cache) = cache.lock()
+        && let Some(entries) = cache.get(&parent)
+    {
+        return entries.get(name).copied().unwrap_or(PathKind::Missing);
+    }
+
+    let mut entries = HashMap::new();
+    if let Ok(directory) = fs::read_dir(&parent) {
+        for entry in directory.flatten() {
+            let kind = entry
+                .file_type()
+                .ok()
+                .map(|kind| {
+                    if kind.is_file() {
+                        PathKind::File
+                    } else if kind.is_dir() {
+                        PathKind::Directory
+                    } else {
+                        metadata_kind(&entry.path())
+                    }
+                })
+                .unwrap_or(PathKind::Missing);
+            entries.insert(entry.file_name(), kind);
+        }
+    }
+    let entries = Arc::new(entries);
+    let kind = entries.get(name).copied().unwrap_or(PathKind::Missing);
+    if let Ok(mut cache) = cache.lock() {
+        cache.insert(parent, entries);
+    }
+    kind
+}
+
+fn metadata_kind(path: &Path) -> PathKind {
+    match fs::metadata(path) {
+        Ok(metadata) if metadata.is_file() => PathKind::File,
+        Ok(metadata) if metadata.is_dir() => PathKind::Directory,
+        _ => PathKind::Missing,
+    }
 }
 
 fn normalize(path: &Path) -> PathBuf {

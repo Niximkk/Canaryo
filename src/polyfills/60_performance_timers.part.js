@@ -338,6 +338,7 @@
         };
         timer.handle = handle;
         scheduledTimers.set(id, timer);
+        __canaryoMarkServerBusy();
         return handle;
     }
 

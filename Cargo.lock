@@ -68,6 +68,7 @@ dependencies = [
  "rquickjs",
  "rustls",
  "serde_json",
+ "smallvec",
  "subtle",
  "ureq",
 ]

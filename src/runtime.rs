@@ -22,6 +22,7 @@ use subtle::ConstantTimeEq;
 
 use crate::{esm, http, modules};
 
+#[cfg(test)]
 const BOOTSTRAP: &str = r#"
 globalThis.global = globalThis;
 Object.defineProperties(globalThis, {
@@ -111,6 +112,42 @@ function ServerResponse() {}
 function Socket() {}
 function Server() {}
 function HttpsServer() {}
+
+function lazyMessageValue(message, name, create) {
+    const value = create();
+    Object.defineProperty(message, name, {
+        value,
+        writable: true,
+        enumerable: true,
+        configurable: true
+    });
+    return value;
+}
+Object.defineProperties(IncomingMessage.prototype, {
+    rawHeaders: {
+        configurable: true,
+        get() {
+            return lazyMessageValue(this, "rawHeaders", () =>
+                Object.entries(this.headers || {}).flatMap(([name, value]) => [name, value])
+            );
+        },
+        set(value) { lazyMessageValue(this, "rawHeaders", () => value); }
+    },
+    trailers: {
+        configurable: true,
+        get() { return lazyMessageValue(this, "trailers", () => Object.create(null)); },
+        set(value) { lazyMessageValue(this, "trailers", () => value); }
+    },
+    rawTrailers: {
+        configurable: true,
+        get() {
+            return lazyMessageValue(this, "rawTrailers", () =>
+                Object.entries(this.trailers || {}).flatMap(([name, value]) => [name, value])
+            );
+        },
+        set(value) { lazyMessageValue(this, "rawTrailers", () => value); }
+    }
+});
 
 IncomingMessage.prototype.setEncoding = function(encoding) {
     this.__canaryoEncoding = String(encoding);
@@ -259,14 +296,16 @@ ServerResponse.prototype.writeHead = function(status, statusMessageOrHeaders, he
 };
 function appendResponseChunk(response, chunk) {
     if (chunk === undefined || chunk === null) return;
-    if (typeof chunk === "string" && response.__canaryoBody.length === 0) {
+    if (typeof chunk === "string" && (!response.__canaryoBody || response.__canaryoBody.length === 0)) {
         response.__canaryoTextBody += chunk;
         return;
     }
     if (response.__canaryoTextBody.length > 0) {
+        response.__canaryoBody ||= [];
         response.__canaryoBody.push(Buffer.from(response.__canaryoTextBody));
         response.__canaryoTextBody = "";
     }
+    response.__canaryoBody ||= [];
     response.__canaryoBody.push(Buffer.from(chunk));
 }
 ServerResponse.prototype.write = function(chunk) {
@@ -281,7 +320,9 @@ ServerResponse.prototype.end = function(chunk) {
     this.writableEnded = true;
     this.writableFinished = true;
     this.finished = true;
-    this.emit("finish");
+    if (this._events && this._events.finish && this._events.finish.length) {
+        this.emit("finish");
+    }
     return this;
 };
 
@@ -425,6 +466,7 @@ ClientRequest.prototype.getHeaders = function() { return Object.assign(Object.cr
 ClientRequest.prototype.getHeaderNames = function() { return Object.keys(this._headers); };
 ClientRequest.prototype.__canaryoStart = function(hasBody) {
     if (this._requestId !== undefined) return;
+    __canaryoMarkServerBusy();
     this._requestId = __canaryoHttpRequestStart(
         this.method,
         this._url,
@@ -635,6 +677,47 @@ function optimizeExpressResponse(listener) {
     if (jsonEscape || jsonReplacer !== undefined || jsonSpaces !== undefined) return listener;
     const cacheDefaultEtag = etagSetting === "weak" && etagFunction?.name === "generateETag";
     const jsonMetadata = new Map();
+    const nativeSetHeader = ServerResponse.prototype.setHeader;
+    const nativeGetHeader = ServerResponse.prototype.getHeader;
+    const nativeRemoveHeader = ServerResponse.prototype.removeHeader;
+    const nativeEnd = ServerResponse.prototype.end;
+    const directHeaders = responsePrototype.setHeader === nativeSetHeader
+        && responsePrototype.getHeader === nativeGetHeader
+        && responsePrototype.removeHeader === nativeRemoveHeader;
+    const originalSet = responsePrototype.set;
+    if (directHeaders && typeof originalSet === "function" && originalSet.name === "header") {
+        const normalizedHeaders = new Map();
+        responsePrototype.set = responsePrototype.header = function canaryoExpressSet(field, value) {
+            if (arguments.length !== 2 || this.setHeader !== nativeSetHeader) {
+                return originalSet.apply(this, arguments);
+            }
+            const key = `${String(field)}\0${Array.isArray(value) ? JSON.stringify(value) : String(value)}`;
+            const normalized = normalizedHeaders.get(key);
+            if (normalized) {
+                this.__canaryoHeaders[normalized.name] = normalized.value;
+                return this;
+            }
+            originalSet.call(this, field, value);
+            if (normalizedHeaders.size < 128) {
+                const name = String(field).toLowerCase();
+                normalizedHeaders.set(key, { name, value: this.__canaryoHeaders[name] });
+            }
+            return this;
+        };
+    }
+
+    const finishJson = (response, output) => {
+        const finishListeners = response._events && response._events.finish;
+        if (response.end !== nativeEnd || (finishListeners && finishListeners.length)) {
+            response.end(output);
+            return;
+        }
+        if (output !== undefined && output !== null) response.__canaryoTextBody = String(output);
+        response.headersSent = true;
+        response.writableEnded = true;
+        response.writableFinished = true;
+        response.finished = true;
+    };
 
     responsePrototype.json = function canaryoExpressJson(value) {
         if (settings["json escape"] !== jsonEscape
@@ -642,15 +725,23 @@ function optimizeExpressResponse(listener) {
             || settings["json spaces"] !== jsonSpaces
             || settings.etag !== etagSetting
             || settings["etag fn"] !== etagFunction
-            || this.getHeader("content-type") !== undefined
-            || this.getHeader("etag") !== undefined) {
+            || this.setHeader !== nativeSetHeader
+            || this.getHeader !== nativeGetHeader
+            || this.removeHeader !== nativeRemoveHeader
+            || (directHeaders
+                ? this.__canaryoHeaders["content-type"] !== undefined
+                    || this.__canaryoHeaders.etag !== undefined
+                : this.getHeader("content-type") !== undefined
+                    || this.getHeader("etag") !== undefined)) {
             return originalJson.call(this, value);
         }
 
         const body = JSON.stringify(value);
-        this.setHeader("content-type", "application/json; charset=utf-8");
+        const headers = this.__canaryoHeaders;
+        if (directHeaders) headers["content-type"] = "application/json; charset=utf-8";
+        else this.setHeader("content-type", "application/json; charset=utf-8");
         if (body === undefined) {
-            this.end();
+            finishJson(this);
             return this;
         }
 
@@ -671,8 +762,13 @@ function optimizeExpressResponse(listener) {
                 jsonMetadata.set(body, metadata);
             }
         }
-        this.setHeader("content-length", metadata.length);
-        if (metadata.etag) this.setHeader("etag", metadata.etag);
+        if (directHeaders) {
+            headers["content-length"] = String(metadata.length);
+            if (metadata.etag) headers.etag = metadata.etag;
+        } else {
+            this.setHeader("content-length", metadata.length);
+            if (metadata.etag) this.setHeader("etag", metadata.etag);
+        }
         const requestHeaders = this.req.headers;
         if ((requestHeaders["if-none-match"] !== undefined
             || requestHeaders["if-modified-since"] !== undefined)
@@ -680,18 +776,29 @@ function optimizeExpressResponse(listener) {
 
         let output = body;
         if (this.statusCode === 204 || this.statusCode === 304) {
-            this.removeHeader("content-type");
-            this.removeHeader("content-length");
-            this.removeHeader("transfer-encoding");
+            if (directHeaders) {
+                delete headers["content-type"];
+                delete headers["content-length"];
+                delete headers["transfer-encoding"];
+            } else {
+                this.removeHeader("content-type");
+                this.removeHeader("content-length");
+                this.removeHeader("transfer-encoding");
+            }
             output = "";
         } else if (this.statusCode === 205) {
-            this.setHeader("content-length", "0");
-            this.removeHeader("transfer-encoding");
+            if (directHeaders) {
+                headers["content-length"] = "0";
+                delete headers["transfer-encoding"];
+            } else {
+                this.setHeader("content-length", "0");
+                this.removeHeader("transfer-encoding");
+            }
             output = "";
         }
 
-        if (this.req.method === "HEAD") this.end();
-        else this.end(output);
+        if (this.req.method === "HEAD") finishJson(this);
+        else finishJson(this, output);
         return this;
     };
     return listener;
@@ -703,6 +810,7 @@ function optimizeExpressRouter(listener) {
 
     const originalHandle = router.handle;
     if (typeof originalHandle !== "function") return listener;
+    const directResponseHeaders = listener.response?.setHeader === ServerResponse.prototype.setHeader;
     const stack = router.stack;
     const stackLength = stack.length;
     const normalizePath = value => {
@@ -772,20 +880,71 @@ function optimizeExpressRouter(listener) {
             }
         }
 
-        if (safe && matchedRoute) plans.set(key, steps);
+        if (safe && matchedRoute) {
+            const direct = steps.length === 1
+                && steps[0].route
+                && steps[0].layer.handle.length < 3
+                ? steps[0]
+                : null;
+            Object.defineProperty(steps, "direct", { value: direct });
+            plans.set(key, steps);
+        }
     }
 
-    if (plans.size === 0) return listener;
-    Object.defineProperty(router, "__canaryoOptimized", { value: true });
-    router.handle = function canaryoExpressHandle(request, response, done) {
-        if (router.stack.length !== stackLength) {
-            return originalHandle.call(router, request, response, done);
+    const materializeBridgeDefaults = (request, response) => {
+        Object.assign(request, {
+            method: request.method,
+            url: request.url,
+            httpVersion: request.httpVersion,
+            httpVersionMajor: request.httpVersionMajor,
+            httpVersionMinor: request.httpVersionMinor,
+            aborted: request.aborted,
+            complete: request.complete,
+            destroyed: request.destroyed,
+            readable: request.readable,
+            readableEnded: request.readableEnded,
+            __canaryoPaused: request.__canaryoPaused
+        });
+        Object.assign(response, {
+            statusCode: response.statusCode,
+            statusMessage: response.statusMessage,
+            headersSent: response.headersSent,
+            writableEnded: response.writableEnded,
+            writableFinished: response.writableFinished,
+            finished: response.finished,
+            destroyed: response.destroyed,
+            __canaryoTextBody: response.__canaryoTextBody
+        });
+    };
+    if (plans.size === 0) {
+        function canaryoExpressFallback(request, response) {
+            materializeBridgeDefaults(request, response);
+            return listener(request, response);
         }
-        const queryIndex = request.url.indexOf("?");
-        const pathname = normalizePath(queryIndex < 0 ? request.url : request.url.slice(0, queryIndex));
-        const plan = plans.get(`${request.method}\0${pathname}`);
-        if (!plan) return originalHandle.call(router, request, response, done);
+        Object.defineProperties(canaryoExpressFallback, {
+            __canaryoRequestPrototype: { value: listener.request },
+            __canaryoResponsePrototype: { value: listener.response }
+        });
+        return canaryoExpressFallback;
+    }
+    Object.defineProperty(router, "__canaryoOptimized", { value: true });
+    let cachedMethod;
+    let cachedUrl;
+    let cachedPlan;
+    const planFor = request => {
+        if (router.stack.length !== stackLength) return null;
+        const method = request.method;
+        const url = request.url;
+        if (method === cachedMethod && url === cachedUrl) return cachedPlan;
+        const queryIndex = url.indexOf("?");
+        const pathname = normalizePath(queryIndex < 0 ? url : url.slice(0, queryIndex));
+        cachedMethod = method;
+        cachedUrl = url;
+        cachedPlan = plans.get(`${method}\0${pathname}`) || null;
+        return cachedPlan;
+    };
 
+    const runPlan = (plan, request, response, done) => {
         let index = 0;
         let activeRoute = null;
         let skippedRoute = null;
@@ -810,17 +969,84 @@ function optimizeExpressRouter(listener) {
                     request.route = step.route;
                 }
                 activeRoute = step.route || null;
-                if (error) {
-                    if (step.layer.handle.length !== 4) continue;
-                    return step.layer.handleError(error, request, response, next);
+                const handle = step.layer.handle;
+                if (error && handle.length !== 4) continue;
+                if (!error && handle.length === 4) continue;
+                try {
+                    const returned = error
+                        ? handle(error, request, response, next)
+                        : handle(request, response, next);
+                    if (returned && typeof returned.then === "function") {
+                        returned.then(undefined, rejection => next(
+                            rejection || new Error("Rejected promise")
+                        ));
+                    }
+                    return;
+                } catch (thrown) {
+                    error = thrown;
                 }
-                if (step.layer.handle.length === 4) continue;
-                return step.layer.handleRequest(request, response, next);
             }
             return done(error);
         }
     };
-    return listener;
+
+    router.handle = function canaryoExpressHandle(request, response, done) {
+        const plan = planFor(request);
+        if (!plan) return originalHandle.call(router, request, response, done);
+        return runPlan(plan, request, response, done);
+    };
+
+    function canaryoExpressApplication(request, response) {
+        const plan = planFor(request);
+        if (!plan) {
+            // Express replaces the prototypes in app.handle. Materialize the defaults that the
+            // native bridge normally inherits from its per-server templates before that happens.
+            materializeBridgeDefaults(request, response);
+            return listener(request, response);
+        }
+
+        if (listener.settings["x-powered-by"] !== false) {
+            if (directResponseHeaders) response.__canaryoHeaders["x-powered-by"] = "Express";
+            else response.setHeader("X-Powered-By", "Express");
+        }
+        response.locals = Object.create(null);
+        if (plan.direct) {
+            request.next = undefined;
+            request.baseUrl = request.baseUrl || "";
+            request.originalUrl = request.originalUrl || request.url;
+            request.params = {};
+            request.route = plan.direct.route;
+            try {
+                const returned = plan.direct.layer.handle(request, response);
+                if (returned && typeof returned.then === "function") {
+                    returned.then(undefined, error => {
+                        if (response.writableEnded) return;
+                        response.statusCode = 500;
+                        response.setHeader("content-type", "text/plain; charset=utf-8");
+                        response.end(error ? "Internal Server Error" : "Rejected promise");
+                    });
+                }
+            } catch (error) {
+                if (!response.writableEnded) {
+                    response.statusCode = 500;
+                    response.setHeader("content-type", "text/plain; charset=utf-8");
+                    response.end("Internal Server Error");
+                }
+            }
+            return;
+        }
+        return runPlan(plan, request, response, error => {
+            if (response.writableEnded) return;
+            response.statusCode = error ? 500 : 404;
+            response.setHeader("content-type", "text/plain; charset=utf-8");
+            response.end(error ? "Internal Server Error" : `Cannot ${request.method} ${request.url}`);
+        });
+    }
+    Object.defineProperties(canaryoExpressApplication, {
+        __canaryoRequestPrototype: { value: listener.request },
+        __canaryoResponsePrototype: { value: listener.response }
+    });
+    return canaryoExpressApplication;
 }
 
 const httpModule = Object.freeze({
@@ -935,6 +1161,10 @@ const httpModule = Object.freeze({
                             ? Math.max(1, Math.trunc(currentServer.maxRequestSize))
                             : 1024 * 1024
                     });
+                    listenArguments[3] = requestListener.__canaryoRequestPrototype
+                        || listenArguments[3];
+                    listenArguments[4] = requestListener.__canaryoResponsePrototype
+                        || listenArguments[4];
                     __canaryoListen(...listenArguments);
                     currentServer.listening = false;
                     const callbacks = currentServer.__canaryoCloseCallbacks.splice(0);
@@ -954,10 +1184,17 @@ const httpModule = Object.freeze({
             close(callback) {
                 if (typeof callback === "function") this.__canaryoCloseCallbacks.push(callback);
                 this.__canaryoCloseRequested = true;
+                __canaryoMarkServerBusy();
                 return this;
             },
-            closeAllConnections() { this.__canaryoCloseAllConnectionsRequested = true; },
-            closeIdleConnections() { this.__canaryoCloseIdleConnectionsRequested = true; }
+            closeAllConnections() {
+                this.__canaryoCloseAllConnectionsRequested = true;
+                __canaryoMarkServerBusy();
+            },
+            closeIdleConnections() {
+                this.__canaryoCloseIdleConnectionsRequested = true;
+                __canaryoMarkServerBusy();
+            }
         };
         const EventEmitter = ensureHttpEventPrototypes();
         EventEmitter.call(server);
@@ -1114,9 +1351,16 @@ globalThis.__canaryoServerControl = () => {
     }
     return control;
 };
+globalThis.__canaryoServerTick = () => {
+    const pending = globalThis.__canaryoPollHttpRequests();
+    const timer = Math.max(-2147483648, Math.min(2147483647, globalThis.__canaryoRunTimers()));
+    const flags = globalThis.__canaryoServerControl() | (pending > 0 ? 8 : 0);
+    return (timer + 2147483648) * 16 + flags;
+};
 })();
 "#;
 
+#[cfg(test)]
 const POLYFILLS: &str = concat!(
     include_str!("polyfills/00_web_events.part.js"),
     include_str!("polyfills/10_buffer_text.part.js"),
@@ -1130,27 +1374,46 @@ const POLYFILLS: &str = concat!(
     include_str!("polyfills/90_crypto_compression_registry.part.js"),
 );
 
+const RUNTIME_BYTECODE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/runtime.qbc"));
+
 pub fn execute(path: &str, arguments: &[String]) -> Result<u8, String> {
+    let startup_started = Instant::now();
+    let profile_startup = |phase: &str| {
+        if env::var_os("CANARYO_PROFILE_STARTUP").is_some() {
+            eprintln!("canaryo startup {phase}: {:.2?}", startup_started.elapsed());
+        }
+    };
     fs::metadata(path).map_err(|error| format!("não foi possível ler {path}: {error}"))?;
     let entry = Path::new(path)
         .canonicalize()
         .map_err(|error| format!("não foi possível resolver {path}: {error}"))?;
     let runtime = Runtime::new().map_err(|error| format!("erro ao criar runtime: {error}"))?;
-    runtime.set_gc_threshold(8 * 1024 * 1024);
+    let gc_threshold = env::var("CANARYO_GC_THRESHOLD")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(4 * 1024 * 1024);
+    runtime.set_gc_threshold(gc_threshold);
     runtime.set_loader(esm::NodeResolver, esm::NodeLoader);
     let context =
         Context::full(&runtime).map_err(|error| format!("erro ao criar contexto: {error}"))?;
+    profile_startup("context");
 
     context.with(|context| {
         install_host_globals(&context, path, arguments)?;
-        context
-            .eval::<(), _>(BOOTSTRAP)
+        profile_startup("host-globals");
+        // The bytecode is generated by build.rs with the exact same QuickJS version and is
+        // embedded in the executable, so the unsafe loader never receives untrusted bytes.
+        let (_, initialization) = unsafe { Module::load(context.clone(), RUNTIME_BYTECODE) }
+            .catch(&context)
+            .map_err(|error| error.to_string())?
+            .eval()
             .catch(&context)
             .map_err(|error| error.to_string())?;
-        context
-            .eval::<(), _>(POLYFILLS)
+        initialization
+            .finish::<()>()
             .catch(&context)
             .map_err(|error| error.to_string())?;
+        profile_startup("runtime-bytecode");
         let module_evaluation: Option<Promise> = if modules::is_esm_path(&entry) {
             let source = fs::read(&entry).map_err(|error| error.to_string())?;
             Some(
@@ -1167,6 +1430,7 @@ pub fn execute(path: &str, arguments: &[String]) -> Result<u8, String> {
                 .call::<_, ()>((entry.to_string_lossy().as_ref(),))
                 .catch(&context)
                 .map_err(|error| error.to_string())?;
+            profile_startup("entry-module");
             None
         };
 
@@ -1320,6 +1584,11 @@ fn install_host_globals<'js>(
         .map_err(|error| error.to_string())?;
     globals
         .set("__canaryoWriteError", write_error)
+        .map_err(|error| error.to_string())?;
+    let mark_server_busy = Function::new(context.clone(), http::mark_server_busy)
+        .map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoMarkServerBusy", mark_server_busy)
         .map_err(|error| error.to_string())?;
     let performance_started = Instant::now();
     let performance_now = Function::new(context.clone(), move || {

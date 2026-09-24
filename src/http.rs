@@ -1,8 +1,12 @@
 use std::{
+    borrow::Cow,
     collections::{HashMap, VecDeque},
     io::{Read, Write},
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -10,22 +14,30 @@ use base64::Engine;
 use mio::{Events, Interest, Poll, Token, net::TcpStream};
 use rquickjs::function::This;
 use rquickjs::{Array, Coerced, Ctx, Exception, Function, Object, Result, TypedArray};
+use smallvec::SmallVec;
 
 const DEFAULT_MAX_REQUEST_SIZE: usize = 1024 * 1024;
 const MAX_HEADER_SIZE: usize = 64 * 1024;
 const MAX_ASYNC_RESPONSE_WAIT: Duration = Duration::from_secs(30);
 const LISTENER: Token = Token(0);
 const REQUEST_TOO_LARGE_MESSAGE: &str = "request body exceeds the configured limit";
+static SERVER_BUSY: AtomicBool = AtomicBool::new(false);
+type RequestHeaders = SmallVec<[(Cow<'static, str>, Cow<'static, str>); 4]>;
+
+pub(crate) fn mark_server_busy() {
+    SERVER_BUSY.store(true, Ordering::Relaxed);
+}
 
 struct RequestHead {
-    method: String,
-    url: String,
-    version: String,
-    headers: Vec<(String, String)>,
+    method: Cow<'static, str>,
+    url: Cow<'static, str>,
+    version: Cow<'static, str>,
+    headers: RequestHeaders,
 }
 
 enum InboundEvent {
     Head(RequestHead),
+    Complete(RequestHead),
     Data(Vec<u8>),
     End(Vec<(String, String)>),
 }
@@ -85,6 +97,7 @@ struct Connection<'js> {
     incoming_request: Option<Object<'js>>,
     pending_responses: VecDeque<PendingResponse<'js>>,
     reader: ConnectionReader,
+    inbound_events: Vec<InboundEvent>,
     outgoing: Vec<u8>,
     written: usize,
     registered: bool,
@@ -341,31 +354,45 @@ fn listen_with_config<'js>(
     let mut events = Events::with_capacity(1024);
     let mut connections = HashMap::new();
     let mut next_token = 1;
-    let run_timers: Function = context.globals().get("__canaryoRunTimers")?;
     let restore_timer_context: Function = context.globals().get("__canaryoRestoreTimerContext")?;
-    let poll_http_requests: Function = context.globals().get("__canaryoPollHttpRequests")?;
-    let server_control: Function = context.globals().get("__canaryoServerControl")?;
+    let server_tick: Function = context.globals().get("__canaryoServerTick")?;
     let mut closing = false;
+    let request_template = request_template(&context, &bindings.request_prototype)?;
+    let response_template = response_template(&context, &bindings.response_prototype)?;
     bindings.on_listening.call::<_, ()>(())?;
 
     loop {
         while context.execute_pending_job() {}
-        let pending_http_requests = poll_http_requests.call::<_, usize>(())?;
-        while context.execute_pending_job() {}
-        let timer_result = run_timers.call::<_, i64>(())?;
+        let server_was_busy = SERVER_BUSY.swap(false, Ordering::AcqRel);
+        let (pending_http_requests, control, timer_result) = if server_was_busy {
+            let tick = server_tick.call::<_, i64>(())?;
+            let flags = (tick & 15) as u8;
+            let pending = flags & 8 != 0;
+            let control = flags & 7;
+            let timer = (tick >> 4) - 2_147_483_648;
+            if pending || control != 0 || timer != -1 {
+                SERVER_BUSY.store(true, Ordering::Release);
+            }
+            (pending, control, timer)
+        } else {
+            (false, 0, -1)
+        };
         let timer_delay = match timer_result {
             -1 | -2 => None,
             value if value < -2 => Some(Duration::from_millis((-value - 3) as u64)),
             value => Some(Duration::from_millis(value as u64)),
         };
+        let busy_before_jobs = SERVER_BUSY.load(Ordering::Acquire);
         while context.execute_pending_job() {}
         if timer_result < -1 {
             restore_timer_context.call::<_, ()>(())?;
         }
+        if control == 0 && !busy_before_jobs && SERVER_BUSY.load(Ordering::Acquire) {
+            continue;
+        }
         if connections.values().any(Connection::needs_progress) {
             progress_connections(poll.registry(), &mut connections)?;
         }
-        let control = server_control.call::<_, u8>(())?;
         if apply_connection_action(control, &mut connections)? {
             progress_connections(poll.registry(), &mut connections)?;
         }
@@ -381,7 +408,7 @@ fn listen_with_config<'js>(
             break;
         }
         let response_delay = next_response_deadline(&connections);
-        let poll_delay = if pending_http_requests > 0 {
+        let poll_delay = if pending_http_requests {
             Some(
                 timer_delay
                     .unwrap_or(Duration::from_millis(2))
@@ -416,35 +443,25 @@ fn listen_with_config<'js>(
 
             let token = event.token();
             let mut remove = event.is_error() || event.is_write_closed();
-            if event.is_readable()
-                && !remove
-                && let Some(connection) = connections.get_mut(&token)
-                && !connection.request_paused()?
-            {
-                let read_closed = read_and_dispatch_requests(
-                    &context,
-                    &bindings.handler,
-                    &bindings.request_prototype,
-                    &bindings.response_prototype,
-                    connection,
-                )?;
-                connection.read_closed |= read_closed || event.is_read_closed();
-                connection.read_paused = connection.request_paused()?;
-                if connection.flush().is_err() {
+            if let Some(connection) = connections.get_mut(&token) {
+                if event.is_readable() && !remove && !connection.request_paused()? {
+                    let read_closed = read_and_dispatch_requests(
+                        &context,
+                        &bindings.handler,
+                        &request_template,
+                        &response_template,
+                        connection,
+                    )?;
+                    connection.read_closed |= read_closed || event.is_read_closed();
+                    connection.read_paused = connection.request_paused()?;
+                    if connection.flush().is_err() {
+                        remove = true;
+                    }
+                }
+
+                if event.is_writable() && !remove && connection.flush().is_err() {
                     remove = true;
                 }
-            }
-
-            if event.is_writable()
-                && !remove
-                && connections
-                    .get_mut(&token)
-                    .is_none_or(|connection| connection.flush().is_err())
-            {
-                remove = true;
-            }
-
-            if let Some(connection) = connections.get_mut(&token) {
                 if connection.outgoing.is_empty()
                     && connection.pending_responses.is_empty()
                     && (connection.close_after_write || connection.read_closed)
@@ -546,6 +563,7 @@ fn accept_connections<'js>(
                             incoming_request: None,
                             pending_responses: VecDeque::new(),
                             reader: ConnectionReader::new(bindings.options.max_request_size),
+                            inbound_events: Vec::with_capacity(4),
                             outgoing: Vec::with_capacity(512),
                             written: 0,
                             registered: true,
@@ -611,9 +629,10 @@ impl Connection<'_> {
     }
 
     fn next_inbound(&mut self) -> std::io::Result<ConnectionRead> {
-        let events = self.reader.parse_events()?;
-        if !events.is_empty() {
-            return Ok(ConnectionRead::Events(events));
+        self.inbound_events.clear();
+        self.reader.parse_events(&mut self.inbound_events)?;
+        if !self.inbound_events.is_empty() {
+            return Ok(ConnectionRead::Events);
         }
 
         let mut chunk = [0_u8; 16 * 1024];
@@ -621,11 +640,11 @@ impl Connection<'_> {
             Ok(0) => Ok(ConnectionRead::Closed),
             Ok(read) => {
                 self.reader.push(&chunk[..read])?;
-                let events = self.reader.parse_events()?;
-                if events.is_empty() {
+                self.reader.parse_events(&mut self.inbound_events)?;
+                if self.inbound_events.is_empty() {
                     Ok(ConnectionRead::Progress)
                 } else {
-                    Ok(ConnectionRead::Events(events))
+                    Ok(ConnectionRead::Events)
                 }
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -668,7 +687,7 @@ impl Connection<'_> {
 }
 
 enum ConnectionRead {
-    Events(Vec<InboundEvent>),
+    Events,
     Progress,
     WouldBlock,
     Closed,
@@ -707,10 +726,12 @@ fn read_and_dispatch_requests<'js>(
             }
         };
         match read {
-            ConnectionRead::Events(events) => {
+            ConnectionRead::Events => {
+                let mut events = std::mem::take(&mut connection.inbound_events);
                 let mut progressed_at_end = false;
-                for event in events {
-                    let ends_request = matches!(&event, InboundEvent::End(_));
+                for event in events.drain(..) {
+                    let ends_request =
+                        matches!(&event, InboundEvent::Complete(_) | InboundEvent::End(_));
                     dispatch_inbound_event(
                         context,
                         handler,
@@ -727,6 +748,7 @@ fn read_and_dispatch_requests<'js>(
                         progressed_at_end = false;
                     }
                 }
+                connection.inbound_events = events;
                 if !progressed_at_end {
                     while context.execute_pending_job() {}
                     collect_completed_responses(connection)?;
@@ -791,6 +813,25 @@ fn dispatch_inbound_event<'js>(
                 &connection.socket,
             )?;
             connection.incoming_request = Some(request_object);
+            connection.pending_responses.push_back(PendingResponse {
+                object: response_object,
+                keep_alive,
+                suppress_body,
+                deadline: Instant::now() + MAX_ASYNC_RESPONSE_WAIT,
+            });
+        }
+        InboundEvent::Complete(request) => {
+            let keep_alive = request.keep_alive();
+            let suppress_body = request.method == "HEAD";
+            let (request_object, response_object) = begin_request(
+                context,
+                handler,
+                &request,
+                request_prototype,
+                response_prototype,
+                &connection.socket,
+            )?;
+            finish_request_body(context, request_object, &[])?;
             connection.pending_responses.push_back(PendingResponse {
                 object: response_object,
                 keep_alive,
@@ -904,39 +945,33 @@ fn request_to_js<'js>(
 ) -> Result<Object<'js>> {
     let object = Object::new(context.clone())?;
     let headers = Object::new(context.clone())?;
-    let raw_headers = Array::new(context.clone())?;
 
-    for (index, (name, value)) in request.headers.iter().enumerate() {
-        headers.set(name.as_str(), value.as_str())?;
-        raw_headers.set(index * 2, name.as_str())?;
-        raw_headers.set(index * 2 + 1, value.as_str())?;
+    for (name, value) in &request.headers {
+        headers.set(name.as_ref(), value.as_ref())?;
     }
-    let mut version_parts = request.version.split('.');
-    let version_major = version_parts
-        .next()
-        .unwrap_or("1")
-        .parse::<u8>()
-        .unwrap_or(1);
-    let version_minor = version_parts
-        .next()
-        .unwrap_or("1")
-        .parse::<u8>()
-        .unwrap_or(1);
-    object.set("method", request.method.as_str())?;
-    object.set("url", request.url.as_str())?;
-    object.set("httpVersion", request.version.as_str())?;
-    object.set("httpVersionMajor", version_major)?;
-    object.set("httpVersionMinor", version_minor)?;
+    if request.method != "GET" {
+        object.set("method", request.method.as_ref())?;
+    }
+    if request.url != "/" {
+        object.set("url", request.url.as_ref())?;
+    }
+    if request.version != "1.1" {
+        let mut version_parts = request.version.split('.');
+        let version_major = version_parts
+            .next()
+            .unwrap_or("1")
+            .parse::<u8>()
+            .unwrap_or(1);
+        let version_minor = version_parts
+            .next()
+            .unwrap_or("1")
+            .parse::<u8>()
+            .unwrap_or(1);
+        object.set("httpVersion", request.version.as_ref())?;
+        object.set("httpVersionMajor", version_major)?;
+        object.set("httpVersionMinor", version_minor)?;
+    }
     object.set("headers", headers)?;
-    object.set("rawHeaders", raw_headers)?;
-    object.set("trailers", Object::new(context.clone())?)?;
-    object.set("rawTrailers", Array::new(context.clone())?)?;
-    object.set("aborted", false)?;
-    object.set("complete", false)?;
-    object.set("destroyed", false)?;
-    object.set("readable", true)?;
-    object.set("readableEnded", false)?;
-    object.set("__canaryoPaused", false)?;
     object.set("socket", socket.clone())?;
     object.set("connection", socket.clone())?;
     object.set_prototype(Some(prototype))?;
@@ -972,6 +1007,18 @@ fn finish_request_body<'js>(
         request.set("trailers", trailer_object)?;
         request.set("rawTrailers", raw_trailers)?;
     }
+    let events: Option<Object> = request.get("_events")?;
+    let has_completion_listeners = if let Some(events) = events {
+        events.contains_key("end")? || events.contains_key("close")?
+    } else {
+        false
+    };
+    if !has_completion_listeners && !request.get::<_, bool>("__canaryoPaused")? {
+        request.set("readable", false)?;
+        request.set("readableEnded", true)?;
+        request.set("complete", true)?;
+        return Ok(());
+    }
     let finish: Function = request.get("__canaryoFinishBody")?;
     finish.call::<_, ()>((This(request),))
 }
@@ -997,18 +1044,41 @@ fn socket_to_js<'js>(
 fn response_to_js<'js>(context: &Ctx<'js>, prototype: &Object<'js>) -> Result<Object<'js>> {
     let object = Object::new(context.clone())?;
     let headers = Object::new(context.clone())?;
-    object.set("statusCode", 200)?;
-    object.set("statusMessage", "")?;
-    object.set("headersSent", false)?;
-    object.set("writableEnded", false)?;
-    object.set("writableFinished", false)?;
-    object.set("finished", false)?;
-    object.set("destroyed", false)?;
     object.set("__canaryoHeaders", headers)?;
-    object.set("__canaryoBody", Array::new(context.clone())?)?;
-    object.set("__canaryoTextBody", "")?;
     object.set_prototype(Some(prototype))?;
     Ok(object)
+}
+
+fn request_template<'js>(context: &Ctx<'js>, prototype: &Object<'js>) -> Result<Object<'js>> {
+    let template = Object::new(context.clone())?;
+    template.set("method", "GET")?;
+    template.set("url", "/")?;
+    template.set("httpVersion", "1.1")?;
+    template.set("httpVersionMajor", 1)?;
+    template.set("httpVersionMinor", 1)?;
+    template.set("aborted", false)?;
+    template.set("complete", false)?;
+    template.set("destroyed", false)?;
+    template.set("readable", true)?;
+    template.set("readableEnded", false)?;
+    template.set("__canaryoPaused", false)?;
+    template.set_prototype(Some(prototype))?;
+    Ok(template)
+}
+
+fn response_template<'js>(context: &Ctx<'js>, prototype: &Object<'js>) -> Result<Object<'js>> {
+    let template = Object::new(context.clone())?;
+    template.set("statusCode", 200)?;
+    template.set("statusMessage", "")?;
+    template.set("headersSent", false)?;
+    template.set("writableEnded", false)?;
+    template.set("writableFinished", false)?;
+    template.set("finished", false)?;
+    template.set("destroyed", false)?;
+    template.set("__canaryoTextBody", "")?;
+    template.set("__canaryoBody", Option::<Array>::None)?;
+    template.set_prototype(Some(prototype))?;
+    Ok(template)
 }
 
 fn response_from_js(response: &Object<'_>) -> Result<Response> {
@@ -1035,14 +1105,16 @@ fn response_from_js(response: &Object<'_>) -> Result<Response> {
     }
     let text_body: String = response.get("__canaryoTextBody")?;
     let body = if text_body.is_empty() {
-        let body_chunks: Array = response.get("__canaryoBody")?;
+        let body_chunks: Option<Array> = response.get("__canaryoBody")?;
         let mut body = Vec::new();
-        for chunk in body_chunks.iter::<TypedArray<u8>>() {
-            let chunk = chunk?;
-            let bytes = chunk.as_bytes().ok_or_else(|| {
-                Exception::throw_message(response.ctx(), "response contains a detached buffer")
-            })?;
-            body.extend_from_slice(bytes);
+        if let Some(body_chunks) = body_chunks {
+            for chunk in body_chunks.iter::<TypedArray<u8>>() {
+                let chunk = chunk?;
+                let bytes = chunk.as_bytes().ok_or_else(|| {
+                    Exception::throw_message(response.ctx(), "response contains a detached buffer")
+                })?;
+                body.extend_from_slice(bytes);
+            }
         }
         body
     } else {
@@ -1063,7 +1135,7 @@ impl RequestHead {
             .headers
             .iter()
             .find(|(name, _)| name == "connection")
-            .map(|(_, value)| value.as_str());
+            .map(|(_, value)| value.as_ref());
         let has_token = |token: &str| {
             connection.is_some_and(|value| {
                 value
@@ -1103,8 +1175,7 @@ impl ConnectionReader {
         Ok(())
     }
 
-    fn parse_events(&mut self) -> std::io::Result<Vec<InboundEvent>> {
-        let mut events = Vec::new();
+    fn parse_events(&mut self, events: &mut Vec<InboundEvent>) -> std::io::Result<()> {
         loop {
             match self.state {
                 RequestBodyState::Head => {
@@ -1117,11 +1188,12 @@ impl ConnectionReader {
                         self.max_request_size,
                     )?;
                     self.buffered.drain(..header_end);
-                    self.state = body_state;
-                    events.push(InboundEvent::Head(request));
-                    if matches!(self.state, RequestBodyState::Fixed { remaining: 0 }) {
+                    if matches!(body_state, RequestBodyState::Fixed { remaining: 0 }) {
                         self.state = RequestBodyState::Head;
-                        events.push(InboundEvent::End(Vec::new()));
+                        events.push(InboundEvent::Complete(request));
+                    } else {
+                        self.state = body_state;
+                        events.push(InboundEvent::Head(request));
                     }
                 }
                 RequestBodyState::Fixed { remaining } => {
@@ -1220,7 +1292,7 @@ impl ConnectionReader {
                 }
             }
         }
-        Ok(events)
+        Ok(())
     }
 }
 
@@ -1235,17 +1307,51 @@ fn parse_request_head(
         std::io::Error::new(std::io::ErrorKind::InvalidData, "linha HTTP ausente")
     })?;
     let mut request_parts = request_line.split_whitespace();
-    let method = required_part(request_parts.next(), "método HTTP ausente")?.to_string();
-    let url = required_part(request_parts.next(), "URL ausente")?.to_string();
-    let version = required_part(request_parts.next(), "versão HTTP ausente")?
+    let method = match required_part(request_parts.next(), "método HTTP ausente")? {
+        "GET" => Cow::Borrowed("GET"),
+        "POST" => Cow::Borrowed("POST"),
+        "HEAD" => Cow::Borrowed("HEAD"),
+        method => Cow::Owned(method.to_string()),
+    };
+    let url = match required_part(request_parts.next(), "URL ausente")? {
+        "/" => Cow::Borrowed("/"),
+        url => Cow::Owned(url.to_string()),
+    };
+    let version = match required_part(request_parts.next(), "versão HTTP ausente")?
         .trim_start_matches("HTTP/")
-        .to_string();
-    let mut headers = Vec::new();
+    {
+        "1.1" => Cow::Borrowed("1.1"),
+        "1.0" => Cow::Borrowed("1.0"),
+        version => Cow::Owned(version.to_string()),
+    };
+    let mut headers = RequestHeaders::new();
     for line in lines {
         let (name, value) = line.split_once(':').ok_or_else(|| {
             std::io::Error::new(std::io::ErrorKind::InvalidData, "cabeçalho HTTP inválido")
         })?;
-        headers.push((name.trim().to_ascii_lowercase(), value.trim().to_string()));
+        let name = name.trim();
+        let name = if name.eq_ignore_ascii_case("host") {
+            Cow::Borrowed("host")
+        } else if name.eq_ignore_ascii_case("connection") {
+            Cow::Borrowed("connection")
+        } else if name.eq_ignore_ascii_case("content-type") {
+            Cow::Borrowed("content-type")
+        } else if name.eq_ignore_ascii_case("content-length") {
+            Cow::Borrowed("content-length")
+        } else if name.eq_ignore_ascii_case("transfer-encoding") {
+            Cow::Borrowed("transfer-encoding")
+        } else {
+            Cow::Owned(name.to_ascii_lowercase())
+        };
+        let value = match value.trim() {
+            "127.0.0.1" => Cow::Borrowed("127.0.0.1"),
+            "keep-alive" => Cow::Borrowed("keep-alive"),
+            "close" => Cow::Borrowed("close"),
+            "application/json" => Cow::Borrowed("application/json"),
+            "chunked" => Cow::Borrowed("chunked"),
+            value => Cow::Owned(value.to_string()),
+        };
+        headers.push((name, value));
     }
     let content_length = headers
         .iter()
@@ -1475,7 +1581,7 @@ mod tests {
             method: "GET".into(),
             url: "/".into(),
             version: "1.1".into(),
-            headers: Vec::new(),
+            headers: SmallVec::new(),
         };
 
         assert!(request.keep_alive());
@@ -1490,11 +1596,12 @@ mod tests {
             )
             .unwrap();
 
-        let events = reader.parse_events().unwrap();
+        let mut events = Vec::new();
+        reader.parse_events(&mut events).unwrap();
         let heads = events
             .iter()
             .filter_map(|event| match event {
-                InboundEvent::Head(request) => Some(request),
+                InboundEvent::Head(request) | InboundEvent::Complete(request) => Some(request),
                 _ => None,
             })
             .collect::<Vec<_>>();
@@ -1504,7 +1611,9 @@ mod tests {
         assert!(heads[0].keep_alive());
         assert_eq!(heads[1].url, "/second");
         assert!(!heads[1].keep_alive());
-        assert!(reader.parse_events().unwrap().is_empty());
+        events.clear();
+        reader.parse_events(&mut events).unwrap();
+        assert!(events.is_empty());
     }
 
     #[test]
@@ -1516,7 +1625,8 @@ mod tests {
             )
             .unwrap();
 
-        let events = reader.parse_events().unwrap();
+        let mut events = Vec::new();
+        reader.parse_events(&mut events).unwrap();
         let body = events
             .iter()
             .filter_map(|event| match event {
@@ -1531,7 +1641,11 @@ mod tests {
             _ => None,
         });
         let next = events.iter().find_map(|event| match event {
-            InboundEvent::Head(request) if request.url == "/next" => Some(request),
+            InboundEvent::Head(request) | InboundEvent::Complete(request)
+                if request.url == "/next" =>
+            {
+                Some(request)
+            }
             _ => None,
         });
 

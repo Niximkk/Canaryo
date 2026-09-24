@@ -493,6 +493,7 @@
         this.pending = true;
         this.destroyed = false;
         this.readyState = "opening";
+        __canaryoMarkServerBusy();
         this._canaryoNetId = __canaryoNetConnect(String(options.host), Number(options.port));
         netSockets.set(this._canaryoNetId, this);
         return this;
