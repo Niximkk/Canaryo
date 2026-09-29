@@ -1234,18 +1234,31 @@ fn serves_static_files_from_express() {
 #[ignore = "requires npm ci in fixtures/express-basic"]
 fn parses_an_express_json_request_body() {
     let (_server, mut stream) = start_fixture("fixtures/express-basic/server.js");
+    let address = stream.peer_addr().unwrap();
 
     stream
         .write_all(
-            b"POST /echo HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: 19\r\nConnection: close\r\n\r\n{\"message\":\"hello\"}",
+            b"POST /echo HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: 13\r\nConnection: close\r\n\r\n{\"z\":1,\"a\":2}",
         )
         .unwrap();
     let response = read_response(&mut stream);
 
     assert!(response.starts_with("HTTP/1.1 200 OK"));
     assert!(
-        response.ends_with(r#"{"body":{"message":"hello"}}"#),
+        response.ends_with(r#"{"body":{"z":1,"a":2}}"#),
         "unexpected response: {response}"
+    );
+
+    let mut malformed = TcpStream::connect(address).unwrap();
+    malformed
+        .write_all(
+            b"POST /echo HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"broken\":}",
+        )
+        .unwrap();
+    let response = read_response(&mut malformed);
+    assert!(
+        response.starts_with("HTTP/1.1 400 Bad Request"),
+        "{response}"
     );
 }
 

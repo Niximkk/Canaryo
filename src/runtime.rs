@@ -16,7 +16,7 @@ use std::{
 use base64::Engine;
 use ring::rand::SecureRandom;
 use rquickjs::{
-    Array, CatchResultExt, Context, Function, Module, Object, Promise, Runtime, TypedArray,
+    Array, CatchResultExt, Context, Function, Module, Object, Promise, Runtime, TypedArray, Value,
 };
 use subtle::ConstantTimeEq;
 
@@ -691,16 +691,16 @@ function optimizeExpressResponse(listener) {
             if (arguments.length !== 2 || this.setHeader !== nativeSetHeader) {
                 return originalSet.apply(this, arguments);
             }
-            const key = `${String(field)}\0${Array.isArray(value) ? JSON.stringify(value) : String(value)}`;
+            const key = String(field);
             const normalized = normalizedHeaders.get(key);
-            if (normalized) {
+            if (normalized && normalized.input === value && value !== Object(value)) {
                 this.__canaryoHeaders[normalized.name] = normalized.value;
                 return this;
             }
             originalSet.call(this, field, value);
-            if (normalizedHeaders.size < 128) {
+            if (value !== Object(value) && normalizedHeaders.size < 128) {
                 const name = String(field).toLowerCase();
-                normalizedHeaders.set(key, { name, value: this.__canaryoHeaders[name] });
+                normalizedHeaders.set(key, { input: value, name, value: this.__canaryoHeaders[name] });
             }
             return this;
         };
@@ -745,7 +745,8 @@ function optimizeExpressResponse(listener) {
             return this;
         }
 
-        let metadata = cacheDefaultEtag ? jsonMetadata.get(body) : undefined;
+        const cacheable = cacheDefaultEtag && body.length <= 65536;
+        let metadata = cacheable ? jsonMetadata.get(body) : undefined;
         if (!metadata) {
             if (cacheDefaultEtag) {
                 const generated = __canaryoExpressWeakEtag(body);
@@ -757,8 +758,8 @@ function optimizeExpressResponse(listener) {
                     etag: bytes ? etagFunction(bytes) : undefined
                 };
             }
-            if (cacheDefaultEtag && body.length <= 16384) {
-                if (jsonMetadata.size >= 128) jsonMetadata.delete(jsonMetadata.keys().next().value);
+            if (cacheable) {
+                if (jsonMetadata.size >= 32) jsonMetadata.delete(jsonMetadata.keys().next().value);
                 jsonMetadata.set(body, metadata);
             }
         }
@@ -802,6 +803,98 @@ function optimizeExpressResponse(listener) {
         return this;
     };
     return listener;
+}
+
+function fastDefaultJsonParser(original) {
+    if (!original.__canaryoDefaultJsonParser) return original;
+    return function canaryoDefaultJsonParser(request, response, next) {
+        if (request.complete) return next();
+        const contentType = String(request.headers["content-type"] || "").toLowerCase();
+        const encoding = String(request.headers["content-encoding"] || "identity").toLowerCase();
+        if (!/^application\/(?:json|[^;]+\+json)(?:\s*;|$)/.test(contentType)
+            || encoding !== "identity"
+            || (/charset\s*=/.test(contentType) && !/charset\s*=\s*"?utf-?8"?(?:\s*;|\s*$)/.test(contentType))) {
+            return original(request, response, next);
+        }
+
+        const declaredLength = Number(request.headers["content-length"] || 0);
+        if (declaredLength > 102400) return original(request, response, next);
+        const chunks = [];
+        let length = 0;
+        let finished = false;
+        const cleanup = () => {
+            request.removeListener("data", onData);
+            request.removeListener("end", onEnd);
+            request.removeListener("aborted", onAborted);
+            request.removeListener("error", onError);
+        };
+        const fail = error => {
+            if (finished) return;
+            finished = true;
+            cleanup();
+            next(error);
+        };
+        const onData = chunk => {
+            if (finished) return;
+            length += chunk.length;
+            if (length > 102400) {
+                const error = new Error("request entity too large");
+                error.status = error.statusCode = 413;
+                error.type = "entity.too.large";
+                return fail(error);
+            }
+            chunks.push(chunk);
+        };
+        const onEnd = () => {
+            if (finished) return;
+            finished = true;
+            cleanup();
+            if (length === 0) {
+                request.body = {};
+                return next();
+            }
+            const body = chunks.length === 1 ? chunks[0] : Buffer.concat(chunks, length);
+            let first = 0;
+            while (first < body.length
+                && (body[first] === 0x20 || body[first] === 0x09
+                    || body[first] === 0x0a || body[first] === 0x0d)) first++;
+            if (body[first] !== 0x7b && body[first] !== 0x5b) {
+                const error = new SyntaxError("Unexpected token in JSON body");
+                error.status = error.statusCode = 400;
+                error.type = "entity.parse.failed";
+                return next(error);
+            }
+            try {
+                const parsed = __canaryoParseJsonBytes(body);
+                if (parsed.error !== undefined) {
+                    const error = new SyntaxError(parsed.error);
+                    error.status = error.statusCode = 400;
+                    error.type = "entity.parse.failed";
+                    return next(error);
+                }
+                request.body = parsed.value;
+                return next();
+            } catch (cause) {
+                const error = new Error(cause && cause.message
+                    ? cause.message
+                    : "Unable to parse JSON body");
+                error.status = error.statusCode = 400;
+                error.type = "entity.parse.failed";
+                return next(error);
+            }
+        };
+        const onAborted = () => {
+            const error = new Error("request aborted");
+            error.status = error.statusCode = 400;
+            error.type = "request.aborted";
+            fail(error);
+        };
+        const onError = error => fail(error);
+        request.on("aborted", onAborted);
+        request.on("error", onError);
+        request.on("data", onData);
+        request.on("end", onEnd);
+    };
 }
 
 function optimizeExpressRouter(listener) {
@@ -857,14 +950,26 @@ function optimizeExpressRouter(listener) {
                     break;
                 }
                 matchedRoute = true;
-                for (const routeLayer of handlers) {
-                    steps.push({ layer: routeLayer, route: layer.route });
+                for (let index = 0; index < handlers.length; index++) {
+                    const handle = fastDefaultJsonParser(handlers[index].handle);
+                    steps.push({
+                        handle,
+                        expectsError: handle.length === 4,
+                        route: layer.route,
+                        routeStart: index === 0
+                    });
                 }
                 continue;
             }
 
             if (layer.slash) {
-                steps.push({ layer });
+                const handle = fastDefaultJsonParser(layer.handle);
+                steps.push({
+                    handle,
+                    expectsError: handle.length === 4,
+                    route: null,
+                    routeStart: false
+                });
                 continue;
             }
 
@@ -883,7 +988,7 @@ function optimizeExpressRouter(listener) {
         if (safe && matchedRoute) {
             const direct = steps.length === 1
                 && steps[0].route
-                && steps[0].layer.handle.length < 3
+                && steps[0].handle.length < 3
                 ? steps[0]
                 : null;
             Object.defineProperty(steps, "direct", { value: direct });
@@ -964,14 +1069,13 @@ function optimizeExpressRouter(listener) {
                 const step = plan[index++];
                 if (skippedRoute && step.route === skippedRoute) continue;
                 skippedRoute = null;
-                if (step.route && step.route !== activeRoute) {
+                if (step.routeStart) {
                     request.params = {};
                     request.route = step.route;
                 }
                 activeRoute = step.route || null;
-                const handle = step.layer.handle;
-                if (error && handle.length !== 4) continue;
-                if (!error && handle.length === 4) continue;
+                const handle = step.handle;
+                if (Boolean(error) !== step.expectsError) continue;
                 try {
                     const returned = error
                         ? handle(error, request, response, next)
@@ -988,6 +1092,10 @@ function optimizeExpressRouter(listener) {
             }
             return done(error);
         }
+    };
+    const errorStatus = error => {
+        const status = Number(error && (error.statusCode || error.status));
+        return Number.isInteger(status) && status >= 400 && status <= 599 ? status : 500;
     };
 
     router.handle = function canaryoExpressHandle(request, response, done) {
@@ -1017,18 +1125,18 @@ function optimizeExpressRouter(listener) {
             request.params = {};
             request.route = plan.direct.route;
             try {
-                const returned = plan.direct.layer.handle(request, response);
+                const returned = plan.direct.handle(request, response);
                 if (returned && typeof returned.then === "function") {
                     returned.then(undefined, error => {
                         if (response.writableEnded) return;
-                        response.statusCode = 500;
+                        response.statusCode = errorStatus(error);
                         response.setHeader("content-type", "text/plain; charset=utf-8");
                         response.end(error ? "Internal Server Error" : "Rejected promise");
                     });
                 }
             } catch (error) {
                 if (!response.writableEnded) {
-                    response.statusCode = 500;
+                    response.statusCode = errorStatus(error);
                     response.setHeader("content-type", "text/plain; charset=utf-8");
                     response.end("Internal Server Error");
                 }
@@ -1037,7 +1145,7 @@ function optimizeExpressRouter(listener) {
         }
         return runPlan(plan, request, response, error => {
             if (response.writableEnded) return;
-            response.statusCode = error ? 500 : 404;
+            response.statusCode = error ? errorStatus(error) : 404;
             response.setHeader("content-type", "text/plain; charset=utf-8");
             response.end(error ? "Internal Server Error" : `Cannot ${request.method} ${request.url}`);
         });
@@ -1260,6 +1368,20 @@ function loadModule(filename) {
                 filename,
                 __canaryoDirname(filename)
             );
+        }
+        if (/[\\\/]body-parser[\\\/]lib[\\\/]types[\\\/]json\.js$/.test(filename)
+            && typeof module.exports === "function") {
+            const createJsonParser = module.exports;
+            module.exports = function canaryoJsonParserFactory(options) {
+                const middleware = createJsonParser(options);
+                if (options === undefined
+                    || (options && Object.keys(options).length === 0)) {
+                    Object.defineProperty(middleware, "__canaryoDefaultJsonParser", {
+                        value: true
+                    });
+                }
+                return middleware;
+            };
         }
         module.loaded = true;
         return module.exports;
@@ -1657,6 +1779,11 @@ fn install_host_globals<'js>(
         Function::new(context.clone(), decode_utf8).map_err(|error| error.to_string())?;
     globals
         .set("__canaryoDecodeUtf8", decode_utf8)
+        .map_err(|error| error.to_string())?;
+    let parse_json =
+        Function::new(context.clone(), parse_json_bytes).map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoParseJsonBytes", parse_json)
         .map_err(|error| error.to_string())?;
     let is_ip = Function::new(context.clone(), is_ip).map_err(|error| error.to_string())?;
     globals
@@ -3167,6 +3294,49 @@ fn decode_utf8(bytes: TypedArray<'_, u8>) -> rquickjs::Result<String> {
         .as_bytes()
         .ok_or_else(|| rquickjs::Error::new_from_js("detached Uint8Array", "string"))?;
     Ok(String::from_utf8_lossy(bytes).into_owned())
+}
+
+fn parse_json_bytes<'js>(
+    context: rquickjs::Ctx<'js>,
+    bytes: TypedArray<'js, u8>,
+) -> rquickjs::Result<Object<'js>> {
+    let bytes = typed_array_bytes(&context, &bytes)?;
+    let result = Object::new(context.clone())?;
+    match serde_json::from_slice(bytes) {
+        Ok(value) => result.set("value", json_value_to_js(context, value)?)?,
+        Err(error) => result.set("error", error.to_string())?,
+    }
+    Ok(result)
+}
+
+fn json_value_to_js<'js>(
+    context: rquickjs::Ctx<'js>,
+    value: serde_json::Value,
+) -> rquickjs::Result<Value<'js>> {
+    Ok(match value {
+        serde_json::Value::Null => Value::new_null(context),
+        serde_json::Value::Bool(value) => Value::new_bool(context, value),
+        serde_json::Value::Number(value) => {
+            Value::new_float(context, value.as_f64().unwrap_or_default())
+        }
+        serde_json::Value::String(value) => {
+            rquickjs::String::from_str(context, &value)?.into_value()
+        }
+        serde_json::Value::Array(values) => {
+            let result = Array::new(context.clone())?;
+            for (index, value) in values.into_iter().enumerate() {
+                result.set(index, json_value_to_js(context.clone(), value)?)?;
+            }
+            result.into_value()
+        }
+        serde_json::Value::Object(values) => {
+            let result = Object::new(context.clone())?;
+            for (name, value) in values {
+                result.set(name, json_value_to_js(context.clone(), value)?)?;
+            }
+            result.into_value()
+        }
+    })
 }
 
 fn cwd() -> String {

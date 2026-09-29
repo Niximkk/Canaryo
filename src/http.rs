@@ -23,6 +23,7 @@ const LISTENER: Token = Token(0);
 const REQUEST_TOO_LARGE_MESSAGE: &str = "request body exceeds the configured limit";
 static SERVER_BUSY: AtomicBool = AtomicBool::new(false);
 type RequestHeaders = SmallVec<[(Cow<'static, str>, Cow<'static, str>); 4]>;
+type ResponseHeaders = SmallVec<[(String, String); 8]>;
 
 pub(crate) fn mark_server_busy() {
     SERVER_BUSY.store(true, Ordering::Relaxed);
@@ -59,7 +60,7 @@ enum ChunkedBodyState {
 struct Response {
     status: u16,
     status_message: String,
-    headers: Vec<(String, String)>,
+    headers: ResponseHeaders,
     body: Vec<u8>,
 }
 
@@ -1083,9 +1084,12 @@ fn response_template<'js>(context: &Ctx<'js>, prototype: &Object<'js>) -> Result
 
 fn response_from_js(response: &Object<'_>) -> Result<Response> {
     let headers_object: Object = response.get("__canaryoHeaders")?;
-    let mut headers = Vec::new();
+    let mut headers = ResponseHeaders::new();
     for property in headers_object.props::<String, rquickjs::Value>() {
         let (name, value) = property?;
+        if name.eq_ignore_ascii_case("content-length") || name.eq_ignore_ascii_case("connection") {
+            continue;
+        }
         if let Some(values) = value.as_array() {
             let values = values
                 .iter::<Coerced<String>>()
