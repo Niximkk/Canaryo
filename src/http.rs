@@ -1,5 +1,6 @@
 use std::{
     borrow::Cow,
+    cell::RefCell,
     collections::{HashMap, VecDeque},
     io::{Read, Write},
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
@@ -13,7 +14,8 @@ use std::{
 use base64::Engine;
 use mio::{Events, Interest, Poll, Token, net::TcpStream};
 use rquickjs::function::This;
-use rquickjs::{Array, Coerced, Ctx, Exception, Function, Object, Result, TypedArray};
+use rquickjs::object::Property;
+use rquickjs::{Array, Coerced, Ctx, Exception, Function, Object, Result, TypedArray, Value};
 use smallvec::SmallVec;
 
 const DEFAULT_MAX_REQUEST_SIZE: usize = 1024 * 1024;
@@ -22,6 +24,17 @@ const MAX_ASYNC_RESPONSE_WAIT: Duration = Duration::from_secs(30);
 const LISTENER: Token = Token(0);
 const REQUEST_TOO_LARGE_MESSAGE: &str = "request body exceeds the configured limit";
 static SERVER_BUSY: AtomicBool = AtomicBool::new(false);
+struct ResponseBodyCache {
+    next_id: u64,
+    bodies: HashMap<u64, Arc<[u8]>>,
+}
+
+thread_local! {
+    static RESPONSE_BODY_CACHE: RefCell<ResponseBodyCache> = RefCell::new(ResponseBodyCache {
+        next_id: 1,
+        bodies: HashMap::new(),
+    });
+}
 type RequestHeaders = SmallVec<[(Cow<'static, str>, Cow<'static, str>); 4]>;
 type ResponseHeaders = SmallVec<[(String, String); 8]>;
 
@@ -61,7 +74,26 @@ struct Response {
     status: u16,
     status_message: String,
     headers: ResponseHeaders,
-    body: Vec<u8>,
+    body: Arc<[u8]>,
+}
+
+pub(crate) fn cache_response_body(body: String) -> u64 {
+    RESPONSE_BODY_CACHE.with_borrow_mut(|cache| {
+        let id = cache.next_id;
+        cache.next_id = cache.next_id.wrapping_add(1).max(1);
+        cache.bodies.insert(id, Arc::from(body.into_bytes()));
+        id
+    })
+}
+
+pub(crate) fn release_response_body(id: u64) {
+    RESPONSE_BODY_CACHE.with_borrow_mut(|cache| {
+        cache.bodies.remove(&id);
+    });
+}
+
+fn cached_response_body(id: u64) -> Option<Arc<[u8]>> {
+    RESPONSE_BODY_CACHE.with_borrow(|cache| cache.bodies.get(&id).cloned())
 }
 
 struct ConnectionReader {
@@ -96,6 +128,7 @@ struct Connection<'js> {
     stream: HttpStream,
     socket: Object<'js>,
     incoming_request: Option<Object<'js>>,
+    incoming_json_body: Option<Vec<u8>>,
     pending_responses: VecDeque<PendingResponse<'js>>,
     reader: ConnectionReader,
     inbound_events: Vec<InboundEvent>,
@@ -562,6 +595,7 @@ fn accept_connections<'js>(
                                 tls_config.is_some(),
                             )?,
                             incoming_request: None,
+                            incoming_json_body: None,
                             pending_responses: VecDeque::new(),
                             reader: ConnectionReader::new(bindings.options.max_request_size),
                             inbound_events: Vec::with_capacity(4),
@@ -714,7 +748,7 @@ fn read_and_dispatch_requests<'js>(
                         &mut connection.outgoing,
                         &Response {
                             status: 413,
-                            body: b"Payload Too Large".to_vec(),
+                            body: Arc::from(&b"Payload Too Large"[..]),
                             ..Response::default()
                         },
                         false,
@@ -772,6 +806,7 @@ fn abort_incoming_request(connection: &mut Connection<'_>) -> Result<()> {
     let Some(request) = connection.incoming_request.take() else {
         return Ok(());
     };
+    connection.incoming_json_body = None;
     request.set("aborted", true)?;
     request.set("destroyed", true)?;
     request.set("readable", false)?;
@@ -813,6 +848,9 @@ fn dispatch_inbound_event<'js>(
                 response_prototype,
                 &connection.socket,
             )?;
+            connection.incoming_json_body = request_object
+                .contains_key("__canaryoDirectJsonNext")?
+                .then(Vec::new);
             connection.incoming_request = Some(request_object);
             connection.pending_responses.push_back(PendingResponse {
                 object: response_object,
@@ -832,7 +870,11 @@ fn dispatch_inbound_event<'js>(
                 response_prototype,
                 &connection.socket,
             )?;
-            finish_request_body(context, request_object, &[])?;
+            if request_object.contains_key("__canaryoDirectJsonNext")? {
+                finish_direct_json_body(context, request_object, Vec::new(), &[])?;
+            } else {
+                finish_request_body(context, request_object, &[])?;
+            }
             connection.pending_responses.push_back(PendingResponse {
                 object: response_object,
                 keep_alive,
@@ -841,6 +883,10 @@ fn dispatch_inbound_event<'js>(
             });
         }
         InboundEvent::Data(body) => {
+            if let Some(json_body) = connection.incoming_json_body.as_mut() {
+                json_body.extend_from_slice(&body);
+                return Ok(());
+            }
             let request = connection.incoming_request.as_ref().ok_or_else(|| {
                 Exception::throw_message(context, "HTTP body arrived without request headers")
             })?;
@@ -850,10 +896,146 @@ fn dispatch_inbound_event<'js>(
             let request = connection.incoming_request.take().ok_or_else(|| {
                 Exception::throw_message(context, "HTTP request ended without request headers")
             })?;
-            finish_request_body(context, request, &trailers)?;
+            if let Some(body) = connection.incoming_json_body.take() {
+                finish_direct_json_body(context, request, body, &trailers)?;
+            } else {
+                finish_request_body(context, request, &trailers)?;
+            }
         }
     }
     Ok(())
+}
+
+fn finish_direct_json_body<'js>(
+    context: &Ctx<'js>,
+    request: Object<'js>,
+    body: Vec<u8>,
+    trailers: &[(String, String)],
+) -> Result<()> {
+    let next: Function = request.get("__canaryoDirectJsonNext")?;
+    if !trailers.is_empty() {
+        let trailer_object = Object::new(context.clone())?;
+        let raw_trailers = Array::new(context.clone())?;
+        for (index, (name, value)) in trailers.iter().enumerate() {
+            trailer_object.set(name.as_str(), value.as_str())?;
+            raw_trailers.set(index * 2, name.as_str())?;
+            raw_trailers.set(index * 2 + 1, value.as_str())?;
+        }
+        request.set("trailers", trailer_object)?;
+        request.set("rawTrailers", raw_trailers)?;
+    }
+    request.set("readable", false)?;
+    request.set("readableEnded", true)?;
+    request.set("complete", true)?;
+    if body.is_empty() {
+        request.set("body", Object::new(context.clone())?)?;
+        return next.call::<_, ()>(());
+    }
+
+    let first = body
+        .iter()
+        .position(|byte| !matches!(byte, b' ' | b'\t' | b'\n' | b'\r'));
+    if body.len() > 102400 || !matches!(first.map(|index| body[index]), Some(b'{' | b'[')) {
+        let error = Exception::from_message(
+            context.clone(),
+            if body.len() > 102400 {
+                "request entity too large"
+            } else {
+                "Unexpected token in JSON body"
+            },
+        )?
+        .into_object();
+        let status = if body.len() > 102400 { 413 } else { 400 };
+        error.set("status", status)?;
+        error.set("statusCode", status)?;
+        error.set(
+            "type",
+            if status == 413 {
+                "entity.too.large"
+            } else {
+                "entity.parse.failed"
+            },
+        )?;
+        return next.call::<_, ()>((error,));
+    }
+
+    let canonical = canonical_flat_json_source(&body);
+    match context.json_parse(body) {
+        Ok(value) => {
+            if let (Some((canonical, property_count)), Some(object)) =
+                (canonical, value.as_object())
+                && value.as_array().is_none()
+            {
+                let snapshot = Array::new(context.clone())?;
+                let mut index = 0;
+                let mut cacheable = true;
+                for property in object.props::<String, Value>() {
+                    let (name, value) = property?;
+                    if name.starts_with("__canaryoCanonicalFlatJson")
+                        || (!name.is_empty() && name.bytes().all(|byte| byte.is_ascii_digit()))
+                        || !(value.is_null() || value.is_bool() || value.is_string())
+                    {
+                        cacheable = false;
+                        break;
+                    }
+                    snapshot.set(index, name)?;
+                    snapshot.set(index + 1, value)?;
+                    index += 2;
+                }
+                if cacheable && index / 2 == property_count {
+                    object.prop("__canaryoCanonicalFlatJson", Property::from(canonical))?;
+                    object.prop(
+                        "__canaryoCanonicalFlatJsonSnapshot",
+                        Property::from(snapshot),
+                    )?;
+                }
+            }
+            request.set("body", value)?;
+            next.call::<_, ()>(())
+        }
+        Err(_) => {
+            let error = context.catch();
+            if let Some(error_object) = error.as_object() {
+                error_object.set("status", 400)?;
+                error_object.set("statusCode", 400)?;
+                error_object.set("type", "entity.parse.failed")?;
+            }
+            next.call::<_, ()>((error,))
+        }
+    }
+}
+
+fn canonical_flat_json_source(body: &[u8]) -> Option<(String, usize)> {
+    if body.first() != Some(&b'{') || body.last() != Some(&b'}') {
+        return None;
+    }
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut property_count = 0;
+    for &byte in body {
+        if in_string {
+            if escaped {
+                if !matches!(byte, b'"' | b'\\' | b'b' | b'f' | b'n' | b'r' | b't') {
+                    return None;
+                }
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+        } else if byte == b'"' {
+            in_string = true;
+        } else if byte == b':' {
+            property_count += 1;
+        } else if byte.is_ascii_whitespace() {
+            return None;
+        }
+    }
+    (!in_string && !escaped)
+        .then(|| String::from_utf8(body.to_vec()).ok())
+        .flatten()
+        .map(|source| (source, property_count))
 }
 
 fn progress_connections<'js>(
@@ -1107,8 +1289,11 @@ fn response_from_js(response: &Object<'_>) -> Result<Response> {
             headers.push((name, value.0));
         }
     }
+    let cached_body_id: Option<u64> = response.get("__canaryoCachedBodyId")?;
     let text_body: String = response.get("__canaryoTextBody")?;
-    let body = if text_body.is_empty() {
+    let body = if let Some(id) = cached_body_id {
+        cached_response_body(id).unwrap_or_else(|| Arc::from(text_body.into_bytes()))
+    } else if text_body.is_empty() {
         let body_chunks: Option<Array> = response.get("__canaryoBody")?;
         let mut body = Vec::new();
         if let Some(body_chunks) = body_chunks {
@@ -1120,9 +1305,9 @@ fn response_from_js(response: &Object<'_>) -> Result<Response> {
                 body.extend_from_slice(bytes);
             }
         }
-        body
+        Arc::from(body)
     } else {
-        text_body.into_bytes()
+        Arc::from(text_body.into_bytes())
     };
 
     Ok(Response {
@@ -1468,7 +1653,7 @@ fn append_response(
         b"Connection: close\r\n\r\n"
     });
     if !suppress_body && response.status != 204 && response.status != 304 {
-        buffer.extend_from_slice(&response.body);
+        buffer.extend_from_slice(response.body.as_ref());
     }
 }
 
@@ -1577,6 +1762,16 @@ mod tests {
         assert_eq!(reason_phrase(302), "Found");
         assert_eq!(reason_phrase(418), "I'm a Teapot");
         assert_eq!(reason_phrase(503), "Service Unavailable");
+    }
+
+    #[test]
+    fn recognizes_canonical_flat_json_sources() {
+        assert_eq!(
+            canonical_flat_json_source(br#"{"data":"canaryo","ok":true,"empty":null}"#),
+            Some((r#"{"data":"canaryo","ok":true,"empty":null}"#.into(), 3))
+        );
+        assert!(canonical_flat_json_source(br#"{ "data": "canaryo" }"#).is_none());
+        assert!(canonical_flat_json_source(br#"{"data":"\u0063anaryo"}"#).is_none());
     }
 
     #[test]

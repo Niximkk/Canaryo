@@ -1264,6 +1264,24 @@ fn parses_an_express_json_request_body() {
 
 #[test]
 #[ignore = "requires npm ci in fixtures/express-basic"]
+fn invalidates_cached_json_after_application_mutations() {
+    let (_server, mut stream) = start_fixture("fixtures/express-json-mutation/server.js");
+    stream
+        .write_all(
+            b"POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: 18\r\nConnection: close\r\n\r\n{\"data\":\"canaryo\"}",
+        )
+        .unwrap();
+    let response = read_response(&mut stream);
+
+    assert!(response.starts_with("HTTP/1.1 200 OK"));
+    assert!(
+        response.ends_with(r#"{"body":{"data":"canaryo-changed","customized":true}}"#),
+        "unexpected response: {response}"
+    );
+}
+
+#[test]
+#[ignore = "requires npm ci in fixtures/express-basic"]
 fn parses_a_chunked_express_json_request_body() {
     let (_server, mut stream) = start_fixture("fixtures/express-basic/server.js");
 

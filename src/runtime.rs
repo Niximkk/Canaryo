@@ -16,7 +16,7 @@ use std::{
 use base64::Engine;
 use ring::rand::SecureRandom;
 use rquickjs::{
-    Array, CatchResultExt, Context, Function, Module, Object, Promise, Runtime, TypedArray, Value,
+    Array, CatchResultExt, Context, Function, Module, Object, Promise, Runtime, TypedArray,
 };
 use subtle::ConstantTimeEq;
 
@@ -681,6 +681,27 @@ function optimizeExpressResponse(listener) {
     const nativeGetHeader = ServerResponse.prototype.getHeader;
     const nativeRemoveHeader = ServerResponse.prototype.removeHeader;
     const nativeEnd = ServerResponse.prototype.end;
+    const cachedJsonEnvelope = value => {
+        if (!value || Array.isArray(value)
+            || Object.getPrototypeOf(value) !== Object.prototype
+            || typeof value.toJSON === "function") return undefined;
+        const keys = Object.keys(value);
+        if (keys.length !== 1 || keys[0] !== "body") return undefined;
+        const inner = value.body;
+        if (!inner || Array.isArray(inner)
+            || Object.getPrototypeOf(inner) !== Object.prototype
+            || typeof inner.toJSON === "function") return undefined;
+        const canonical = inner.__canaryoCanonicalFlatJson;
+        const snapshot = inner.__canaryoCanonicalFlatJsonSnapshot;
+        if (typeof canonical !== "string" || !Array.isArray(snapshot)) return undefined;
+        const innerKeys = Object.keys(inner);
+        if (innerKeys.length * 2 !== snapshot.length) return undefined;
+        for (let index = 0; index < innerKeys.length; index++) {
+            if (innerKeys[index] !== snapshot[index * 2]
+                || inner[innerKeys[index]] !== snapshot[index * 2 + 1]) return undefined;
+        }
+        return `{\"body\":${canonical}}`;
+    };
     const directHeaders = responsePrototype.setHeader === nativeSetHeader
         && responsePrototype.getHeader === nativeGetHeader
         && responsePrototype.removeHeader === nativeRemoveHeader;
@@ -706,13 +727,14 @@ function optimizeExpressResponse(listener) {
         };
     }
 
-    const finishJson = (response, output) => {
+    const finishJson = (response, output, encodedId) => {
         const finishListeners = response._events && response._events.finish;
         if (response.end !== nativeEnd || (finishListeners && finishListeners.length)) {
             response.end(output);
             return;
         }
         if (output !== undefined && output !== null) response.__canaryoTextBody = String(output);
+        if (encodedId !== undefined) response.__canaryoCachedBodyId = encodedId;
         response.headersSent = true;
         response.writableEnded = true;
         response.writableFinished = true;
@@ -736,7 +758,7 @@ function optimizeExpressResponse(listener) {
             return originalJson.call(this, value);
         }
 
-        const body = JSON.stringify(value);
+        const body = cachedJsonEnvelope(value) ?? JSON.stringify(value);
         const headers = this.__canaryoHeaders;
         if (directHeaders) headers["content-type"] = "application/json; charset=utf-8";
         else this.setHeader("content-type", "application/json; charset=utf-8");
@@ -750,16 +772,28 @@ function optimizeExpressResponse(listener) {
         if (!metadata) {
             if (cacheDefaultEtag) {
                 const generated = __canaryoExpressWeakEtag(body);
-                metadata = { length: generated[0], etag: generated[1] };
+                metadata = {
+                    length: generated[0],
+                    etag: generated[1],
+                    encodedId: cacheable ? __canaryoCacheResponseBody(body) : undefined
+                };
             } else {
                 const bytes = typeof etagFunction === "function" ? Buffer.from(body) : null;
                 metadata = {
                     length: bytes ? bytes.length : Buffer.byteLength(body, "utf8"),
-                    etag: bytes ? etagFunction(bytes) : undefined
+                    etag: bytes ? etagFunction(bytes) : undefined,
+                    encodedId: cacheable ? __canaryoCacheResponseBody(body) : undefined
                 };
             }
             if (cacheable) {
-                if (jsonMetadata.size >= 32) jsonMetadata.delete(jsonMetadata.keys().next().value);
+                if (jsonMetadata.size >= 32) {
+                    const oldestKey = jsonMetadata.keys().next().value;
+                    const oldest = jsonMetadata.get(oldestKey);
+                    if (oldest?.encodedId !== undefined) {
+                        __canaryoReleaseResponseBody(oldest.encodedId);
+                    }
+                    jsonMetadata.delete(oldestKey);
+                }
                 jsonMetadata.set(body, metadata);
             }
         }
@@ -799,7 +833,7 @@ function optimizeExpressResponse(listener) {
         }
 
         if (this.req.method === "HEAD") finishJson(this);
-        else finishJson(this, output);
+        else finishJson(this, output, output === body ? metadata.encodedId : undefined);
         return this;
     };
     return listener;
@@ -819,81 +853,11 @@ function fastDefaultJsonParser(original) {
 
         const declaredLength = Number(request.headers["content-length"] || 0);
         if (declaredLength > 102400) return original(request, response, next);
-        const chunks = [];
-        let length = 0;
-        let finished = false;
-        const cleanup = () => {
-            request.removeListener("data", onData);
-            request.removeListener("end", onEnd);
-            request.removeListener("aborted", onAborted);
-            request.removeListener("error", onError);
-        };
-        const fail = error => {
-            if (finished) return;
-            finished = true;
-            cleanup();
-            next(error);
-        };
-        const onData = chunk => {
-            if (finished) return;
-            length += chunk.length;
-            if (length > 102400) {
-                const error = new Error("request entity too large");
-                error.status = error.statusCode = 413;
-                error.type = "entity.too.large";
-                return fail(error);
-            }
-            chunks.push(chunk);
-        };
-        const onEnd = () => {
-            if (finished) return;
-            finished = true;
-            cleanup();
-            if (length === 0) {
-                request.body = {};
-                return next();
-            }
-            const body = chunks.length === 1 ? chunks[0] : Buffer.concat(chunks, length);
-            let first = 0;
-            while (first < body.length
-                && (body[first] === 0x20 || body[first] === 0x09
-                    || body[first] === 0x0a || body[first] === 0x0d)) first++;
-            if (body[first] !== 0x7b && body[first] !== 0x5b) {
-                const error = new SyntaxError("Unexpected token in JSON body");
-                error.status = error.statusCode = 400;
-                error.type = "entity.parse.failed";
-                return next(error);
-            }
-            try {
-                const parsed = __canaryoParseJsonBytes(body);
-                if (parsed.error !== undefined) {
-                    const error = new SyntaxError(parsed.error);
-                    error.status = error.statusCode = 400;
-                    error.type = "entity.parse.failed";
-                    return next(error);
-                }
-                request.body = parsed.value;
-                return next();
-            } catch (cause) {
-                const error = new Error(cause && cause.message
-                    ? cause.message
-                    : "Unable to parse JSON body");
-                error.status = error.statusCode = 400;
-                error.type = "entity.parse.failed";
-                return next(error);
-            }
-        };
-        const onAborted = () => {
-            const error = new Error("request aborted");
-            error.status = error.statusCode = 400;
-            error.type = "request.aborted";
-            fail(error);
-        };
-        const onError = error => fail(error);
-        request.on("aborted", onAborted);
-        request.on("error", onError);
-        request.on("data", onData);
-        request.on("end", onEnd);
+        const events = request._events;
+        if (request.__canaryoPaused || (events && (
+            events.data || events.end || events.aborted || events.error || events.close
+        ))) return original(request, response, next);
+        request.__canaryoDirectJsonNext = next;
     };
 }
 
@@ -1737,6 +1701,16 @@ fn install_host_globals<'js>(
     globals
         .set("__canaryoExpressWeakEtag", express_weak_etag)
         .map_err(|error| error.to_string())?;
+    let cache_response_body = Function::new(context.clone(), http::cache_response_body)
+        .map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoCacheResponseBody", cache_response_body)
+        .map_err(|error| error.to_string())?;
+    let release_response_body = Function::new(context.clone(), http::release_response_body)
+        .map_err(|error| error.to_string())?;
+    globals
+        .set("__canaryoReleaseResponseBody", release_response_body)
+        .map_err(|error| error.to_string())?;
     let hmac = Function::new(context.clone(), crypto_hmac).map_err(|error| error.to_string())?;
     globals
         .set("__canaryoHmac", hmac)
@@ -1779,11 +1753,6 @@ fn install_host_globals<'js>(
         Function::new(context.clone(), decode_utf8).map_err(|error| error.to_string())?;
     globals
         .set("__canaryoDecodeUtf8", decode_utf8)
-        .map_err(|error| error.to_string())?;
-    let parse_json =
-        Function::new(context.clone(), parse_json_bytes).map_err(|error| error.to_string())?;
-    globals
-        .set("__canaryoParseJsonBytes", parse_json)
         .map_err(|error| error.to_string())?;
     let is_ip = Function::new(context.clone(), is_ip).map_err(|error| error.to_string())?;
     globals
@@ -3294,49 +3263,6 @@ fn decode_utf8(bytes: TypedArray<'_, u8>) -> rquickjs::Result<String> {
         .as_bytes()
         .ok_or_else(|| rquickjs::Error::new_from_js("detached Uint8Array", "string"))?;
     Ok(String::from_utf8_lossy(bytes).into_owned())
-}
-
-fn parse_json_bytes<'js>(
-    context: rquickjs::Ctx<'js>,
-    bytes: TypedArray<'js, u8>,
-) -> rquickjs::Result<Object<'js>> {
-    let bytes = typed_array_bytes(&context, &bytes)?;
-    let result = Object::new(context.clone())?;
-    match serde_json::from_slice(bytes) {
-        Ok(value) => result.set("value", json_value_to_js(context, value)?)?,
-        Err(error) => result.set("error", error.to_string())?,
-    }
-    Ok(result)
-}
-
-fn json_value_to_js<'js>(
-    context: rquickjs::Ctx<'js>,
-    value: serde_json::Value,
-) -> rquickjs::Result<Value<'js>> {
-    Ok(match value {
-        serde_json::Value::Null => Value::new_null(context),
-        serde_json::Value::Bool(value) => Value::new_bool(context, value),
-        serde_json::Value::Number(value) => {
-            Value::new_float(context, value.as_f64().unwrap_or_default())
-        }
-        serde_json::Value::String(value) => {
-            rquickjs::String::from_str(context, &value)?.into_value()
-        }
-        serde_json::Value::Array(values) => {
-            let result = Array::new(context.clone())?;
-            for (index, value) in values.into_iter().enumerate() {
-                result.set(index, json_value_to_js(context.clone(), value)?)?;
-            }
-            result.into_value()
-        }
-        serde_json::Value::Object(values) => {
-            let result = Object::new(context.clone())?;
-            for (name, value) in values {
-                result.set(name, json_value_to_js(context.clone(), value)?)?;
-            }
-            result.into_value()
-        }
-    })
 }
 
 fn cwd() -> String {
