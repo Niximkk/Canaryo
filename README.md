@@ -1,3 +1,4 @@
+<sup><sub>This project was 100% VibeCoded for a Joke.</sub></sup>
 <div align="center">
   <img src="assets/canaryo-logo.png" width="220" alt="Canaryo logo">
 </div>
@@ -25,7 +26,7 @@ Canaryo 0.2.0 is the completed one-week Express 5.2.1 compatibility profile buil
 ## Why Canaryo?
 
 - **Existing code first:** run supported CommonJS applications without rewriting them.
-- **Small memory footprint:** the current Express fixture uses about 12.5 MiB of resident memory with 16 persistent connections.
+- **Small memory footprint:** the measured Express workloads use 50% to 78% less resident memory than Bun at concurrency 16.
 - **Fast startup:** native HTTP starts in about 25 ms and the tested Express application starts faster than Node.js on the benchmark machine.
 - **Compatibility report:** inspect an entry point and its dependencies before execution.
 - **Explicit escape hatch:** delegate to the installed Node.js runtime when necessary.
@@ -75,7 +76,7 @@ Execution starts directly for low startup overhead. Use `canaryo check` in devel
 
 ## Performance
 
-Results collected on Windows 11 with an AMD Ryzen 5 5600X, Node.js 22.15.1, Bun 1.4.2, and a release build of Canaryo 0.1.0. Every load result is the median of three 3-second samples after warm-up; all measured requests completed without errors.
+Results collected on Windows 11 with an AMD Ryzen 5 5600X, Node.js 22.15.1, Bun 1.4.2, and a release build of Canaryo 0.2.0. Every load result is the median of three 3-second samples after warm-up; all measured requests completed without errors.
 
 ### Startup latency
 
@@ -83,8 +84,8 @@ Lower is better.
 
 | Application | Node.js | Bun | Canaryo |
 |---|---:|---:|---:|
-| `node:http` | 50.90 ms | 51.30 ms | **25.24 ms** |
-| Express 5.2.1 | 218.48 ms | **171.33 ms** | 198.14 ms |
+| Express 5.2.1 | 195.94 ms | 113.73 ms | **88.97 ms** |
+| Express profile 5.2.1 | 241.44 ms | 129.35 ms | **120.00 ms** |
 
 ### Throughput at concurrency 16
 
@@ -92,8 +93,8 @@ Higher is better. "New connection" opens a TCP connection for every request; "ke
 
 | Application | New: Node.js | New: Bun | New: Canaryo | Keep-alive: Node.js | Keep-alive: Bun | Keep-alive: Canaryo |
 |---|---:|---:|---:|---:|---:|---:|
-| `node:http` | 6,461 | 7,183 | **7,365** | 20,220 | **25,732** | 19,006 |
-| Express 5.2.1 | 3,250 | **6,253** | 3,630 | 6,019 | **16,860** | 5,313 |
+| Express 5.2.1 | 3,261 | 6,318 | **8,124** | 5,967 | 18,153 | **20,075** |
+| Express profile 5.2.1 | 3,221 | 6,104 | **7,766** | 5,852 | 16,593 | **19,617** |
 
 ### 16 KiB JSON throughput at concurrency 16
 
@@ -101,8 +102,8 @@ This test sends `POST /echo` over persistent connections and includes parsing an
 
 | Application | Node.js | Bun | Canaryo | Node.js RSS | Bun RSS | Canaryo RSS |
 |---|---:|---:|---:|---:|---:|---:|
-| `node:http` | 10,343 req/s | **10,643 req/s** | 7,999 req/s | 41.3 MiB | 43.6 MiB | **9.2 MiB** |
-| Express 5.2.1 | 3,038 req/s | **6,493 req/s** | 1,797 req/s | 84.3 MiB | 62.3 MiB | **13.0 MiB** |
+| Express 5.2.1 | 3,658 req/s | 7,503 req/s | **8,922 req/s** | 83.7 MiB | 71.8 MiB | **16.0 MiB** |
+| Express profile 5.2.1 | 3,574 req/s | 7,552 req/s | **8,663 req/s** | 86.7 MiB | 71.8 MiB | **18.8 MiB** |
 
 ### Resident memory at concurrency 16
 
@@ -110,10 +111,10 @@ Lower is better. RSS is sampled from the runtime process during the selected thr
 
 | Application | New: Bun | New: Canaryo | Reduction | Keep-alive: Bun | Keep-alive: Canaryo | Reduction |
 |---|---:|---:|---:|---:|---:|---:|
-| `node:http` | 47.6 MiB | **9.8 MiB** | **79.4%** | 47.3 MiB | **9.8 MiB** | **79.3%** |
-| Express 5.2.1 | 59.1 MiB | **12.9 MiB** | **78.2%** | 54.7 MiB | **12.6 MiB** | **77.0%** |
+| Express 5.2.1 | 60.3 MiB | **20.5 MiB** | **66.0%** | 59.4 MiB | **29.6 MiB** | **50.2%** |
+| Express profile 5.2.1 | 67.2 MiB | **23.4 MiB** | **65.2%** | 70.3 MiB | **34.8 MiB** | **50.5%** |
 
-Canaryo starts native HTTP 50.8% faster than Bun and uses 77.0% to 79.4% less resident memory across the concurrency-16 GET workloads shown here. It also leads Bun's native HTTP result by 2.5% when each request opens a connection. Bun leads the persistent and Express-heavy workloads because JavaScriptCore's optimizing JIT accelerates repeated application code.
+Canaryo exceeds Bun's median throughput in all 12 measured Express workload and concurrency combinations. The advantage ranges from 3.9% to 28.6%, while concurrency-16 resident memory is 50.2% to 77.7% lower. Basic Express starts 21.8% faster than Bun and the larger profile starts 7.2% faster.
 
 These synthetic loopback results cover the current compatibility surface on one machine. See [BENCHMARKS.md](BENCHMARKS.md) for latency percentiles, concurrency 1 results, methodology, limitations, and reproduction commands.
 

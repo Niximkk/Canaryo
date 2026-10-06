@@ -230,12 +230,19 @@ function validateHeaderValue(name, value) {
     }
 }
 
+let nextResponseHeaderState = 1;
+Object.defineProperty(ServerResponse.prototype, "__canaryoHeaderState", {
+    value: 0,
+    writable: true
+});
 ServerResponse.prototype.setHeader = function(name, value) {
     validateHeaderName(name);
     validateHeaderValue(name, value);
-    this.__canaryoHeaders[String(name).toLowerCase()] = Array.isArray(value)
+    const key = String(name).toLowerCase();
+    this.__canaryoHeaders[key] = Array.isArray(value)
         ? value.map(String)
         : String(value);
+    this.__canaryoHeaderState = nextResponseHeaderState++;
     return this;
 };
 ServerResponse.prototype.appendHeader = function(name, value) {
@@ -247,6 +254,7 @@ ServerResponse.prototype.appendHeader = function(name, value) {
     this.__canaryoHeaders[key] = current === undefined
         ? incoming
         : (Array.isArray(current) ? current : [current]).concat(incoming);
+    this.__canaryoHeaderState = nextResponseHeaderState++;
     return this;
 };
 ServerResponse.prototype.setHeaders = function(headers) {
@@ -266,7 +274,11 @@ ServerResponse.prototype.hasHeader = function(name) {
     );
 };
 ServerResponse.prototype.removeHeader = function(name) {
-    delete this.__canaryoHeaders[String(name).toLowerCase()];
+    const key = String(name).toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(this.__canaryoHeaders, key)) {
+        delete this.__canaryoHeaders[key];
+        this.__canaryoHeaderState = nextResponseHeaderState++;
+    }
 };
 ServerResponse.prototype.getHeaders = function() {
     return Object.assign(Object.create(null), this.__canaryoHeaders);
@@ -691,16 +703,20 @@ function optimizeExpressResponse(listener) {
         if (!inner || Array.isArray(inner)
             || Object.getPrototypeOf(inner) !== Object.prototype
             || typeof inner.toJSON === "function") return undefined;
-        const canonical = inner.__canaryoCanonicalFlatJson;
         const snapshot = inner.__canaryoCanonicalFlatJsonSnapshot;
-        if (typeof canonical !== "string" || !Array.isArray(snapshot)) return undefined;
+        if (!Array.isArray(snapshot)) return undefined;
         const innerKeys = Object.keys(inner);
         if (innerKeys.length * 2 !== snapshot.length) return undefined;
         for (let index = 0; index < innerKeys.length; index++) {
             if (innerKeys[index] !== snapshot[index * 2]
                 || inner[innerKeys[index]] !== snapshot[index * 2 + 1]) return undefined;
         }
-        return `{\"body\":${canonical}}`;
+        const encodedId = inner.__canaryoCanonicalEnvelopeId;
+        const length = inner.__canaryoCanonicalEnvelopeLength;
+        const etag = inner.__canaryoCanonicalEnvelopeEtag;
+        if (typeof encodedId === "number" && typeof length === "number"
+            && typeof etag === "string") return { encodedId, length, etag };
+        return undefined;
     };
     const directHeaders = responsePrototype.setHeader === nativeSetHeader
         && responsePrototype.getHeader === nativeGetHeader
@@ -716,12 +732,26 @@ function optimizeExpressResponse(listener) {
             const normalized = normalizedHeaders.get(key);
             if (normalized && normalized.input === value && value !== Object(value)) {
                 this.__canaryoHeaders[normalized.name] = normalized.value;
+                let state = normalized.transitions.get(this.__canaryoHeaderState);
+                if (state === undefined) {
+                    state = nextResponseHeaderState++;
+                    normalized.transitions.set(this.__canaryoHeaderState, state);
+                }
+                this.__canaryoHeaderState = state;
                 return this;
             }
+            const previousState = this.__canaryoHeaderState;
             originalSet.call(this, field, value);
             if (value !== Object(value) && normalizedHeaders.size < 128) {
                 const name = String(field).toLowerCase();
-                normalizedHeaders.set(key, { input: value, name, value: this.__canaryoHeaders[name] });
+                const transitions = new Map();
+                transitions.set(previousState, this.__canaryoHeaderState);
+                normalizedHeaders.set(key, {
+                    input: value,
+                    name,
+                    value: this.__canaryoHeaders[name],
+                    transitions
+                });
             }
             return this;
         };
@@ -758,17 +788,18 @@ function optimizeExpressResponse(listener) {
             return originalJson.call(this, value);
         }
 
-        const body = cachedJsonEnvelope(value) ?? JSON.stringify(value);
+        const envelope = cachedJsonEnvelope(value);
+        const body = envelope ? null : JSON.stringify(value);
         const headers = this.__canaryoHeaders;
         if (directHeaders) headers["content-type"] = "application/json; charset=utf-8";
         else this.setHeader("content-type", "application/json; charset=utf-8");
-        if (body === undefined) {
+        if (!envelope && body === undefined) {
             finishJson(this);
             return this;
         }
 
-        const cacheable = cacheDefaultEtag && body.length <= 65536;
-        let metadata = cacheable ? jsonMetadata.get(body) : undefined;
+        const cacheable = !envelope && cacheDefaultEtag && body.length <= 65536;
+        let metadata = envelope || (cacheable ? jsonMetadata.get(body) : undefined);
         if (!metadata) {
             if (cacheDefaultEtag) {
                 const generated = __canaryoExpressWeakEtag(body);
@@ -833,7 +864,11 @@ function optimizeExpressResponse(listener) {
         }
 
         if (this.req.method === "HEAD") finishJson(this);
-        else finishJson(this, output, output === body ? metadata.encodedId : undefined);
+        else finishJson(
+            this,
+            output === null ? "" : output,
+            (envelope ? output === null : output === body) ? metadata.encodedId : undefined
+        );
         return this;
     };
     return listener;
@@ -841,7 +876,7 @@ function optimizeExpressResponse(listener) {
 
 function fastDefaultJsonParser(original) {
     if (!original.__canaryoDefaultJsonParser) return original;
-    return function canaryoDefaultJsonParser(request, response, next) {
+    function canaryoDefaultJsonParser(request, response, next) {
         if (request.complete) return next();
         const contentType = String(request.headers["content-type"] || "").toLowerCase();
         const encoding = String(request.headers["content-encoding"] || "identity").toLowerCase();
@@ -858,7 +893,11 @@ function fastDefaultJsonParser(original) {
             events.data || events.end || events.aborted || events.error || events.close
         ))) return original(request, response, next);
         request.__canaryoDirectJsonNext = next;
-    };
+    }
+    Object.defineProperty(canaryoDefaultJsonParser, "__canaryoDirectJsonParser", {
+        value: true
+    });
+    return canaryoDefaultJsonParser;
 }
 
 function optimizeExpressRouter(listener) {
@@ -877,6 +916,12 @@ function optimizeExpressRouter(listener) {
     };
     const plans = new Map();
     const candidates = new Map();
+    const hasTerminalNext = handle => {
+        if (handle.length !== 3) return false;
+        const source = Function.prototype.toString.call(handle).trim();
+        return !source.startsWith("async ")
+            && /(?:^|[^\w$])next\s*\(\s*\)\s*;?\s*}$/.test(source);
+    };
 
     for (const layer of stack) {
         const route = layer.route;
@@ -919,6 +964,8 @@ function optimizeExpressRouter(listener) {
                     steps.push({
                         handle,
                         expectsError: handle.length === 4,
+                        terminalNext: hasTerminalNext(handle),
+                        directJsonParser: Boolean(handle.__canaryoDirectJsonParser),
                         route: layer.route,
                         routeStart: index === 0
                     });
@@ -931,6 +978,8 @@ function optimizeExpressRouter(listener) {
                 steps.push({
                     handle,
                     expectsError: handle.length === 4,
+                    terminalNext: hasTerminalNext(handle),
+                    directJsonParser: Boolean(handle.__canaryoDirectJsonParser),
                     route: null,
                     routeStart: false
                 });
@@ -1017,50 +1066,103 @@ function optimizeExpressRouter(listener) {
         let index = 0;
         let activeRoute = null;
         let skippedRoute = null;
+        let deferNext = false;
+        let deferred = false;
+        let deferredError;
         request.next = next;
         request.baseUrl = request.baseUrl || "";
         request.originalUrl = request.originalUrl || request.url;
         next();
 
         function next(error) {
-            if (error === "router") return setImmediate(done, null);
-            if (error === "route") {
-                skippedRoute = activeRoute;
-                error = null;
+            if (deferNext) {
+                deferred = true;
+                deferredError = error;
+                return;
             }
+            dispatch: while (true) {
+                if (error === "router") return setImmediate(done, null);
+                if (error === "route") {
+                    skippedRoute = activeRoute;
+                    error = null;
+                }
 
-            while (index < plan.length) {
-                const step = plan[index++];
-                if (skippedRoute && step.route === skippedRoute) continue;
-                skippedRoute = null;
-                if (step.routeStart) {
-                    request.params = {};
-                    request.route = step.route;
-                }
-                activeRoute = step.route || null;
-                const handle = step.handle;
-                if (Boolean(error) !== step.expectsError) continue;
-                try {
-                    const returned = error
-                        ? handle(error, request, response, next)
-                        : handle(request, response, next);
-                    if (returned && typeof returned.then === "function") {
-                        returned.then(undefined, rejection => next(
-                            rejection || new Error("Rejected promise")
-                        ));
+                while (index < plan.length) {
+                    const step = plan[index++];
+                    if (skippedRoute && step.route === skippedRoute) continue;
+                    skippedRoute = null;
+                    if (step.routeStart) {
+                        request.params = {};
+                        request.route = step.route;
                     }
-                    return;
-                } catch (thrown) {
-                    error = thrown;
+                    activeRoute = step.route || null;
+                    const handle = step.handle;
+                    if (Boolean(error) !== step.expectsError) continue;
+                    try {
+                        deferNext = step.terminalNext && !error;
+                        const returned = error
+                            ? handle(error, request, response, next)
+                            : handle(request, response, next);
+                        deferNext = false;
+                        if (deferred) {
+                            deferred = false;
+                            error = deferredError;
+                            deferredError = undefined;
+                            continue dispatch;
+                        }
+                        if (returned && typeof returned.then === "function") {
+                            returned.then(undefined, rejection => next(
+                                rejection || new Error("Rejected promise")
+                            ));
+                        }
+                        return;
+                    } catch (thrown) {
+                        deferNext = false;
+                        deferred = false;
+                        deferredError = undefined;
+                        error = thrown;
+                    }
                 }
+                return done(error);
             }
-            return done(error);
         }
     };
     const errorStatus = error => {
         const status = Number(error && (error.statusCode || error.status));
         return Number.isInteger(status) && status >= 400 && status <= 599 ? status : 500;
     };
+
+    // Rust can dispatch exact, synchronous Express chains without paying for the
+    // JavaScript router loop on every request.  Keep the eligibility rules strict:
+    // every middleware must end in next(), one route handler must terminate the
+    // chain, and promise-producing handlers remain on Express' regular path.
+    const nativePlans = [];
+    for (const [key, plan] of plans) {
+        let terminal = false;
+        let safe = true;
+        for (const step of plan) {
+            const source = Function.prototype.toString.call(step.handle).trim();
+            const asynchronous = step.handle.constructor?.name === "AsyncFunction"
+                || /\bPromise\b|\.then\s*\(/.test(source);
+            if (asynchronous) {
+                safe = false;
+                break;
+            }
+            if (step.expectsError) continue;
+            if (terminal) {
+                safe = false;
+                break;
+            }
+            if (step.directJsonParser) continue;
+            if (step.handle.length < 3) terminal = true;
+            else if (!step.terminalNext) {
+                safe = false;
+                break;
+            }
+        }
+        if (safe && terminal) nativePlans.push({ key, steps: plan });
+    }
+    const nativeNext = () => {};
 
     router.handle = function canaryoExpressHandle(request, response, done) {
         const plan = planFor(request);
@@ -1116,7 +1218,13 @@ function optimizeExpressRouter(listener) {
     }
     Object.defineProperties(canaryoExpressApplication, {
         __canaryoRequestPrototype: { value: listener.request },
-        __canaryoResponsePrototype: { value: listener.response }
+        __canaryoResponsePrototype: { value: listener.response },
+        __canaryoNativePlans: { value: nativePlans },
+        __canaryoNativeStack: { value: stack },
+        __canaryoNativeStackLength: { value: stackLength },
+        __canaryoNativeNext: { value: nativeNext },
+        __canaryoNativeDirectHeaders: { value: directResponseHeaders },
+        __canaryoNativeXPoweredBy: { value: listener.settings["x-powered-by"] !== false }
     });
     return canaryoExpressApplication;
 }
@@ -1477,7 +1585,7 @@ pub fn execute(path: &str, arguments: &[String]) -> Result<u8, String> {
     let gc_threshold = env::var("CANARYO_GC_THRESHOLD")
         .ok()
         .and_then(|value| value.parse().ok())
-        .unwrap_or(4 * 1024 * 1024);
+        .unwrap_or(64 * 1024 * 1024);
     runtime.set_gc_threshold(gc_threshold);
     runtime.set_loader(esm::NodeResolver, esm::NodeLoader);
     let context =

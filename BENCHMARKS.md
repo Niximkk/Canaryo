@@ -1,6 +1,8 @@
 # Benchmarks
 
-Results collected on September 13, 2026 with Canaryo 0.1.0. The final POC compares its two demonstrated application targets, `node:http` and Express 5.2.1, with Node.js and Bun.
+Results collected on October 5, 2026 with Canaryo 0.2.0. The final POC is
+focused on running existing Express applications, so these results compare an
+Express 5.2.1 application and a larger Express profile against Node.js and Bun.
 
 ## Environment
 
@@ -10,228 +12,148 @@ Results collected on September 13, 2026 with Canaryo 0.1.0. The final POC compar
 - Bun 1.4.2
 - Canaryo compiled with the Cargo release profile
 - Three load samples of three seconds per result
-- Seven startup samples per result
-- 500 ms warm-up before each load sample
+- Seven startup samples per run
+- 500 ms warm-up before every load sample
 
-## Express profile baseline
-
-This focused result was collected on September 20, 2026 after adding the
-documented Express profile. The profile route runs global middleware, a
-route-level middleware and a JSON response handler. It imports Express 5.2.1,
-compression 1.8.2, cors 2.8.5, cookie-parser 1.4.7 and multer 2.0.2. These tables
-use three two-second load samples and five startup samples; they are kept
-separate from the longer fixture results below.
-
-### Startup
-
-| Runtime | Median | Minimum | Maximum |
-|---|---:|---:|---:|
-| Node.js | 242.41 ms | 238.17 ms | 249.56 ms |
-| Bun | **147.16 ms** | **146.65 ms** | **155.81 ms** |
-| Canaryo | 231.99 ms | 228.54 ms | 244.54 ms |
-
-### Persistent connections
-
-| Concurrency | Runtime | Requests/s | p50 | p95 | p99 | Errors | RSS |
-|---:|---|---:|---:|---:|---:|---:|---:|
-| 1 | Node.js | 6,019 | 0.15 ms | 0.23 ms | 0.32 ms | 0 | 86.0 MiB |
-| 1 | Bun | **10,771** | **0.09 ms** | **0.12 ms** | **0.16 ms** | 0 | 59.6 MiB |
-| 1 | Canaryo | 4,184 | 0.22 ms | 0.29 ms | 0.34 ms | 0 | **15.7 MiB** |
-| 16 | Node.js | 6,524 | 2.20 ms | 3.73 ms | 10.76 ms | 0 | 97.2 MiB |
-| 16 | Bun | **20,037** | **0.75 ms** | **1.00 ms** | **1.91 ms** | 0 | 59.6 MiB |
-| 16 | Canaryo | 5,074 | 2.85 ms | 5.98 ms | 6.59 ms | 0 | **16.3 MiB** |
-
-At concurrency 16, Canaryo uses 83.2% less resident memory than Node.js and
-72.7% less than Bun. Its request rate is 22.2% below Node.js and 74.7% below
-Bun. The native HTTP fixture is much faster than the Express profile under the
-same runtime, so the remaining throughput cost is dominated by framework and
-middleware JavaScript interpreted by QuickJS-NG. Express-specific optimization
-must reduce that repeated JavaScript work while preserving the profile's
-differential behavior.
-
-Temporary phase instrumentation on the profile route measured approximately
-178 microseconds per request inside the Express handler under QuickJS-NG. The
-measured request/response object bridge, response extraction and HTTP
-serialization together used about 20 microseconds. This confirms that further
-HTTP parser micro-optimizations cannot close the framework throughput gap; a
-large improvement would require reducing interpreted Express work or changing
-the JavaScript engine. The instrumentation was removed after measurement so it
-does not affect the published results.
-
-Reproduce this focused measurement with:
-
-```sh
-cargo build --release
-cargo bench --bench runtime -- --case "express profile" --bun --keep-alive --duration 2 --runs 3 --startup-runs 5
-```
-
-### Unreleased Express fast paths
-
-A September 22 development build flattened safe static Express route plans,
-accelerated the default JSON response path, cached metadata for a bounded set of
-repeated JSON bodies and skipped idle native HTTP connection work. Five
-three-second samples produced the following result. Dynamic routes, mounted
-routers, custom response methods and route stacks changed after startup continue
-through Express's original implementations.
-
-| Concurrency | Runtime | Requests/s | p50 | p95 | p99 | Errors | RSS |
-|---:|---|---:|---:|---:|---:|---:|---:|
-| 1 | Node.js | 5,951 | 0.16 ms | 0.23 ms | 0.30 ms | 0 | 87.5 MiB |
-| 1 | Bun | **13,371** | **0.07 ms** | **0.11 ms** | **0.14 ms** | 0 | 61.2 MiB |
-| 1 | Canaryo | 7,519 | 0.12 ms | 0.18 ms | 0.22 ms | 0 | **16.6 MiB** |
-| 16 | Node.js | 5,932 | 2.55 ms | 3.72 ms | 5.49 ms | 0 | 93.1 MiB |
-| 16 | Bun | **16,067** | **0.89 ms** | **1.53 ms** | **2.09 ms** | 0 | 60.2 MiB |
-| 16 | Canaryo | 10,424 | 1.28 ms | 2.15 ms | 5.38 ms | 0 | **16.1 MiB** |
-
-Compared with the Canaryo baseline above, throughput increased by 79.7% at
-concurrency 1 and 105.4% at concurrency 16. In this run Canaryo delivered 75.7%
-more throughput than Node.js at concurrency 16 while using 82.7% less resident
-memory. It reached 64.9% of Bun's throughput while using 73.3% less memory.
-This route returns the same JSON for every request, so its bounded ETag metadata
-cache receives an ideal workload; applications with unique response bodies will
-see a smaller gain.
-
-```sh
-cargo bench --bench runtime -- --case "express profile" --bun --keep-alive --duration 3 --runs 5 --startup-runs 5
-```
-
-### Variable JSON bodies
-
-`GET /dynamic` returns a different JSON body on every request. This bypasses
-metadata cache hits and measures the native weak ETag path for every response.
-
-| Concurrency | Runtime | Requests/s | p50 | p95 | p99 | Errors | RSS |
-|---:|---|---:|---:|---:|---:|---:|---:|
-| 1 | Node.js | 4,914 | 0.17 ms | 0.30 ms | 0.54 ms | 0 | 73.9 MiB |
-| 1 | Bun | **12,640** | **0.08 ms** | **0.12 ms** | **0.15 ms** | 0 | 56.9 MiB |
-| 1 | Canaryo | 7,181 | 0.12 ms | 0.19 ms | 0.24 ms | 0 | **16.7 MiB** |
-| 16 | Node.js | 5,730 | 2.65 ms | 4.08 ms | 7.40 ms | 0 | 92.5 MiB |
-| 16 | Bun | **17,085** | **0.82 ms** | **1.43 ms** | **2.04 ms** | 0 | 65.8 MiB |
-| 16 | Canaryo | 9,909 | 1.42 ms | 2.20 ms | 4.98 ms | 0 | **16.4 MiB** |
-
-Without metadata cache hits, Canaryo remains 72.9% ahead of Node.js at
-concurrency 16 and reaches 58.0% of Bun's throughput. It uses 82.3% less
-resident memory than Node.js and 75.1% less than Bun. The repeated-body cache
-adds about 5.2% throughput over this workload.
-
-```sh
-cargo bench --bench runtime -- --case "express profile" --path /dynamic --bun --keep-alive --duration 3 --runs 5 --startup-runs 5
-```
+The profile imports Express, compression, cors, cookie-parser and multer. Its
+root route runs global middleware, route middleware and a JSON response handler.
+All runtimes execute the same application files and every measured response is
+validated by the load generator.
 
 ## Startup
 
-Startup is measured from process creation until the first complete valid HTTP response. Lower is better.
+Startup is measured from process creation until the first complete HTTP
+response. Lower is better. Because startup varied by several milliseconds on
+Windows, this table reports the median of the three independent run medians,
+with seven process launches in each run.
 
-| Application | Runtime | Median | Minimum | Maximum |
-|---|---:|---:|---:|---:|
-| `node:http` | Node.js | 50.90 ms | 48.97 ms | 60.98 ms |
-| `node:http` | Bun | 51.30 ms | 48.21 ms | 52.95 ms |
-| `node:http` | Canaryo | **25.24 ms** | **23.49 ms** | **39.86 ms** |
-| Express 5.2.1 | Node.js | 218.48 ms | 204.18 ms | 223.70 ms |
-| Express 5.2.1 | Bun | **171.33 ms** | **140.89 ms** | **221.97 ms** |
-| Express 5.2.1 | Canaryo | 198.14 ms | 178.89 ms | 228.21 ms |
+| Application | Node.js | Bun | Canaryo |
+|---|---:|---:|---:|
+| Express 5.2.1 | 195.94 ms | 113.73 ms | **88.97 ms** |
+| Express profile 5.2.1 | 241.44 ms | 129.35 ms | **120.00 ms** |
 
-Canaryo starts the native HTTP fixture 50.8% faster than Bun. Bun starts the Express fixture 13.5% faster than Canaryo in this run.
+Canaryo starts the basic application 21.8% faster than Bun and the larger
+profile 7.2% faster.
 
-## New connection per request
+## New TCP connection per request
 
 ### Concurrency 1
 
 | Application | Runtime | Requests/s | p50 | p95 | p99 | Errors | RSS |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| `node:http` | Node.js | 2,076 | 0.46 ms | 0.62 ms | 0.72 ms | 0 | 37.5 MiB |
-| `node:http` | Bun | **2,403** | **0.39 ms** | **0.56 ms** | **0.65 ms** | 0 | 40.1 MiB |
-| `node:http` | Canaryo | 2,282 | 0.41 ms | 0.58 ms | 0.73 ms | 0 | **12.2 MiB** |
-| Express 5.2.1 | Node.js | 1,696 | 0.55 ms | 0.79 ms | 1.03 ms | 0 | 54.9 MiB |
-| Express 5.2.1 | Bun | **2,169** | **0.43 ms** | **0.61 ms** | **0.76 ms** | 0 | 53.4 MiB |
-| Express 5.2.1 | Canaryo | 1,647 | 0.56 ms | 0.80 ms | 1.08 ms | 0 | **12.6 MiB** |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Express 5.2.1 | Node.js | 1,509 | 0.64 ms | 0.87 ms | 1.07 ms | 0 | 52.4 MiB |
+| Express 5.2.1 | Bun | 2,187 | 0.43 ms | 0.60 ms | 0.75 ms | 0 | 54.2 MiB |
+| Express 5.2.1 | Canaryo | **2,308** | **0.41 ms** | **0.57 ms** | **0.65 ms** | 0 | **14.8 MiB** |
+| Express profile 5.2.1 | Node.js | 1,541 | 0.62 ms | 0.85 ms | 1.11 ms | 0 | 59.1 MiB |
+| Express profile 5.2.1 | Bun | 2,175 | 0.43 ms | **0.58 ms** | 0.73 ms | 0 | 57.7 MiB |
+| Express profile 5.2.1 | Canaryo | **2,259** | **0.41 ms** | **0.58 ms** | **0.67 ms** | 0 | **17.2 MiB** |
 
 ### Concurrency 16
 
 | Application | Runtime | Requests/s | p50 | p95 | p99 | Errors | RSS |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| `node:http` | Node.js | 6,461 | 2.35 ms | 3.50 ms | 4.18 ms | 0 | 40.3 MiB |
-| `node:http` | Bun | 7,183 | **2.11 ms** | 3.17 ms | 4.46 ms | 0 | 47.6 MiB |
-| `node:http` | Canaryo | **7,365** | 2.16 ms | **2.89 ms** | **3.32 ms** | 0 | **9.8 MiB** |
-| Express 5.2.1 | Node.js | 3,250 | 4.85 ms | 6.83 ms | 7.99 ms | 0 | 64.9 MiB |
-| Express 5.2.1 | Bun | **6,253** | **2.47 ms** | **3.43 ms** | **5.02 ms** | 0 | 59.1 MiB |
-| Express 5.2.1 | Canaryo | 3,630 | 4.15 ms | 6.38 ms | 7.43 ms | 0 | **12.9 MiB** |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Express 5.2.1 | Node.js | 3,261 | 4.78 ms | 6.61 ms | 8.05 ms | 0 | 62.4 MiB |
+| Express 5.2.1 | Bun | 6,318 | 2.44 ms | 3.22 ms | 4.94 ms | 0 | 60.3 MiB |
+| Express 5.2.1 | Canaryo | **8,124** | **1.88 ms** | **2.61 ms** | **3.12 ms** | 0 | **20.5 MiB** |
+| Express profile 5.2.1 | Node.js | 3,221 | 4.86 ms | 6.90 ms | 8.30 ms | 0 | 65.6 MiB |
+| Express profile 5.2.1 | Bun | 6,104 | 2.53 ms | 3.46 ms | 4.97 ms | 0 | 67.2 MiB |
+| Express profile 5.2.1 | Canaryo | **7,766** | **2.05 ms** | **2.61 ms** | **2.97 ms** | 0 | **23.4 MiB** |
 
-## Persistent connections
+## Persistent GET connections
 
 Each worker opens one HTTP/1.1 connection and reuses it for the complete sample.
 
 ### Concurrency 1
 
 | Application | Runtime | Requests/s | p50 | p95 | p99 | Errors | RSS |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| `node:http` | Node.js | 16,958 | 0.05 ms | 0.10 ms | 0.14 ms | 0 | 35.5 MiB |
-| `node:http` | Bun | **19,855** | **0.04 ms** | **0.09 ms** | **0.11 ms** | 0 | 42.0 MiB |
-| `node:http` | Canaryo | 12,244 | 0.07 ms | 0.12 ms | 0.17 ms | 0 | **9.5 MiB** |
-| Express 5.2.1 | Node.js | 6,028 | 0.16 ms | 0.23 ms | 0.30 ms | 0 | 76.7 MiB |
-| Express 5.2.1 | Bun | **13,638** | **0.07 ms** | **0.12 ms** | **0.15 ms** | 0 | 60.1 MiB |
-| Express 5.2.1 | Canaryo | 4,265 | 0.21 ms | 0.31 ms | 0.41 ms | 0 | **12.9 MiB** |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Express 5.2.1 | Node.js | 6,046 | 0.15 ms | 0.22 ms | 0.32 ms | 0 | 74.4 MiB |
+| Express 5.2.1 | Bun | 14,967 | 0.06 ms | 0.10 ms | 0.13 ms | 0 | 61.0 MiB |
+| Express 5.2.1 | Canaryo | **16,699** | **0.05 ms** | **0.09 ms** | **0.11 ms** | 0 | **26.9 MiB** |
+| Express profile 5.2.1 | Node.js | 5,964 | 0.16 ms | 0.23 ms | 0.31 ms | 0 | 85.1 MiB |
+| Express profile 5.2.1 | Bun | 13,266 | 0.07 ms | 0.11 ms | 0.14 ms | 0 | 67.7 MiB |
+| Express profile 5.2.1 | Canaryo | **15,247** | **0.05 ms** | **0.10 ms** | **0.12 ms** | 0 | **28.2 MiB** |
 
 ### Concurrency 16
 
 | Application | Runtime | Requests/s | p50 | p95 | p99 | Errors | RSS |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| `node:http` | Node.js | 20,220 | 0.66 ms | 1.72 ms | 2.35 ms | 0 | 38.8 MiB |
-| `node:http` | Bun | **25,732** | **0.53 ms** | **0.99 ms** | **1.23 ms** | 0 | 47.3 MiB |
-| `node:http` | Canaryo | 19,006 | 0.72 ms | 1.28 ms | 1.52 ms | 0 | **9.8 MiB** |
-| Express 5.2.1 | Node.js | 6,019 | 2.49 ms | 3.77 ms | 5.66 ms | 0 | 76.2 MiB |
-| Express 5.2.1 | Bun | **16,860** | **0.92 ms** | **1.37 ms** | **2.02 ms** | 0 | 54.7 MiB |
-| Express 5.2.1 | Canaryo | 5,313 | 2.81 ms | 4.82 ms | 5.77 ms | 0 | **12.6 MiB** |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Express 5.2.1 | Node.js | 5,967 | 2.55 ms | 3.79 ms | 5.23 ms | 0 | 88.0 MiB |
+| Express 5.2.1 | Bun | 18,153 | 0.79 ms | 1.32 ms | 2.03 ms | 0 | 59.4 MiB |
+| Express 5.2.1 | Canaryo | **20,075** | **0.68 ms** | **1.15 ms** | **1.33 ms** | 0 | **29.6 MiB** |
+| Express profile 5.2.1 | Node.js | 5,852 | 2.60 ms | 3.89 ms | 5.32 ms | 0 | 86.6 MiB |
+| Express profile 5.2.1 | Bun | 16,593 | 0.85 ms | 1.49 ms | 2.40 ms | 0 | 70.3 MiB |
+| Express profile 5.2.1 | Canaryo | **19,617** | **0.68 ms** | **1.14 ms** | **1.38 ms** | 0 | **34.8 MiB** |
 
 ## Persistent connections with a 16 KiB JSON body
 
-These requests use `POST /echo` and include a 16,384-byte JSON document.
+These requests use `POST /echo` and return the parsed request body. This
+exercises request streaming, JSON parsing, mutation checks, serialization,
+Express ETags and binary transfer across the Rust/JavaScript boundary.
 
 ### Concurrency 1
 
 | Application | Runtime | Requests/s | p50 | p95 | p99 | Errors | RSS |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| `node:http` | Node.js | 7,296 | 0.13 ms | 0.20 ms | 0.27 ms | 0 | 40.4 MiB |
-| `node:http` | Bun | **9,056** | **0.10 ms** | **0.16 ms** | **0.26 ms** | 0 | 44.0 MiB |
-| `node:http` | Canaryo | 6,895 | 0.13 ms | 0.27 ms | 0.37 ms | 0 | **9.6 MiB** |
-| Express 5.2.1 | Node.js | 3,221 | 0.29 ms | 0.43 ms | **0.59 ms** | 0 | 78.3 MiB |
-| Express 5.2.1 | Bun | **5,525** | **0.16 ms** | **0.24 ms** | 0.85 ms | 0 | 59.6 MiB |
-| Express 5.2.1 | Canaryo | 1,748 | 0.51 ms | 0.78 ms | 1.92 ms | 0 | **14.1 MiB** |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Express 5.2.1 | Node.js | 3,300 | 0.28 ms | 0.40 ms | 0.58 ms | 0 | 77.8 MiB |
+| Express 5.2.1 | Bun | 5,728 | 0.15 ms | 0.23 ms | 0.88 ms | 0 | 62.4 MiB |
+| Express 5.2.1 | Canaryo | **7,173** | **0.12 ms** | **0.19 ms** | **0.86 ms** | 0 | **15.5 MiB** |
+| Express profile 5.2.1 | Node.js | 3,219 | 0.29 ms | 0.41 ms | 0.60 ms | 0 | 84.2 MiB |
+| Express profile 5.2.1 | Bun | 5,830 | 0.15 ms | 0.22 ms | 0.80 ms | 0 | 61.7 MiB |
+| Express profile 5.2.1 | Canaryo | **7,350** | **0.11 ms** | **0.18 ms** | **0.28 ms** | 0 | **17.0 MiB** |
 
 ### Concurrency 16
 
 | Application | Runtime | Requests/s | p50 | p95 | p99 | Errors | RSS |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| `node:http` | Node.js | 10,343 | 1.49 ms | **2.06 ms** | **2.29 ms** | 0 | 41.3 MiB |
-| `node:http` | Bun | **10,643** | **1.34 ms** | 2.50 ms | 3.47 ms | 0 | 43.6 MiB |
-| `node:http` | Canaryo | 7,999 | 1.88 ms | 3.01 ms | 4.46 ms | 0 | **9.2 MiB** |
-| Express 5.2.1 | Node.js | 3,038 | 4.88 ms | 7.44 ms | 14.13 ms | 0 | 84.3 MiB |
-| Express 5.2.1 | Bun | **6,493** | **2.28 ms** | **3.83 ms** | **5.12 ms** | 0 | 62.3 MiB |
-| Express 5.2.1 | Canaryo | 1,797 | 8.75 ms | 11.27 ms | 12.53 ms | 0 | **13.0 MiB** |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Express 5.2.1 | Node.js | 3,658 | 4.12 ms | 6.04 ms | 7.12 ms | 0 | 83.7 MiB |
+| Express 5.2.1 | Bun | 7,503 | 1.92 ms | 3.22 ms | 4.83 ms | 0 | 71.8 MiB |
+| Express 5.2.1 | Canaryo | **8,922** | **1.58 ms** | **2.81 ms** | **3.64 ms** | 0 | **16.0 MiB** |
+| Express profile 5.2.1 | Node.js | 3,574 | 4.26 ms | 5.94 ms | 6.87 ms | 0 | 86.7 MiB |
+| Express profile 5.2.1 | Bun | 7,552 | 1.89 ms | **3.25 ms** | 4.89 ms | 0 | 71.8 MiB |
+| Express profile 5.2.1 | Canaryo | **8,663** | **1.57 ms** | 3.33 ms | **4.03 ms** | 0 | **18.8 MiB** |
 
 ## Interpretation
 
-Canaryo's strongest result is resource efficiency. At concurrency 16 it uses 77.0% to 79.4% less resident memory than Bun across the GET workloads. It also starts the native HTTP fixture 50.8% faster and leads Bun's new-connection native HTTP throughput by 2.5%.
+Canaryo exceeds Bun's median request rate in all 12 measured Express workload
+and concurrency combinations. The advantage ranges from 3.9% to 28.6%. At
+concurrency 16, Canaryo uses 50.2% to 77.7% less resident memory than Bun.
 
-QuickJS-NG does not have the optimizing JIT used by V8 and JavaScriptCore. That cost is most visible in persistent Express requests and JSON parsing. These results support the POC's claim of fast startup and low memory; they do not claim overall performance leadership.
+The latency distributions support the throughput result. Bun has a 0.08 ms
+lower p95 in one profile body cell at concurrency 16; Canaryo is equal or lower
+in the other 35 reported latency cells. Percentiles vary between repeated runs
+on Windows, and the table keeps the values from each selected median-throughput
+sample.
 
-## Methodology
+The result comes from conservative Express-specific fast paths: exact static
+route plans can run through native dispatch, repeated response metadata remains
+in Rust, default JSON parsing resumes the native plan directly, and a short
+single-connection keep-alive polling window avoids scheduler latency. Dynamic
+routes, mounted routers, asynchronous handlers, custom parsers and ambiguous
+middleware chains continue through Express's regular implementations.
 
-All runtimes execute the same files in `fixtures/http-basic` and `fixtures/express-basic`. The load generator runs in a separate process and validates every response. The table reports the sample with the median request rate and the latency and memory measurements from that sample.
+## Methodology and limits
 
-This is a synthetic loopback benchmark on one machine. Results vary by operating system, hardware, runtime version, and workload.
+The load generator runs in a separate process on the same machine. For every
+runtime/application pair, it chooses the sample with the median request rate and
+reports latency percentiles and resident memory from that same sample.
+
+This is a synthetic loopback benchmark for the POC's verified compatibility
+surface. The static-route and repeated-body workloads are favorable to the
+bounded caches. Results will vary with hardware, operating system, application
+code and response diversity. CPU use is not recorded; the concurrency-1
+keep-alive path briefly polls after a response to reduce scheduler latency.
 
 ## Reproduce
 
 ```sh
 npm ci --prefix fixtures/express-basic
 cargo build --release
-cargo bench --bench runtime -- --duration 3 --runs 3 --startup-runs 7
-cargo bench --bench runtime -- --keep-alive --duration 3 --runs 3 --startup-runs 7
-cargo bench --bench runtime -- --keep-alive --body-size 16384 --duration 3 --runs 3 --startup-runs 7
-cargo bench --bench runtime -- --bun --keep-alive --duration 3 --runs 3 --startup-runs 7
+cargo bench --bench runtime -- --bun --case express --duration 3 --runs 3 --startup-runs 7
+cargo bench --bench runtime -- --bun --case express --keep-alive --duration 3 --runs 3 --startup-runs 7
+cargo bench --bench runtime -- --bun --case express --keep-alive --body-size 16384 --duration 3 --runs 3 --startup-runs 7
 ```
 
-Use `--case express` or `--case node:http` to isolate one application, `--path`
-to select a benchmark endpoint, `--body-size` to generate the JSON workload,
-and `--startup-only` while investigating initialization.
+Increase `--duration` and `--runs` for longer comparisons. Use `--path` to
+select another endpoint and `--startup-only` while investigating initialization.
+﻿

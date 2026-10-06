@@ -1182,6 +1182,19 @@ fn serves_a_native_express_application() {
 
 #[test]
 #[ignore = "requires npm ci in fixtures/express-basic"]
+fn invalidates_native_express_plans_when_routes_change_after_listen() {
+    let (_server, mut stream) = start_fixture("fixtures/express-basic/late-route-server.js");
+    stream
+        .write_all(b"GET /late HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let response = read_response(&mut stream);
+
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+    assert!(response.ends_with("late"), "{response}");
+}
+
+#[test]
+#[ignore = "requires npm ci in fixtures/express-basic"]
 fn compresses_express_responses_with_standard_middleware() {
     let (_server, mut stream) = start_fixture("fixtures/express-basic/compression-server.js");
     stream

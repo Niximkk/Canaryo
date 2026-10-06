@@ -15,24 +15,31 @@ use base64::Engine;
 use mio::{Events, Interest, Poll, Token, net::TcpStream};
 use rquickjs::function::This;
 use rquickjs::object::Property;
-use rquickjs::{Array, Coerced, Ctx, Exception, Function, Object, Result, TypedArray, Value};
+use rquickjs::{
+    Array, Coerced, Ctx, Error, Exception, Function, Object, Result, TypedArray, Value,
+};
 use smallvec::SmallVec;
 
 const DEFAULT_MAX_REQUEST_SIZE: usize = 1024 * 1024;
 const MAX_HEADER_SIZE: usize = 64 * 1024;
 const MAX_ASYNC_RESPONSE_WAIT: Duration = Duration::from_secs(30);
+const KEEP_ALIVE_SPIN_WINDOW: Duration = Duration::from_micros(100);
 const LISTENER: Token = Token(0);
 const REQUEST_TOO_LARGE_MESSAGE: &str = "request body exceeds the configured limit";
 static SERVER_BUSY: AtomicBool = AtomicBool::new(false);
 struct ResponseBodyCache {
     next_id: u64,
     bodies: HashMap<u64, Arc<[u8]>>,
+    responses: HashMap<u64, CachedResponse>,
+    json_envelopes: HashMap<Vec<u8>, JsonEnvelope>,
 }
 
 thread_local! {
     static RESPONSE_BODY_CACHE: RefCell<ResponseBodyCache> = RefCell::new(ResponseBodyCache {
         next_id: 1,
         bodies: HashMap::new(),
+        responses: HashMap::new(),
+        json_envelopes: HashMap::new(),
     });
 }
 type RequestHeaders = SmallVec<[(Cow<'static, str>, Cow<'static, str>); 4]>;
@@ -69,11 +76,27 @@ enum ChunkedBodyState {
     Trailers { received: usize },
 }
 
+#[derive(Clone)]
+struct CachedResponse {
+    status: u16,
+    status_message: String,
+    header_state: u64,
+    headers: Arc<[(String, String)]>,
+    body: Arc<[u8]>,
+}
+
+#[derive(Clone)]
+struct JsonEnvelope {
+    id: u64,
+    length: usize,
+    etag: String,
+}
+
 #[derive(Default)]
 struct Response {
     status: u16,
     status_message: String,
-    headers: ResponseHeaders,
+    headers: Arc<[(String, String)]>,
     body: Arc<[u8]>,
 }
 
@@ -89,11 +112,52 @@ pub(crate) fn cache_response_body(body: String) -> u64 {
 pub(crate) fn release_response_body(id: u64) {
     RESPONSE_BODY_CACHE.with_borrow_mut(|cache| {
         cache.bodies.remove(&id);
+        cache.responses.remove(&id);
     });
 }
 
 fn cached_response_body(id: u64) -> Option<Arc<[u8]>> {
     RESPONSE_BODY_CACHE.with_borrow(|cache| cache.bodies.get(&id).cloned())
+}
+
+fn cached_response(id: u64) -> Option<CachedResponse> {
+    RESPONSE_BODY_CACHE.with_borrow(|cache| cache.responses.get(&id).cloned())
+}
+
+fn cache_response(id: u64, response: CachedResponse) {
+    RESPONSE_BODY_CACHE.with_borrow_mut(|cache| {
+        cache.responses.insert(id, response);
+    });
+}
+
+fn cache_json_envelope(canonical: &str) -> Option<JsonEnvelope> {
+    RESPONSE_BODY_CACHE.with_borrow_mut(|cache| {
+        if let Some(envelope) = cache.json_envelopes.get(canonical.as_bytes()) {
+            return Some(envelope.clone());
+        }
+        if cache.json_envelopes.len() >= 32 {
+            return None;
+        }
+        let mut body = Vec::with_capacity(canonical.len() + 9);
+        body.extend_from_slice(b"{\"body\":");
+        body.extend_from_slice(canonical.as_bytes());
+        body.push(b'}');
+        let length = body.len();
+        let digest = ring::digest::digest(&ring::digest::SHA1_FOR_LEGACY_USE_ONLY, &body);
+        let encoded = base64::engine::general_purpose::STANDARD.encode(digest.as_ref());
+        let id = cache.next_id;
+        cache.next_id = cache.next_id.wrapping_add(1).max(1);
+        cache.bodies.insert(id, Arc::from(body));
+        let envelope = JsonEnvelope {
+            id,
+            length,
+            etag: format!("W/\"{length:x}-{}\"", encoded.trim_end_matches('=')),
+        };
+        cache
+            .json_envelopes
+            .insert(canonical.as_bytes().to_vec(), envelope.clone());
+        Some(envelope)
+    })
 }
 
 struct ConnectionReader {
@@ -231,6 +295,26 @@ struct PendingResponse<'js> {
     deadline: Instant,
 }
 
+struct NativeExpressStep<'js> {
+    handle: Function<'js>,
+    expects_error: bool,
+    terminal_next: bool,
+    direct_json_parser: bool,
+    route: Option<Object<'js>>,
+    route_start: bool,
+}
+
+struct NativeExpressPlan<'js> {
+    steps: Vec<NativeExpressStep<'js>>,
+}
+
+struct NativeExpressRun<'a, 'js> {
+    original_url: &'a str,
+    start_index: usize,
+    error: Option<Value<'js>>,
+    initialize: bool,
+}
+
 struct ServerBindings<'js> {
     handler: Function<'js>,
     on_listening: Function<'js>,
@@ -238,7 +322,13 @@ struct ServerBindings<'js> {
     connection_dropped: Function<'js>,
     request_prototype: Object<'js>,
     response_prototype: Object<'js>,
-    socket_prototype: Object<'js>,
+    socket_template: Object<'js>,
+    native_express_plans: HashMap<String, HashMap<String, NativeExpressPlan<'js>>>,
+    native_express_stack: Option<Array<'js>>,
+    native_express_stack_length: usize,
+    native_express_next: Option<Function<'js>>,
+    native_express_direct_headers: bool,
+    native_express_x_powered_by: bool,
     options: ServerOptions,
 }
 
@@ -262,6 +352,45 @@ pub fn listen<'js>(
         .map(|options| server_options(&context, options))
         .transpose()?
         .unwrap_or_default();
+    let native_plan_values: Option<Array> = handler.get("__canaryoNativePlans")?;
+    let mut native_express_plans = HashMap::new();
+    if let Some(native_plan_values) = native_plan_values {
+        for plan_value in native_plan_values.iter::<Object>() {
+            let plan_value = plan_value?;
+            let key: String = plan_value.get("key")?;
+            let step_values: Array = plan_value.get("steps")?;
+            let mut steps = Vec::with_capacity(step_values.len());
+            for step_value in step_values.iter::<Object>() {
+                let step_value = step_value?;
+                steps.push(NativeExpressStep {
+                    handle: step_value.get("handle")?,
+                    expects_error: step_value.get("expectsError")?,
+                    terminal_next: step_value.get("terminalNext")?,
+                    direct_json_parser: step_value.get("directJsonParser")?,
+                    route: step_value.get("route")?,
+                    route_start: step_value.get("routeStart")?,
+                });
+            }
+            if let Some((method, path)) = key.split_once('\0') {
+                native_express_plans
+                    .entry(method.to_string())
+                    .or_insert_with(HashMap::new)
+                    .insert(path.to_string(), NativeExpressPlan { steps });
+            }
+        }
+    }
+    let native_express_next = handler.get("__canaryoNativeNext")?;
+    let native_express_stack = handler.get("__canaryoNativeStack")?;
+    let native_express_stack_length = handler
+        .get::<_, Option<usize>>("__canaryoNativeStackLength")?
+        .unwrap_or_default();
+    let native_express_direct_headers = handler
+        .get::<_, Option<bool>>("__canaryoNativeDirectHeaders")?
+        .unwrap_or(false);
+    let native_express_x_powered_by = handler
+        .get::<_, Option<bool>>("__canaryoNativeXPoweredBy")?
+        .unwrap_or(false);
+    let socket_template = socket_template(&context, &socket_prototype, tls_config.is_some())?;
     listen_with_config(
         context.clone(),
         port,
@@ -272,7 +401,13 @@ pub fn listen<'js>(
             connection_dropped: context.globals().get("__canaryoServerConnectionDropped")?,
             request_prototype,
             response_prototype,
-            socket_prototype,
+            socket_template,
+            native_express_plans,
+            native_express_stack,
+            native_express_stack_length,
+            native_express_next,
+            native_express_direct_headers,
+            native_express_x_powered_by,
             options,
         },
         tls_config,
@@ -391,8 +526,13 @@ fn listen_with_config<'js>(
     let restore_timer_context: Function = context.globals().get("__canaryoRestoreTimerContext")?;
     let server_tick: Function = context.globals().get("__canaryoServerTick")?;
     let mut closing = false;
+    let mut keep_alive_spin_until = None;
     let request_template = request_template(&context, &bindings.request_prototype)?;
     let response_template = response_template(&context, &bindings.response_prototype)?;
+    if let Some(next) = bindings.native_express_next.as_ref() {
+        request_template.set("next", next.clone())?;
+        request_template.set("baseUrl", "")?;
+    }
     bindings.on_listening.call::<_, ()>(())?;
 
     loop {
@@ -456,6 +596,14 @@ fn listen_with_config<'js>(
             (None, right) => right,
             (left, None) => left,
         };
+        let poll_delay = if connections.len() == 1
+            && keep_alive_spin_until.is_some_and(|deadline| Instant::now() < deadline)
+        {
+            Some(Duration::ZERO)
+        } else {
+            keep_alive_spin_until = None;
+            poll_delay
+        };
         poll.poll(&mut events, poll_delay)
             .map_err(|error| Exception::throw_message(&context, &error.to_string()))?;
 
@@ -481,15 +629,21 @@ fn listen_with_config<'js>(
                 if event.is_readable() && !remove && !connection.request_paused()? {
                     let read_closed = read_and_dispatch_requests(
                         &context,
-                        &bindings.handler,
+                        &bindings,
                         &request_template,
                         &response_template,
                         connection,
                     )?;
                     connection.read_closed |= read_closed || event.is_read_closed();
                     connection.read_paused = connection.request_paused()?;
+                    let wrote_response = !connection.outgoing.is_empty();
                     if connection.flush().is_err() {
                         remove = true;
+                    } else if wrote_response
+                        && connection.outgoing.is_empty()
+                        && !connection.close_after_write
+                    {
+                        keep_alive_spin_until = Some(Instant::now() + KEEP_ALIVE_SPIN_WINDOW);
                     }
                 }
 
@@ -589,11 +743,7 @@ fn accept_connections<'js>(
                         token,
                         Connection {
                             stream,
-                            socket: socket_to_js(
-                                context,
-                                &bindings.socket_prototype,
-                                tls_config.is_some(),
-                            )?,
+                            socket: socket_to_js(context, &bindings.socket_template)?,
                             incoming_request: None,
                             incoming_json_body: None,
                             pending_responses: VecDeque::new(),
@@ -730,7 +880,7 @@ enum ConnectionRead {
 
 fn read_and_dispatch_requests<'js>(
     context: &Ctx<'js>,
-    handler: &Function<'js>,
+    bindings: &ServerBindings<'js>,
     request_prototype: &Object<'js>,
     response_prototype: &Object<'js>,
     connection: &mut Connection<'js>,
@@ -769,7 +919,7 @@ fn read_and_dispatch_requests<'js>(
                         matches!(&event, InboundEvent::Complete(_) | InboundEvent::End(_));
                     dispatch_inbound_event(
                         context,
-                        handler,
+                        bindings,
                         request_prototype,
                         response_prototype,
                         connection,
@@ -830,7 +980,7 @@ fn close_connection_objects(connection: &mut Connection<'_>) -> Result<()> {
 
 fn dispatch_inbound_event<'js>(
     context: &Ctx<'js>,
-    handler: &Function<'js>,
+    bindings: &ServerBindings<'js>,
     request_prototype: &Object<'js>,
     response_prototype: &Object<'js>,
     connection: &mut Connection<'js>,
@@ -842,7 +992,7 @@ fn dispatch_inbound_event<'js>(
             let suppress_body = request.method == "HEAD";
             let (request_object, response_object) = begin_request(
                 context,
-                handler,
+                bindings,
                 &request,
                 request_prototype,
                 response_prototype,
@@ -864,23 +1014,45 @@ fn dispatch_inbound_event<'js>(
             let suppress_body = request.method == "HEAD";
             let (request_object, response_object) = begin_request(
                 context,
-                handler,
+                bindings,
                 &request,
                 request_prototype,
                 response_prototype,
                 &connection.socket,
             )?;
             if request_object.contains_key("__canaryoDirectJsonNext")? {
-                finish_direct_json_body(context, request_object, Vec::new(), &[])?;
+                if let Some((next_index, error)) =
+                    finish_direct_json_body(context, &request_object, Vec::new(), &[])?
+                {
+                    resume_native_express_plan(
+                        context,
+                        bindings,
+                        next_index,
+                        error,
+                        &request_object,
+                        &response_object,
+                    )?;
+                }
             } else {
                 finish_request_body(context, request_object, &[])?;
             }
-            connection.pending_responses.push_back(PendingResponse {
-                object: response_object,
-                keep_alive,
-                suppress_body,
-                deadline: Instant::now() + MAX_ASYNC_RESPONSE_WAIT,
-            });
+            if response_object.get::<_, bool>("writableEnded")? {
+                let response = response_from_js(&response_object)?;
+                append_response(
+                    &mut connection.outgoing,
+                    &response,
+                    keep_alive,
+                    suppress_body,
+                );
+                connection.close_after_write |= !keep_alive;
+            } else {
+                connection.pending_responses.push_back(PendingResponse {
+                    object: response_object,
+                    keep_alive,
+                    suppress_body,
+                    deadline: Instant::now() + MAX_ASYNC_RESPONSE_WAIT,
+                });
+            }
         }
         InboundEvent::Data(body) => {
             if let Some(json_body) = connection.incoming_json_body.as_mut() {
@@ -897,7 +1069,23 @@ fn dispatch_inbound_event<'js>(
                 Exception::throw_message(context, "HTTP request ended without request headers")
             })?;
             if let Some(body) = connection.incoming_json_body.take() {
-                finish_direct_json_body(context, request, body, &trailers)?;
+                let resume = finish_direct_json_body(context, &request, body, &trailers)?;
+                if let Some((next_index, error)) = resume {
+                    let response = connection
+                        .pending_responses
+                        .back()
+                        .ok_or_else(|| {
+                            Exception::throw_message(
+                                context,
+                                "native Express request has no pending response",
+                            )
+                        })?
+                        .object
+                        .clone();
+                    resume_native_express_plan(
+                        context, bindings, next_index, error, &request, &response,
+                    )?;
+                }
             } else {
                 finish_request_body(context, request, &trailers)?;
             }
@@ -908,11 +1096,12 @@ fn dispatch_inbound_event<'js>(
 
 fn finish_direct_json_body<'js>(
     context: &Ctx<'js>,
-    request: Object<'js>,
+    request: &Object<'js>,
     body: Vec<u8>,
     trailers: &[(String, String)],
-) -> Result<()> {
+) -> Result<Option<(usize, Option<Value<'js>>)>> {
     let next: Function = request.get("__canaryoDirectJsonNext")?;
+    let native_next_index: Option<usize> = request.get("__canaryoNativePlanIndex")?;
     if !trailers.is_empty() {
         let trailer_object = Object::new(context.clone())?;
         let raw_trailers = Array::new(context.clone())?;
@@ -929,7 +1118,7 @@ fn finish_direct_json_body<'js>(
     request.set("complete", true)?;
     if body.is_empty() {
         request.set("body", Object::new(context.clone())?)?;
-        return next.call::<_, ()>(());
+        return continue_after_direct_json(next, native_next_index, None);
     }
 
     let first = body
@@ -956,7 +1145,7 @@ fn finish_direct_json_body<'js>(
                 "entity.parse.failed"
             },
         )?;
-        return next.call::<_, ()>((error,));
+        return continue_after_direct_json(next, native_next_index, Some(error.into_value()));
     }
 
     let canonical = canonical_flat_json_source(&body);
@@ -983,15 +1172,26 @@ fn finish_direct_json_body<'js>(
                     index += 2;
                 }
                 if cacheable && index / 2 == property_count {
-                    object.prop("__canaryoCanonicalFlatJson", Property::from(canonical))?;
+                    let envelope = cache_json_envelope(&canonical);
                     object.prop(
                         "__canaryoCanonicalFlatJsonSnapshot",
                         Property::from(snapshot),
                     )?;
+                    if let Some(envelope) = envelope {
+                        object.prop("__canaryoCanonicalEnvelopeId", Property::from(envelope.id))?;
+                        object.prop(
+                            "__canaryoCanonicalEnvelopeLength",
+                            Property::from(envelope.length),
+                        )?;
+                        object.prop(
+                            "__canaryoCanonicalEnvelopeEtag",
+                            Property::from(envelope.etag),
+                        )?;
+                    }
                 }
             }
             request.set("body", value)?;
-            next.call::<_, ()>(())
+            continue_after_direct_json(next, native_next_index, None)
         }
         Err(_) => {
             let error = context.catch();
@@ -1000,9 +1200,25 @@ fn finish_direct_json_body<'js>(
                 error_object.set("statusCode", 400)?;
                 error_object.set("type", "entity.parse.failed")?;
             }
-            next.call::<_, ()>((error,))
+            continue_after_direct_json(next, native_next_index, Some(error))
         }
     }
+}
+
+fn continue_after_direct_json<'js>(
+    next: Function<'js>,
+    native_next_index: Option<usize>,
+    error: Option<Value<'js>>,
+) -> Result<Option<(usize, Option<Value<'js>>)>> {
+    if let Some(index) = native_next_index {
+        return Ok(Some((index, error)));
+    }
+    if let Some(error) = error {
+        next.call::<_, ()>((error,))?;
+    } else {
+        next.call::<_, ()>(())?;
+    }
+    Ok(None)
 }
 
 fn canonical_flat_json_source(body: &[u8]) -> Option<(String, usize)> {
@@ -1102,7 +1318,7 @@ fn next_response_deadline(connections: &HashMap<Token, Connection<'_>>) -> Optio
 
 fn begin_request<'js>(
     context: &Ctx<'js>,
-    handler: &Function<'js>,
+    bindings: &ServerBindings<'js>,
     request: &RequestHead,
     request_prototype: &Object<'js>,
     response_prototype: &Object<'js>,
@@ -1110,14 +1326,182 @@ fn begin_request<'js>(
 ) -> Result<(Object<'js>, Object<'js>)> {
     let request_object = request_to_js(context, request, request_prototype, socket)?;
     let response_object = response_to_js(context, response_prototype)?;
-    let socket: Object = request_object.get("socket")?;
     request_object.set("res", response_object.clone())?;
     response_object.set("req", request_object.clone())?;
     response_object.set("socket", socket.clone())?;
-    response_object.set("connection", socket)?;
+    response_object.set("connection", socket.clone())?;
 
-    handler.call::<_, ()>((request_object.clone(), response_object.clone()))?;
+    let query_index = request.url.find('?').unwrap_or(request.url.len());
+    let pathname = &request.url[..query_index];
+    let native_plan = bindings
+        .native_express_plans
+        .get(request.method.as_ref())
+        .and_then(|plans| plans.get(pathname));
+    let native_stack_unchanged = bindings
+        .native_express_stack
+        .as_ref()
+        .is_some_and(|stack| stack.len() == bindings.native_express_stack_length);
+    if let Some(plan) =
+        native_plan.filter(|_| bindings.native_express_next.is_some() && native_stack_unchanged)
+    {
+        run_native_express_plan(
+            context,
+            bindings,
+            plan,
+            &request_object,
+            &response_object,
+            NativeExpressRun {
+                original_url: request.url.as_ref(),
+                start_index: 0,
+                error: None,
+                initialize: true,
+            },
+        )?;
+    } else {
+        bindings
+            .handler
+            .call::<_, ()>((request_object.clone(), response_object.clone()))?;
+    }
     Ok((request_object, response_object))
+}
+
+fn run_native_express_plan<'js>(
+    context: &Ctx<'js>,
+    bindings: &ServerBindings<'js>,
+    plan: &NativeExpressPlan<'js>,
+    request: &Object<'js>,
+    response: &Object<'js>,
+    run: NativeExpressRun<'_, 'js>,
+) -> Result<()> {
+    let NativeExpressRun {
+        original_url,
+        start_index,
+        error,
+        initialize,
+    } = run;
+    let mut thrown = error;
+    let next = bindings
+        .native_express_next
+        .as_ref()
+        .expect("checked by caller");
+    if initialize && bindings.native_express_x_powered_by {
+        if bindings.native_express_direct_headers {
+            let headers: Object = response.get("__canaryoHeaders")?;
+            headers.set("x-powered-by", "Express")?;
+        } else {
+            let set_header: Function = response.get("setHeader")?;
+            set_header.call::<_, ()>((This(response.clone()), "X-Powered-By", "Express"))?;
+        }
+    }
+    if initialize {
+        response.set("locals", Object::new_proto(context.clone(), None)?)?;
+        request.set("originalUrl", original_url)?;
+    }
+
+    for (index, step) in plan.steps.iter().enumerate().skip(start_index) {
+        if thrown.is_some() != step.expects_error {
+            continue;
+        }
+        if step.route_start {
+            request.set("params", Object::new(context.clone())?)?;
+            request.set("route", step.route.clone())?;
+        }
+
+        let result = if let Some(error) = thrown.take() {
+            step.handle
+                .call::<_, Value>((error, request.clone(), response.clone(), next.clone()))
+        } else if step.terminal_next || step.direct_json_parser {
+            step.handle
+                .call::<_, Value>((request.clone(), response.clone(), next.clone()))
+        } else {
+            step.handle
+                .call::<_, Value>((request.clone(), response.clone()))
+        };
+
+        match result {
+            Ok(value) => {
+                if value.is_promise() {
+                    return Err(Exception::throw_message(
+                        context,
+                        "native Express plan unexpectedly returned a promise",
+                    ));
+                }
+                if step.direct_json_parser {
+                    if request.contains_key("__canaryoDirectJsonNext")? {
+                        request.set("__canaryoNativePlanIndex", index + 1)?;
+                    }
+                    return Ok(());
+                }
+                if !step.terminal_next {
+                    return Ok(());
+                }
+            }
+            Err(Error::Exception) => thrown = Some(context.catch()),
+            Err(error) => return Err(error),
+        }
+    }
+
+    if !response.get::<_, bool>("writableEnded")? {
+        let status = thrown
+            .as_ref()
+            .and_then(Value::as_object)
+            .and_then(|error| error.get::<_, Option<u16>>("statusCode").ok().flatten())
+            .filter(|status| (400..=599).contains(status))
+            .unwrap_or(if thrown.is_some() { 500 } else { 404 });
+        response.set("statusCode", status)?;
+        let set_header: Function = response.get("setHeader")?;
+        set_header.call::<_, ()>((
+            This(response.clone()),
+            "content-type",
+            "text/plain; charset=utf-8",
+        ))?;
+        let end: Function = response.get("end")?;
+        let message = if thrown.is_some() {
+            "Internal Server Error".to_string()
+        } else {
+            let method: String = request.get("method")?;
+            let url: String = request.get("url")?;
+            format!("Cannot {method} {url}")
+        };
+        end.call::<_, ()>((This(response.clone()), message))?;
+    }
+    Ok(())
+}
+
+fn resume_native_express_plan<'js>(
+    context: &Ctx<'js>,
+    bindings: &ServerBindings<'js>,
+    next_index: usize,
+    error: Option<Value<'js>>,
+    request: &Object<'js>,
+    response: &Object<'js>,
+) -> Result<()> {
+    let method: String = request.get("method")?;
+    let url: String = request.get("url")?;
+    let pathname = url.split_once('?').map_or(url.as_str(), |(path, _)| path);
+    let Some(plan) = bindings
+        .native_express_plans
+        .get(method.as_str())
+        .and_then(|plans| plans.get(pathname))
+    else {
+        return Err(Exception::throw_message(
+            context,
+            "native Express plan disappeared while reading the request body",
+        ));
+    };
+    run_native_express_plan(
+        context,
+        bindings,
+        plan,
+        request,
+        response,
+        NativeExpressRun {
+            original_url: &url,
+            start_index: next_index,
+            error,
+            initialize: false,
+        },
+    )
 }
 
 fn request_to_js<'js>(
@@ -1126,7 +1510,7 @@ fn request_to_js<'js>(
     prototype: &Object<'js>,
     socket: &Object<'js>,
 ) -> Result<Object<'js>> {
-    let object = Object::new(context.clone())?;
+    let object = Object::new_proto(context.clone(), Some(prototype))?;
     let headers = Object::new(context.clone())?;
 
     for (name, value) in &request.headers {
@@ -1157,7 +1541,6 @@ fn request_to_js<'js>(
     object.set("headers", headers)?;
     object.set("socket", socket.clone())?;
     object.set("connection", socket.clone())?;
-    object.set_prototype(Some(prototype))?;
     Ok(object)
 }
 
@@ -1206,12 +1589,16 @@ fn finish_request_body<'js>(
     finish.call::<_, ()>((This(request),))
 }
 
-fn socket_to_js<'js>(
+fn socket_to_js<'js>(context: &Ctx<'js>, template: &Object<'js>) -> Result<Object<'js>> {
+    Object::new_proto(context.clone(), Some(template))
+}
+
+fn socket_template<'js>(
     context: &Ctx<'js>,
     prototype: &Object<'js>,
     encrypted: bool,
 ) -> Result<Object<'js>> {
-    let socket = Object::new(context.clone())?;
+    let socket = Object::new_proto(context.clone(), Some(prototype))?;
     socket.set("remoteAddress", "127.0.0.1")?;
     socket.set("remoteFamily", "IPv4")?;
     socket.set("localAddress", "127.0.0.1")?;
@@ -1220,20 +1607,18 @@ fn socket_to_js<'js>(
     socket.set("connecting", false)?;
     socket.set("readable", true)?;
     socket.set("writable", true)?;
-    socket.set_prototype(Some(prototype))?;
     Ok(socket)
 }
 
 fn response_to_js<'js>(context: &Ctx<'js>, prototype: &Object<'js>) -> Result<Object<'js>> {
-    let object = Object::new(context.clone())?;
+    let object = Object::new_proto(context.clone(), Some(prototype))?;
     let headers = Object::new(context.clone())?;
     object.set("__canaryoHeaders", headers)?;
-    object.set_prototype(Some(prototype))?;
     Ok(object)
 }
 
 fn request_template<'js>(context: &Ctx<'js>, prototype: &Object<'js>) -> Result<Object<'js>> {
-    let template = Object::new(context.clone())?;
+    let template = Object::new_proto(context.clone(), Some(prototype))?;
     template.set("method", "GET")?;
     template.set("url", "/")?;
     template.set("httpVersion", "1.1")?;
@@ -1245,12 +1630,11 @@ fn request_template<'js>(context: &Ctx<'js>, prototype: &Object<'js>) -> Result<
     template.set("readable", true)?;
     template.set("readableEnded", false)?;
     template.set("__canaryoPaused", false)?;
-    template.set_prototype(Some(prototype))?;
     Ok(template)
 }
 
 fn response_template<'js>(context: &Ctx<'js>, prototype: &Object<'js>) -> Result<Object<'js>> {
-    let template = Object::new(context.clone())?;
+    let template = Object::new_proto(context.clone(), Some(prototype))?;
     template.set("statusCode", 200)?;
     template.set("statusMessage", "")?;
     template.set("headersSent", false)?;
@@ -1260,19 +1644,36 @@ fn response_template<'js>(context: &Ctx<'js>, prototype: &Object<'js>) -> Result
     template.set("destroyed", false)?;
     template.set("__canaryoTextBody", "")?;
     template.set("__canaryoBody", Option::<Array>::None)?;
-    template.set_prototype(Some(prototype))?;
     Ok(template)
 }
 
 fn response_from_js(response: &Object<'_>) -> Result<Response> {
+    let cached_body_id: Option<u64> = response.get("__canaryoCachedBodyId")?;
+    let status: u16 = response.get("statusCode")?;
+    let status_message: String = response.get("statusMessage")?;
+    if let Some(cached) = cached_body_id.and_then(cached_response)
+        && cached.status == status
+        && cached.status_message == status_message
+        && cached.header_state == response.get::<_, u64>("__canaryoHeaderState")?
+    {
+        return Ok(Response {
+            status,
+            status_message,
+            headers: cached.headers,
+            body: cached.body,
+        });
+    }
+
     let headers_object: Object = response.get("__canaryoHeaders")?;
     let mut headers = ResponseHeaders::new();
+    let mut cacheable_headers = true;
     for property in headers_object.props::<String, rquickjs::Value>() {
         let (name, value) = property?;
         if name.eq_ignore_ascii_case("content-length") || name.eq_ignore_ascii_case("connection") {
             continue;
         }
         if let Some(values) = value.as_array() {
+            cacheable_headers = false;
             let values = values
                 .iter::<Coerced<String>>()
                 .collect::<Result<Vec<_>>>()?
@@ -1289,30 +1690,50 @@ fn response_from_js(response: &Object<'_>) -> Result<Response> {
             headers.push((name, value.0));
         }
     }
-    let cached_body_id: Option<u64> = response.get("__canaryoCachedBodyId")?;
-    let text_body: String = response.get("__canaryoTextBody")?;
-    let body = if let Some(id) = cached_body_id {
-        cached_response_body(id).unwrap_or_else(|| Arc::from(text_body.into_bytes()))
-    } else if text_body.is_empty() {
-        let body_chunks: Option<Array> = response.get("__canaryoBody")?;
-        let mut body = Vec::new();
-        if let Some(body_chunks) = body_chunks {
-            for chunk in body_chunks.iter::<TypedArray<u8>>() {
-                let chunk = chunk?;
-                let bytes = chunk.as_bytes().ok_or_else(|| {
-                    Exception::throw_message(response.ctx(), "response contains a detached buffer")
-                })?;
-                body.extend_from_slice(bytes);
-            }
-        }
-        Arc::from(body)
+    let body = if let Some(body) = cached_body_id.and_then(cached_response_body) {
+        body
     } else {
-        Arc::from(text_body.into_bytes())
+        let text_body: String = response.get("__canaryoTextBody")?;
+        if text_body.is_empty() {
+            let body_chunks: Option<Array> = response.get("__canaryoBody")?;
+            let mut body = Vec::new();
+            if let Some(body_chunks) = body_chunks {
+                for chunk in body_chunks.iter::<TypedArray<u8>>() {
+                    let chunk = chunk?;
+                    let bytes = chunk.as_bytes().ok_or_else(|| {
+                        Exception::throw_message(
+                            response.ctx(),
+                            "response contains a detached buffer",
+                        )
+                    })?;
+                    body.extend_from_slice(bytes);
+                }
+            }
+            Arc::from(body)
+        } else {
+            Arc::from(text_body.into_bytes())
+        }
     };
 
+    let headers: Arc<[(String, String)]> = Arc::from(headers.into_vec());
+    if let Some(id) = cached_body_id
+        && cacheable_headers
+    {
+        cache_response(
+            id,
+            CachedResponse {
+                status,
+                status_message: status_message.clone(),
+                header_state: response.get("__canaryoHeaderState")?,
+                headers: Arc::clone(&headers),
+                body: Arc::clone(&body),
+            },
+        );
+    }
+
     Ok(Response {
-        status: response.get("statusCode")?,
-        status_message: response.get("statusMessage")?,
+        status,
+        status_message,
         headers,
         body,
     })
@@ -1626,7 +2047,7 @@ fn append_response(
         .iter()
         .any(|(name, _)| name.eq_ignore_ascii_case("content-type"));
 
-    for (name, value) in &response.headers {
+    for (name, value) in response.headers.iter() {
         if !name.eq_ignore_ascii_case("content-length") && !name.eq_ignore_ascii_case("connection")
         {
             buffer.extend_from_slice(name.as_bytes());
