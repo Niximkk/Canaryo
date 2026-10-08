@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.1 - 2026-10-07
 
 - Precompute and flatten safe static Express route plans while preserving the
   original router for dynamic, mounted, or mutated route stacks.

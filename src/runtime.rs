@@ -1163,6 +1163,21 @@ function optimizeExpressRouter(listener) {
         if (safe && terminal) nativePlans.push({ key, steps: plan });
     }
     const nativeNext = () => {};
+    if (nativePlans.length > 0) {
+        for (const method of [
+            "copyWithin", "fill", "pop", "push", "reverse", "shift", "sort", "splice", "unshift"
+        ]) {
+            const mutate = stack[method];
+            Object.defineProperty(stack, method, {
+                configurable: true,
+                writable: true,
+                value(...arguments_) {
+                    __canaryoInvalidateNativeExpressPlans();
+                    return Reflect.apply(mutate, this, arguments_);
+                }
+            });
+        }
+    }
 
     router.handle = function canaryoExpressHandle(request, response, done) {
         const plan = planFor(request);
@@ -1220,8 +1235,6 @@ function optimizeExpressRouter(listener) {
         __canaryoRequestPrototype: { value: listener.request },
         __canaryoResponsePrototype: { value: listener.response },
         __canaryoNativePlans: { value: nativePlans },
-        __canaryoNativeStack: { value: stack },
-        __canaryoNativeStackLength: { value: stackLength },
         __canaryoNativeNext: { value: nativeNext },
         __canaryoNativeDirectHeaders: { value: directResponseHeaders },
         __canaryoNativeXPoweredBy: { value: listener.settings["x-powered-by"] !== false }
@@ -1585,7 +1598,7 @@ pub fn execute(path: &str, arguments: &[String]) -> Result<u8, String> {
     let gc_threshold = env::var("CANARYO_GC_THRESHOLD")
         .ok()
         .and_then(|value| value.parse().ok())
-        .unwrap_or(64 * 1024 * 1024);
+        .unwrap_or(32 * 1024 * 1024);
     runtime.set_gc_threshold(gc_threshold);
     runtime.set_loader(esm::NodeResolver, esm::NodeLoader);
     let context =
@@ -1783,6 +1796,15 @@ fn install_host_globals<'js>(
         .map_err(|error| error.to_string())?;
     globals
         .set("__canaryoMarkServerBusy", mark_server_busy)
+        .map_err(|error| error.to_string())?;
+    let invalidate_native_express_plans =
+        Function::new(context.clone(), http::invalidate_native_express_plans)
+            .map_err(|error| error.to_string())?;
+    globals
+        .set(
+            "__canaryoInvalidateNativeExpressPlans",
+            invalidate_native_express_plans,
+        )
         .map_err(|error| error.to_string())?;
     let performance_started = Instant::now();
     let performance_now = Function::new(context.clone(), move || {

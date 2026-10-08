@@ -27,6 +27,7 @@ const KEEP_ALIVE_SPIN_WINDOW: Duration = Duration::from_micros(100);
 const LISTENER: Token = Token(0);
 const REQUEST_TOO_LARGE_MESSAGE: &str = "request body exceeds the configured limit";
 static SERVER_BUSY: AtomicBool = AtomicBool::new(false);
+static NATIVE_EXPRESS_PLANS_VALID: AtomicBool = AtomicBool::new(false);
 struct ResponseBodyCache {
     next_id: u64,
     bodies: HashMap<u64, Arc<[u8]>>,
@@ -114,6 +115,10 @@ pub(crate) fn release_response_body(id: u64) {
         cache.bodies.remove(&id);
         cache.responses.remove(&id);
     });
+}
+
+pub(crate) fn invalidate_native_express_plans() {
+    NATIVE_EXPRESS_PLANS_VALID.store(false, Ordering::Release);
 }
 
 fn cached_response_body(id: u64) -> Option<Arc<[u8]>> {
@@ -324,8 +329,6 @@ struct ServerBindings<'js> {
     response_prototype: Object<'js>,
     socket_template: Object<'js>,
     native_express_plans: HashMap<String, HashMap<String, NativeExpressPlan<'js>>>,
-    native_express_stack: Option<Array<'js>>,
-    native_express_stack_length: usize,
     native_express_next: Option<Function<'js>>,
     native_express_direct_headers: bool,
     native_express_x_powered_by: bool,
@@ -380,10 +383,6 @@ pub fn listen<'js>(
         }
     }
     let native_express_next = handler.get("__canaryoNativeNext")?;
-    let native_express_stack = handler.get("__canaryoNativeStack")?;
-    let native_express_stack_length = handler
-        .get::<_, Option<usize>>("__canaryoNativeStackLength")?
-        .unwrap_or_default();
     let native_express_direct_headers = handler
         .get::<_, Option<bool>>("__canaryoNativeDirectHeaders")?
         .unwrap_or(false);
@@ -391,6 +390,7 @@ pub fn listen<'js>(
         .get::<_, Option<bool>>("__canaryoNativeXPoweredBy")?
         .unwrap_or(false);
     let socket_template = socket_template(&context, &socket_prototype, tls_config.is_some())?;
+    NATIVE_EXPRESS_PLANS_VALID.store(!native_express_plans.is_empty(), Ordering::Release);
     listen_with_config(
         context.clone(),
         port,
@@ -403,8 +403,6 @@ pub fn listen<'js>(
             response_prototype,
             socket_template,
             native_express_plans,
-            native_express_stack,
-            native_express_stack_length,
             native_express_next,
             native_express_direct_headers,
             native_express_x_powered_by,
@@ -1337,13 +1335,9 @@ fn begin_request<'js>(
         .native_express_plans
         .get(request.method.as_ref())
         .and_then(|plans| plans.get(pathname));
-    let native_stack_unchanged = bindings
-        .native_express_stack
-        .as_ref()
-        .is_some_and(|stack| stack.len() == bindings.native_express_stack_length);
-    if let Some(plan) =
-        native_plan.filter(|_| bindings.native_express_next.is_some() && native_stack_unchanged)
-    {
+    if let Some(plan) = native_plan.filter(|_| {
+        bindings.native_express_next.is_some() && NATIVE_EXPRESS_PLANS_VALID.load(Ordering::Acquire)
+    }) {
         run_native_express_plan(
             context,
             bindings,
