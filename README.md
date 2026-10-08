@@ -84,8 +84,8 @@ Lower is better.
 
 | Application | Node.js | Bun | Canaryo |
 |---|---:|---:|---:|
-| Express 5.2.1 | 195.94 ms | 113.73 ms | **88.97 ms** |
-| Express profile 5.2.1 | 241.44 ms | 129.35 ms | **120.00 ms** |
+| Express 5.2.1 | 208.13 ms | 122.10 ms | **103.66 ms** |
+| Express profile 5.2.1 | 268.60 ms | 143.17 ms | **137.98 ms** |
 
 ### Throughput at concurrency 16
 
@@ -93,8 +93,8 @@ Higher is better. "New connection" opens a TCP connection for every request; "ke
 
 | Application | New: Node.js | New: Bun | New: Canaryo | Keep-alive: Node.js | Keep-alive: Bun | Keep-alive: Canaryo |
 |---|---:|---:|---:|---:|---:|---:|
-| Express 5.2.1 | 3,261 | 6,318 | **8,124** | 5,967 | 18,153 | **20,075** |
-| Express profile 5.2.1 | 3,221 | 6,104 | **7,766** | 5,852 | 16,593 | **19,617** |
+| Express 5.2.1 | 3,159 | 6,370 | **7,409** | 5,584 | 16,611 | **18,443** |
+| Express profile 5.2.1 | 3,114 | 6,264 | **7,832** | 5,224 | 14,804 | **16,333** |
 
 ### 16 KiB JSON throughput at concurrency 16
 
@@ -102,8 +102,8 @@ This test sends `POST /echo` over persistent connections and includes parsing an
 
 | Application | Node.js | Bun | Canaryo | Node.js RSS | Bun RSS | Canaryo RSS |
 |---|---:|---:|---:|---:|---:|---:|
-| Express 5.2.1 | 3,658 req/s | 7,503 req/s | **8,922 req/s** | 83.7 MiB | 71.8 MiB | **16.0 MiB** |
-| Express profile 5.2.1 | 3,574 req/s | 7,552 req/s | **8,663 req/s** | 86.7 MiB | 71.8 MiB | **18.8 MiB** |
+| Express 5.2.1 | 2,823 req/s | 5,900 req/s | **7,615 req/s** | 84.7 MiB | 59.5 MiB | **14.5 MiB** |
+| Express profile 5.2.1 | 3,333 req/s | 6,118 req/s | **7,262 req/s** | 89.8 MiB | 71.8 MiB | **16.8 MiB** |
 
 ### Resident memory at concurrency 16
 
@@ -111,10 +111,10 @@ Lower is better. RSS is sampled from the runtime process during the selected thr
 
 | Application | New: Bun | New: Canaryo | Reduction | Keep-alive: Bun | Keep-alive: Canaryo | Reduction |
 |---|---:|---:|---:|---:|---:|---:|
-| Express 5.2.1 | 60.3 MiB | **20.5 MiB** | **66.0%** | 59.4 MiB | **29.6 MiB** | **50.2%** |
-| Express profile 5.2.1 | 67.2 MiB | **23.4 MiB** | **65.2%** | 70.3 MiB | **34.8 MiB** | **50.5%** |
+| Express 5.2.1 | 60.9 MiB | **20.0 MiB** | **67.1%** | 65.5 MiB | **30.3 MiB** | **53.7%** |
+| Express profile 5.2.1 | 64.7 MiB | **23.5 MiB** | **63.7%** | 62.3 MiB | **32.6 MiB** | **47.7%** |
 
-Canaryo exceeds Bun's median throughput in all 12 measured Express workload and concurrency combinations. The advantage ranges from 3.9% to 28.6%, while concurrency-16 resident memory is 50.2% to 77.7% lower. Basic Express starts 21.8% faster than Bun and the larger profile starts 7.2% faster.
+Canaryo exceeds Bun's median throughput in 11 of the 12 measured Express workload and concurrency combinations. The one exception is the basic application with a new TCP connection per request, where Canaryo is 1.0% below Bun. Across the other combinations, the advantage ranges from 1.4% to 29.1%, while concurrency-16 resident memory is 47.6% to 76.6% lower. Basic Express starts 15.1% faster than Bun and the larger profile starts 3.6% faster.
 
 These synthetic loopback results cover the current compatibility surface on one machine. See [BENCHMARKS.md](BENCHMARKS.md) for latency percentiles, concurrency 1 results, methodology, limitations, and reproduction commands.
 
